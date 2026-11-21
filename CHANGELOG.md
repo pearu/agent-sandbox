@@ -1189,6 +1189,28 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **Under bash 5.2, a signal no longer abandons a run at a command with two command
+  substitutions; `--serve` ends cleanly under a flood of signals; a signal during a
+  launch's exit cleanup is ignored** (#423). Bash 5.2 (5.2.15, 5.2.21 and 5.2.37
+  measured; not 4.4 to 5.1, nor 5.3) runs a handler for a signal that arrived during one
+  command substitution when it parses the next one of the same simple command, and the
+  handler fails there (``trap: line 2: unexpected EOF while looking for matching `)'``),
+  abandoning the run. A launch sent one TERM at a random moment in setup ended that way,
+  with status 2 instead of 143, in 54 of 1000 runs under bash 5.2.37: CI's ubuntu-24.04
+  has 5.2.21. Now no simple command of the engine holds two substitutions side by side:
+  72 commands, engine-wide, are wrapped (`v="$(_as_one "$(a)/$(b)")"`, which keeps the
+  expression and its status, or `( cmd "$(a)" "$(b)" )`) or split, and
+  `tests/unit/traps.bats` keeps it so. The same measurement gives 3 in 1000: what is
+  left is a signal landing in bash's parse of a single substitution, with the same clean
+  outcome (the cleanup run, nothing left), said in `docs/design.md` ("Signals") with the
+  three forms. `--serve` reset INT, TERM and HUP to their default before shutting its
+  launch down, so the second signal of a flood killed it there: 113 of 120 spread floods
+  left the loop's record, some the holder and the keeper too, on bash 5.2 and 5.3 alike;
+  it now ignores them from the start of its ending until it returns, and polls its
+  parent with no substitution. A launch's EXIT cleanup now ignores INT, TERM and HUP
+  while it runs (a Ctrl-C there is not taken; the cleanup is bounded by the mount-point
+  list's 10-second lock), where a signal used to run the cleanup a second time over the
+  first and change the launch's status to 128 + the signal.
 - **A launch signalled while it is set up ends, cleaned up once** (#422). From making
   its session directory until it hands the session to the keeper's supervisor, a
   launch ran its cleanup on INT, TERM or HUP and went on, without its session

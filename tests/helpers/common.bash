@@ -469,6 +469,18 @@ make_fake_ca() {
     -keyout "$1.key" -out "$1" -days 1 >/dev/null 2>&1
 }
 
+# bash52 -- set BASH52 to a bash 5.2, for a test of what bash 5.2 does to a signal
+# handler (#423): AGENT_SANDBOX_TEST_BASH52, or else the system's bash (/usr/bin/bash) when
+# it is a 5.2 (ubuntu-24.04's 5.2.21). Skips the test, saying why, when it is not.
+bash52() {
+  local b="${AGENT_SANDBOX_TEST_BASH52:-/usr/bin/bash}" v
+  # shellcheck disable=SC2016 # the version is the other bash's
+  v="$("$b" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null)" || v=""
+  [[ "$v" == 5.2 ]] || skip "needs a bash 5.2 (#423): $b is ${v:-not a bash}; set AGENT_SANDBOX_TEST_BASH52 to one"
+  # shellcheck disable=SC2034 # BASH52 is for the suites
+  BASH52="$b"
+}
+
 # make_ssh_stubs -- an ssh toolchain that lets _as_ssh_setup run without a real agent or
 # a trusted key: `ssh -G` resolves any spec (user@host pins the user; else it is yours,
 # which the engine does not pin), every host key is "found", ~/.ssh/id_ed25519 is the

@@ -6,6 +6,14 @@
 # -w 10`) after the session directory is made and before bwrap: the stub bwrap is never
 # reached, so this needs no real one. It holds an ssh agent of its own (--ssh), a process
 # whose name is ssh-agent, so the cleanup has one to stop.
+#
+# And what bash 5.2 does to a handler (#423): a signal that arrives while one command
+# substitution runs is handled when bash starts to parse the next substitution of the
+# same simple command, and the handler fails there ("trap: line 2: unexpected EOF while
+# looking for matching `)'"), abandoning the launch (exit 2; the EXIT trap still cleans
+# up). Setup runs one substitution per simple command; the tests here send the TERM
+# inside the first of what were two (fire_in), under a bash 5.2 (bash52), and the EXIT
+# trap's own cleanup ignores the three signals.
 
 setup() {
   load "$BATS_TEST_DIRNAME/../helpers/common"
@@ -27,7 +35,7 @@ sock=""; while [[ \$# -gt 0 ]]; do [[ "\$1" == -a ]] && sock="\$2"; shift; done
 echo "\$!" >"$H/agent.pid"
 echo "SSH_AGENT_PID=\$!; export SSH_AGENT_PID;"
 X
-  HOLD_PID="" LAUNCH_PID=""
+  HOLD_PID="" LAUNCH_PID="" OWNER=""
 }
 
 teardown() {
@@ -118,6 +126,82 @@ launch_held() {
   echo "launch_held: the launch did not reach the list's lock:" >&2
   cat "$H/out" >&2
   return 1
+}
+
+# launch_free [VAR=value...] -- ARGS... -- a launch of ARGS in the background, not held:
+# it runs through setup to its join, or to a refusal. Its output in $H/out; its xtrace
+# (not under coverage) in $H/trace, each line naming the process that ran it ('+PID: '),
+# for fire_in. Sets LAUNCH_PID.
+launch_free() {
+  local -a envs=()
+  # shellcheck disable=SC2016 # PS4 is the engine's to expand
+  local -a trace=(SHELLOPTS=xtrace BASH_XTRACEFD=6 'PS4=+${BASHPID}: ')
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || trace=()
+  while [[ $# -gt 0 && "$1" != -- ]]; do
+    envs+=("$1")
+    shift
+  done
+  shift
+  engine_cmd "$H/bin/asb"
+  (
+    cd "$H/proj" || exit 1
+    exec /usr/bin/env -i --default-signal=INT,TERM,HUP HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" \
+      USER=tester TERM=xterm LANG=C.UTF-8 BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" \
+      AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
+      AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
+      AGENT_SANDBOX_PRESET=shared AGENT_SANDBOX_VERBOSE=on ${trace[@]+"${trace[@]}"} \
+      ${envs[@]+"${envs[@]}"} "${ENGINE_CMD[@]}" "$@"
+  ) </dev/null >"$H/out" 2>&1 3>&- 6>"$H/trace" &
+  LAUNCH_PID=$!
+}
+
+# owner_of -- set OWNER and SESS from the launch's session directory, once there is one.
+owner_of() {
+  local d
+  for d in "$H"/base/session.*; do
+    [[ -s "$d/owner.id" ]] && read -r OWNER _ <"$d/owner.id" && SESS="$d"
+  done
+  [[ -n "$OWNER" ]]
+}
+
+# fire_in FUNCTION COMMAND -- COMMAND, ahead of the real one on the harness's PATH, sends
+# the launch's owner one TERM and then takes 0.5 s, once: when it runs under a
+# substitution whose child called FUNCTION (that child's traced command, launch_free),
+# however deep below the owner, so that the TERM arrives while the owner waits on its
+# own substitution around it. The first such call after the session is stamped decides,
+# so FUNCTION is one whose first call there was a sibling's before #423
+# (_as_links_view_file: _as_links_view_write's; now inside its _as_one).
+fire_in() {
+  local real
+  real="$(command -v "$2")"
+  cat >"$H/bin/$2" <<X
+#!/bin/bash
+set +x
+if [[ ! -e "$H/fired" ]]; then
+  o="" c=\$\$ p="" hit=""
+  for d in "$H"/base/session.*; do [[ -s "\$d/owner.id" ]] && read -r o _ <"\$d/owner.id"; done
+  while [[ -n "\$o" && "\$c" -gt 1 ]]; do
+    grep -q "^+*\$c: $1\\( \\|\$\\)" "$H/trace" && hit=1
+    p=""
+    while read -r k v; do [[ "\$k" == PPid: ]] && p="\$v"; done </proc/\$c/status
+    [[ "\$p" == "\$o" ]] && break
+    c="\$p"
+  done
+  if [[ -n "\$o" && "\$p" == "\$o" && -n "\$hit" ]]; then
+    : >"$H/fired"
+    kill -TERM "\$o"
+    sleep 0.5
+  fi
+fi
+exec "$real" "\$@"
+X
+  chmod +x "$H/bin/$2"
+}
+
+# bash_is_52 -- the engine is run by a bash 5.2 (bash52), linked first on its PATH.
+bash_is_52() {
+  bash52
+  ln -sf "$BASH52" "$H/bin/bash"
 }
 
 # launch_end -- wait for the launch; sets LAUNCH_STATUS.
@@ -211,4 +295,67 @@ signal_once() {
   gone "$(cat "$H/agent.pid")"
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || grep -q '^+* _as_placeholder_release$' "$H/trace"
   release_lock
+}
+
+# fired_clean FUNCTION -- under a bash 5.2, a TERM during the owner's substitution that
+# calls FUNCTION, which ran beside another substitution in one command before #423, ends
+# the launch 143, cleaned up, with no parse error.
+fired_clean() {
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || skip "fire_in reads the launch's xtrace, which coverage takes"
+  bash_is_52
+  : >"$H/home/.ssh/id_ed25519.pub"
+  fire_in "$1" sha256sum
+  launch_free -- --ssh example.test claude --version
+  launch_end
+  [ -e "$H/fired" ]
+  [ "$LAUNCH_STATUS" -eq 143 ]
+  run ! grep -q "unexpected EOF" "$H/out"
+  [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
+}
+
+@test "bash 5.2: a TERM while the launch's links view is named ends it 143, not with a parse error (#423)" {
+  fired_clean _as_links_view_file
+}
+
+@test "a signal while a launch's exit runs its cleanup is ignored: the launch keeps its own status, cleaned up once (#423)" {
+  local real="$BATS_TEST_TMPDIR/real" rm i st
+  mkdir -p "$real" "$H/proj/w"
+  touch "$real/f.md"
+  ln -s "$real" "$H/proj/w/l"
+  # Refused before bwrap (an unapproved link, briefing.bats): the launch ends through its
+  # EXIT trap. Its status without a signal:
+  launch_free AGENT_SANDBOX_NET=none -- --connect './w/l/f.md = read-only' claude --version
+  launch_end
+  st="$LAUNCH_STATUS"
+  [ "$st" -ne 0 ]
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(grep -c '^+*[0-9]*: _as_session_cleanup$' "$H/trace")" -eq 1 ]
+  # Again, the cleanup held at its removal of the session directory, and sent TERMs there.
+  rm="$(command -v rm)"
+  cat >"$H/bin/rm" <<X
+#!/bin/bash
+set +x
+if [[ "\$1 \$2" == "-rf --" && "\$3" == "$H/base/session."* ]]; then
+  : >"$H/in-rm"
+  while [[ ! -e "$H/rm-go" ]]; do sleep 0.05; done
+fi
+exec "$rm" "\$@"
+X
+  chmod +x "$H/bin/rm"
+  OWNER=""
+  launch_free AGENT_SANDBOX_NET=none -- --connect './w/l/f.md = read-only' claude --version
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$H/in-rm" ]] && break
+    sleep 0.05
+  done
+  [ -e "$H/in-rm" ]
+  owner_of
+  for ((i = 0; i < 5; i++)); do
+    kill -TERM "$OWNER"
+    sleep 0.05
+  done
+  : >"$H/rm-go"
+  launch_end
+  [ "$LAUNCH_STATUS" -eq "$st" ]
+  [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(grep -c '^+*[0-9]*: _as_session_cleanup$' "$H/trace")" -eq 1 ]
+  [ -z "$(find "$H/base" -maxdepth 1 -name 'session.*' -print -quit)" ]
 }

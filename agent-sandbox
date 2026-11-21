@@ -458,6 +458,19 @@ _as_python() {
   ${AGENT_SANDBOX_TEST_PYTHON:-python3} "$@"
 }
 
+# _as_one STRING -- print STRING and return the status the shell had on entry: that of
+# the last command substitution in the caller's arguments. So
+# v="$(_as_one "<expression>")" keeps <expression> as written, has one top-level
+# substitution (#423: bash 5.2 runs a handler that arrives during one substitution of a
+# simple command with another after it, and then fails), and its status is the
+# expression's, as `v="<expression>"` would have had. Not for an expression that ends in
+# newlines (the substitution strips them), nor in a hot loop (one fork each).
+_as_one() {
+  local r=$?
+  printf '%s' "$1"
+  return "$r"
+}
+
 # Routine status: what the resolved policy IS on a normal launch (the dot-file
 # values applied, the session allowlist, the seccomp filter in use). Shown only with
 # --verbose / AGENT_SANDBOX_VERBOSE: the same lines at every launch are how a report
@@ -926,7 +939,7 @@ _as_session_begin() {
   local _owner_pid=$BASHPID _owner_start
   _owner_start="$(awk '{print $22}' "/proc/$_owner_pid/stat" 2>/dev/null || echo 0)"
   printf '%s %s\n' "$_owner_pid" "$_owner_start" >"$_session_dir/owner.id"
-  trap '_as_session_cleanup' EXIT
+  trap '_as_session_exit' EXIT
   trap '_as_session_signal 2' INT
   trap '_as_session_signal 15' TERM
   trap '_as_session_signal 1' HUP
@@ -1214,6 +1227,18 @@ _as_session_signal() {
   set +e
   _as_session_cleanup
   exit $((128 + $1))
+}
+
+# _as_session_exit -- the session's EXIT (_as_session_begin): the cleanup, with INT, TERM
+# and HUP ignored while it runs, so that a signal during it does not run
+# _as_session_signal, and the cleanup a second time over the first (#423, R1's N6 on
+# #422); with errexit off, as in _as_session_signal. The exit status is the launch's own.
+# The cost: a Ctrl-C during this cleanup is ignored; the cleanup is bounded by the
+# mount-point list's 10 s lock (_as_placeholder_release).
+_as_session_exit() {
+  trap '' INT TERM HUP
+  set +e
+  _as_session_cleanup
 }
 
 _as_ssh_pick_key() {
@@ -1642,8 +1667,8 @@ _as_project_dir() {
 # key that reads $cwd. Uses the engine's $profile and $_role by dynamic scope.
 # shellcheck disable=SC2154
 _as_sandbox_dir() {
-  printf '%s/%s/%s/%s' "$(_as_state_dir)" "$profile" \
-    "$(_as_path_slug "$(_as_project_dir)")" "${_role:-default}"
+  (printf '%s/%s/%s/%s' "$(_as_state_dir)" "$profile" \
+    "$(_as_path_slug "$(_as_project_dir)")" "${_role:-default}")
 }
 
 # _as_role_resolve -- set $_role: --role > AGENT_SANDBOX_ROLE > [sandbox] role > default.
@@ -2878,7 +2903,7 @@ _as_sandbox_store() {
   local proj role written key="$2" dir rec line c m p st best="" bestp="" bestst="" bestm=""
   IFS=$'\t' read -r proj role written <<<"$1"
   _sbx_src=""
-  dir="$(_as_state_dir)/$profile/$(_as_path_slug "$proj")/$role"
+  dir="$(_as_one "$(_as_state_dir)/$profile/$(_as_path_slug "$proj")/$role")"
   rec="$dir/record.tsv"
   if [[ ! -f "$rec" ]]; then
     # Never launched in that role: the native path, through the channel's relocation.
@@ -3073,7 +3098,7 @@ _as_connect_bind_channel() {
         [[ "$kind" == file ]] || _cow_fellback+=("$ch")
         slot="$(_as_channel_store "$ch" "$path" copy)"
         manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
-        mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+        (mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")") || return 1
         _as_src_guard "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
         [[ "$kind" == file ]] && _as_connect_placeholder "$path"
         args+=(--bind "$slot" "$path")
@@ -3133,7 +3158,7 @@ _as_connect_bind_channel() {
       # rules are a nine-case matrix and inline shell would hide it.
       slot="$(_as_channel_store "$ch" "$path" copy)"
       manifest="$base/$ch/base/$(_as_iso_slug "$path").json"
-      mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+      (mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")") || return 1
       # A channel whose source has nothing yet still needs a mount point (_as_read_copy).
       _as_src_guard "$path" "$src" "$slot" "$kind" _as_read_copy "$ch" "$kind" "$src" "$path" "$slot" "$manifest" || return 1
       [[ "$kind" == file ]] && _as_connect_placeholder "$path"
@@ -3367,7 +3392,7 @@ _as_connect_bind_path() {
       fi
       slot="$base/copy/$(_as_iso_slug "$p")"
       manifest="$base/base/$(_as_iso_slug "$p").json"
-      mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")" || return 1
+      (mkdir -p -- "$(dirname -- "$slot")" "$(dirname -- "$manifest")") || return 1
       _as_src_guard "$p" "$s" "$slot" "$kind" _as_read_dsync "$key" "$kind" "$rsrc" "$slot" "$manifest" || return 1
       args+=(--bind "$slot" "$p")
       _connect_host[$p]="$slot"
@@ -3794,7 +3819,8 @@ _as_keeper_admit() {
     [[ -n "$quiet" ]] || _as_msg "role '${_role:-default}' is running with ${key} = ${have:-(none)}$hv, and $where asks for '$val'$vv. A running role's policy cannot change: exit what is joined into it (or \`$(_as_self_cmd --role "${_role:-default}" --shutdown)\` from any terminal, when its own is out of reach), then launch again."
     return 1
   done < <(_as_keeper_policy set)
-  [[ "$(cat "$kd/dotfile" 2>/dev/null)" == "$(_as_keeper_dotfile_hash)" ]] || _keeper_dotfile_changed=1
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  ([[ "$(cat "$kd/dotfile" 2>/dev/null)" == "$(_as_keeper_dotfile_hash)" ]]) || _keeper_dotfile_changed=1
   return 0
 }
 
@@ -4369,7 +4395,7 @@ _as_keeper_start() {
   ((${#_join_scoped[@]})) && printf '%s\n' "${_join_scoped[@]}" >"$kd/join-scoped"
   # The launch's view (_as_links_view_write), for a join to tell a link to what the role
   # sees already from one that hands it something new (_as_src_strict, #401).
-  cp -- "$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")" "$kd/links.view" 2>/dev/null || :
+  (cp -- "$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")" "$kd/links.view" 2>/dev/null) || :
   # Its single-file binds, for --init to tell what a host write would do to it (#389).
   # None when it cannot be read (an option it does not know, said), and binds.unread to say
   # why: --init then reads the launch's declarations, as for a keeper an older asb started.
@@ -4567,11 +4593,10 @@ _as_connect_reset() {
     local _path_key
     _as_connect_parse_path "$want" own --reset || return 1
     path="$_path_key"
-    local pb="$base/@paths" s1
-    for s1 in "$pb/own/$(_as_iso_slug "$path")" "$pb/seed-only/$(_as_iso_slug "$path")" \
-      "$pb/copy/$(_as_iso_slug "$path")" "$pb/base/$(_as_iso_slug "$path").json" \
-      "$pb/upper/$(_as_iso_slug "$path")" "$pb/work/$(_as_iso_slug "$path")" \
-      "$pb/seen/$(_as_iso_slug "$path").json"; do
+    local pb="$base/@paths" s1 sl
+    sl="$(_as_iso_slug "$path")" || :
+    for s1 in "$pb/own/$sl" "$pb/seed-only/$sl" "$pb/copy/$sl" "$pb/base/$sl.json" \
+      "$pb/upper/$sl" "$pb/work/$sl" "$pb/seen/$sl.json"; do
       [[ -e "$s1" ]] || continue
       chmod -R u+rwX -- "$s1" 2>/dev/null
       rm -rf -- "$s1" || return 1
@@ -5465,8 +5490,17 @@ _as_serve_notes() {
 
 # _as_proc_ppid PID -- print PID's parent.
 _as_proc_ppid() {
+  _as_proc_parent "$1" || return 1
+  printf '%s' "$_pp_parent"
+}
+
+# _as_proc_parent PID -- set _pp_parent to PID's parent (empty, and 1 returned, when it
+# cannot be read). No command substitution, for the loops that poll it with a signal
+# handler armed (#423, _as_serve).
+_as_proc_parent() {
   local k v
-  { while read -r k v; do [[ "$k" == PPid: ]] && printf '%s' "$v" && return 0; done <"/proc/$1/status"; } 2>/dev/null
+  _pp_parent=""
+  { while read -r k v; do [[ "$k" == PPid: ]] && _pp_parent="$v" && return 0; done <"/proc/$1/status"; } 2>/dev/null
   return 1
 }
 
@@ -5645,13 +5679,14 @@ _as_serve_check() {
 _as_serve() {
   local sb proj="$_proj" role="$_role" rdir sessf alivef seenf watch prompt
   local id="" sig last seen="" text hpid tpid rc i new pending=0 said="" fpid me mestart fresh=0
-  local _serve_stop=0 why="" parent
+  local _serve_stop=0 why="" parent _pp_parent
   local -a cmdw=("$_cmd_word" "$@") targ=() turnw=()
   sb="$(_as_sandbox_dir)"
   watch="$proj/$_serve_watch" prompt="$proj/$_serve_prompt"
   rdir="$proj/.asb/coord/$role" sessf="$rdir/session" alivef="$rdir/alive" seenf="$sb/serve.seen"
   mkdir -p -- "$sb" "$rdir" || return 1
-  if [[ -L "$rdir" || "$(realpath -e -- "$rdir")" != "$(realpath -e -- "$proj")/.asb/coord/$role" ]]; then
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  if [[ -L "$rdir" ]] || ([[ "$(realpath -e -- "$rdir")" != "$(realpath -e -- "$proj")/.asb/coord/$role" ]]); then
     _as_msg "--serve: $rdir is not a directory of the project; not writing there"
     return 1
   fi
@@ -5685,7 +5720,8 @@ _as_serve() {
       why=ended
       return 1
     }
-    [[ "$(_as_proc_ppid "$me")" == "$parent" ]] || {
+    _as_proc_parent "$me" || :
+    [[ "$_pp_parent" == "$parent" ]] || {
       why=signal
       return 1
     }
@@ -5802,9 +5838,16 @@ _as_serve() {
     sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
     [[ "$sig" != "$last" ]] && pending=1
   done
-  trap - INT TERM HUP
+  # Ending: the three are ignored, not reset, from here until --serve returns, and
+  # agent_sandbox ends with it. Reset to their default here, a second signal of a flood
+  # killed the loop on the way, and the record, the holder and the keeper were left (#423:
+  # 113 of 120 spread floods); reset before the return, one that came after the record was
+  # removed ended the loop with 128+signal instead of 0. What runs from here
+  # (_as_keeper_shutdown: flock, kill, sleep) needs none of them. A shutdown that failed (a
+  # stuck keeper, its message naming keeper.log) ends --serve at once, with status 1.
+  trap '' INT TERM HUP
   case "$why" in
-    signal) _as_keeper_shutdown "$sb" ;;
+    signal) _as_keeper_shutdown "$sb" || return 1 ;;
     start)
       kill "$hpid" 2>/dev/null
       _as_msg "role '$role': its launch did not start; --serve ends"
@@ -6028,7 +6071,8 @@ _as_briefing_handing() {
 # gone with the role's store at --delete.
 _as_purpose_record() {
   local dir rec cur prev="" tmp
-  dir="$(_as_sandbox_dir)" rec="$(_as_sandbox_dir)/purpose.sha256"
+  dir="$(_as_sandbox_dir)"
+  rec="$dir/purpose.sha256"
   cur="$(_as_purpose_text 2>/dev/null | sha256sum | cut -d' ' -f1)" || cur=""
   [[ -n "$cur" ]] || return 1
   [[ -f "$rec" ]] && prev="$(head -n1 -- "$rec" 2>/dev/null)"
@@ -6364,7 +6408,7 @@ _as_briefing_write() {
     fi
   fi
   _lnshort="$(_as_channel_login_notes | paste -sd' ')"
-  short="agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). Each command you hand says where it runs -- this session (behind its shell escape, where this agent has one; inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user."
+  short="$(_as_one "agent-sandbox: this session is sandboxed and the limits are enforced outside the agent. Egress is ${egress%%.*}. Writable: ${rw_line}$(_as_preset_is_native || printf '; under ~ only ~/.cache (and /tmp) -- point a tool that writes under ~ there with its variable'). Other projects: ${mem_short}. seccomp ${sec%%:*}. SSH: ${ssh_line}.${conda_short} A blocked action is deliberate, so do not retry it or route around it; what is open was opened on purpose, so use it. Details: $inside/briefing.md. What you hand the user to run is one line or a file, and a file you name is named by its host path (where your files are on the host: briefing.md). Each command you hand says where it runs -- this session (behind its shell escape, where this agent has one; inside paths) or the host (the user's shell, host paths) -- never one whose paths exist only on the other side. If something is blocked, stop before going on without it -- a mirror or another tool for the same thing counts as going on without it: tell the user what you need, why, and the \`asb --apply\` command to run on the host, and continue without it only when they say so -- you cannot widen this yourself. Keep $(_as_summary_inside)/line current, one line on what this session is about and where it stands, rewritten whenever that changes; a turn does not end while the line is missing or empty; do not mention it to the user.")"
   [[ -n "$_lnshort" ]] && short+=" Not set up yet -- tell the user: $_lnshort"
 
   # The role's purpose (#222), after the engine's own lines, at every session start --
@@ -6498,7 +6542,9 @@ _as_mitmdump() {
     printf '%s' "$AGENT_SANDBOX_MITMDUMP"
     return 0
   fi
-  for c in "$(_as_conda_home)/proxy-venv/bin/mitmdump" "$(_as_conda_home)/proxy-env/bin/mitmdump"; do
+  local ch
+  ch="$(_as_conda_home)" || :
+  for c in "$ch/proxy-venv/bin/mitmdump" "$ch/proxy-env/bin/mitmdump"; do
     [[ -f "$c" && -x "$c" ]] && printf '%s' "$c" && return 0
   done
   return 1
@@ -6584,10 +6630,14 @@ _as_own_proxy_plan() {
 _as_own_proxy_start() {
   local i
   printf 'agent-sandbox: proxy of its own: %s on 127.0.0.1:%s, sessions in %s\n' "$_own_proxy" "$_proxy_port" "$(_as_session_base)"
-  env -i HOME="$HOME" USER="${USER:-$(id -un)}" PATH="$PATH" AGENT_SANDBOX_SESSION_BASE="$(_as_session_base)" \
+  local _op_user _op_base _op_addon
+  _op_user="${USER:-$(id -un)}" || :
+  _op_base="$(_as_session_base)" || :
+  _op_addon="$(_as_config_dir)/allowlist_addon.py" || :
+  env -i HOME="$HOME" USER="$_op_user" PATH="$PATH" AGENT_SANDBOX_SESSION_BASE="$_op_base" \
     PYTHONUNBUFFERED=1 "$_own_proxy" --listen-host 127.0.0.1 --listen-port "$_proxy_port" \
     --set block_global=false --set termlog_verbosity=info --set flow_detail=0 --set http2=false \
-    -s "$(_as_config_dir)/allowlist_addon.py" &
+    -s "$_op_addon" &
   _own_proxy_pid=$!
   for ((i = 0; i < 100; i++)); do
     kill -0 "$_own_proxy_pid" 2>/dev/null || break
@@ -7002,7 +7052,7 @@ _as_conda_root() { printf '%s/conda' "$(_as_conda_home)"; }
 # (_as_project_env_dir), so two projects' environments of one name are two. PROJECT is
 # this launch's (_as_project_dir) when not given. The host's base keeps <base>/envs/NAME:
 # those are the user's own environments, shared by name.
-_as_sandbox_env_prefix() { printf '%s/envs/%s/%s' "$(_as_conda_root)" "$(_as_project_env_dir "${2:-$(_as_project_dir)}")" "$1"; }
+_as_sandbox_env_prefix() { (printf '%s/envs/%s/%s' "$(_as_conda_root)" "$(_as_project_env_dir "${2:-$(_as_project_dir)}")" "$1"); }
 # _as_project_env_dir PROJECT -- the project's directory name under the conda root's envs/:
 # its basename made safe ([^A-Za-z0-9._-] -> -, at most 32 characters), a -, and the first
 # 12 hex digits of the SHA-256 of its path (as the trust store hashes it). Short, whatever
@@ -7215,7 +7265,8 @@ _as_briefing_resolve() {
   local -a names=()
   [[ -n "$base" && "$base" != "$role" ]] && names+=("$base")
   names+=("$role")
-  dir="$(dirname -- "$_purpose_file")" dir_as="$(dirname -- "$_purpose_as")"
+  dir="$(dirname -- "$_purpose_file")" || :
+  dir_as="$(dirname -- "$_purpose_as")"
   for n in "${names[@]}"; do
     [[ -f "$dir/$n.addendum.md" ]] || continue
     _purpose_addenda+=("$dir/$n.addendum.md")
@@ -7429,7 +7480,7 @@ _as_trust_record() {
 # _as_trust_forget CWD -- drop the approval of CWD's dot-file, hash and content.
 _as_trust_forget() {
   local rec
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$1")"
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$1")")"
   rm -f -- "$rec" "$rec.approved"
   rm -rf -- "$rec.purpose"
 }
@@ -7448,7 +7499,7 @@ _as_trust_forget() {
 # to ask (one file per role: a launch prunes only its own); and <rec>.view.*, per role,
 # the directories a launch bound plainly from the host, which --trust scans (the scan
 # is never run at an ordinary launch). All under the trust store, which no role sees.
-_as_links_rec() { printf '%s/trust/%s.links' "$(_as_config_dir)" "$(_as_sha256_str "$1")"; }
+_as_links_rec() { (printf '%s/trust/%s.links' "$(_as_config_dir)" "$(_as_sha256_str "$1")"); }
 
 # _as_links_approved PROJECT LINE -- is LINE (five fields, the mode last) in PROJECT's
 # record?
@@ -7523,7 +7574,7 @@ _as_links_show() {
   printf '\nimplied by symbolic links (each a declaration you did not write; the mode is what the path had without the link at the launch that found it):\n'
   for l in "$@"; do
     IFS=$'\t' read -r -a f <<<"$l"
-    printf '  %s = %s outside:%s\n' "$(_as_tilde "${f[0]}")" "${f[4]:-MODE}" "$(_as_tilde "${f[2]}")"
+    (printf '  %s = %s outside:%s\n' "$(_as_tilde "${f[0]}")" "${f[4]:-MODE}" "$(_as_tilde "${f[2]}")")
     rest="${f[1]}"
     while [[ -n "$rest" ]]; do
       e="${rest%% ; *}"
@@ -7703,7 +7754,7 @@ _as_links_gate() {
   # role's lines, or this role's with another mode (another preset), are not this
   # launch's to drop.
   if [[ -n "$proj" ]]; then
-    rec="$(_as_links_rec "$proj").pending.$(_as_sha256_str "${profile:-}/${_role:-default}")"
+    rec="$(_as_one "$(_as_links_rec "$proj").pending.$(_as_sha256_str "${profile:-}/${_role:-default}")")"
     _as_links_locked "$rec" _as_links_pending_update "$rec" ${new[@]+"${new[@]}"} -- ${spend[@]+"${spend[@]}"} || true
   fi
   ((${#new[@]})) || return 0
@@ -7724,7 +7775,7 @@ _as_links_gate() {
   local -a f=()
   for l in "${new[@]}"; do
     IFS=$'\t' read -r -a f <<<"$l"
-    _as_msg "connect: $(_as_tilde "${f[0]}") is reached through a symbolic link (${f[1]// ; /, }) to $(_as_tilde "${f[2]}"), which is outside the role's view: it stands for '$(_as_tilde "${f[0]}") = ${f[4]:-MODE} outside:$(_as_tilde "${f[2]}")', new or changed since you approved this project's links."
+    (_as_msg "connect: $(_as_tilde "${f[0]}") is reached through a symbolic link (${f[1]// ; /, }) to $(_as_tilde "${f[2]}"), which is outside the role's view: it stands for '$(_as_tilde "${f[0]}") = ${f[4]:-MODE} outside:$(_as_tilde "${f[2]}")', new or changed since you approved this project's links.")
   done
   _as_msg "Refusing to launch until it is reviewed: launch from a terminal to be asked, or review it with: ${invoked:-agent-sandbox} --trust"
   return 1
@@ -8767,7 +8818,8 @@ _as_login_clean() {
     return 1
   fi
   [[ -e "$sb" || -L "$sb" ]] || return 0
-  if [[ -L "$pd" || -L "$sb" || ! -d "$sb" || "$(readlink -f -- "$sb")" != "$(readlink -f -- "$st")/$p/$slug/account-login" ]]; then
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  if [[ -L "$pd" || -L "$sb" || ! -d "$sb" ]] || ([[ "$(readlink -f -- "$sb")" != "$(readlink -f -- "$st")/$p/$slug/account-login" ]]); then
     _as_msg "--login: not removing $sb: it is not the login role's own directory (a symlink, or not a directory)"
     return 1
   fi
@@ -8908,7 +8960,7 @@ _as_login() {
   fi
   # (U1: a dead login file, an expired one, would be handled here, before the login.)
   # This same engine, by the name it was run as (asb, agent-sandbox), as --roles runs it.
-  self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+  self="$(_as_one "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")")"
   # Ctrl-C reaches the login (the terminal's foreground group) and ends it; here it only
   # interrupts the wait, so the cleanup still runs. A handler, not an ignore, so the
   # login does not inherit an ignored SIGINT.
@@ -9546,7 +9598,8 @@ _as_base_entry_binds() {
   # Every entry checked: only now is anything in the account's directory changed.
   for e in ${todo[@]+"${todo[@]}"}; do
     name="${e##*/}" dest="$profile_base/${e##*/}" a="$_acct_dir/${e##*/}"
-    if [[ -L "$a" ]] && ! [[ -L "$e" && "$(readlink -- "$a")" == "$(readlink -- "$e")" ]]; then
+    # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+    if [[ -L "$a" ]] && ! ([[ -L "$e" && "$(readlink -- "$a")" == "$(readlink -- "$e")" ]]); then
       rm -f -- "$a" || {
         _as_msg "the account '${_acct_name:-}': cannot remove the stale symlink '$a' that an earlier launch made for the base's '$e'"
         return 1
@@ -9955,7 +10008,8 @@ _as_trust_notes() {
 _as_trust_prompt() {
   local cwd="$1" rc=0
   _as_links_found "$cwd"
-  if [[ ! -f "$cwd/.agent-sandbox" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]; then
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  if [[ ! -f "$cwd/.agent-sandbox" ]] && ([[ ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]); then
     ((${#_lf_lines[@]})) || return 1
   else
     _as_trust_prompt_file "$cwd" || rc=1
@@ -9968,7 +10022,7 @@ _as_trust_prompt() {
 _as_trust_prompt_file() {
   local cwd="$1" file rec ans
   file="$cwd/.agent-sandbox"
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")")"
   if [[ ! -f "$file" ]]; then
     {
       printf '\nagent-sandbox: %s has no .agent-sandbox, but one was approved earlier' "$cwd"
@@ -10014,7 +10068,7 @@ _as_trust_prompt_file() {
 _as_trust_show_review() {
   local cwd="$1" file rec
   file="$cwd/.agent-sandbox"
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")")"
   {
     if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file" \
       && ! cmp -s -- "$rec.approved" "$file"; then
@@ -10049,7 +10103,7 @@ _as_trust_show_review() {
     done < <(_as_dotfile_briefing_files "$cwd" "$file")
     while IFS= read -r f; do
       [[ -n "$f" ]] || continue
-      printf '\naddendum %s: no role reads it -- no [briefing] section names a role or an instance %s (an addendum is <role>.addendum.md or <instance>.addendum.md beside the purpose file).\n' "$(_as_tilde "$f")" "$(basename -- "$f" .addendum.md)"
+      (printf '\naddendum %s: no role reads it -- no [briefing] section names a role or an instance %s (an addendum is <role>.addendum.md or <instance>.addendum.md beside the purpose file).\n' "$(_as_tilde "$f")" "$(basename -- "$f" .addendum.md)")
     done < <(_as_dotfile_briefing_files "$cwd" "$file" unread)
   } >&2
   _as_trust_notes "$cwd" "$file"
@@ -12445,12 +12499,12 @@ _as_check_plan() {
     # Its account (#355): the one in force and where it was named, else the base.
     # A directory _as_account_check refused is said so (--check reports, a launch refuses).
     if [[ -n "${_acct_name:-}" && -n "${_acct_dir:-}" ]]; then
-      printf "  account: %s -- %s; its directory %s is the state directory; the base's other entries bound one by one, never its login\n" "$_acct_name" \
-        "$(_as_account_where "$_acct_from")" "$(_as_tilde "$_acct_dir")"
+      (printf "  account: %s -- %s; its directory %s is the state directory; the base's other entries bound one by one, never its login\n" "$_acct_name" \
+        "$(_as_account_where "$_acct_from")" "$(_as_tilde "$_acct_dir")")
     elif [[ -n "${_acct_name:-}" ]]; then
-      printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --agent %s --account %s --login\n' \
+      (printf '  account: %s -- %s; its directory %s is NOT USABLE (above), so a launch refuses: log it in with %s --agent %s --account %s --login\n' \
         "$_acct_name" "$(_as_account_where "$_acct_from")" "$(_as_tilde "$(_as_state_dir)/$profile/accounts/$_acct_name")" \
-        "$invoked" "$profile" "$_acct_name"
+        "$invoked" "$profile" "$_acct_name")
     elif [[ -n "${_acct_from:-}" ]]; then
       printf '  account: the base (-, %s)\n' "$(_as_account_where "$_acct_from")"
     fi
@@ -12488,8 +12542,8 @@ _as_check_plan() {
     esac
     case "${_conda_mode:-}" in
       sandbox)
-        printf "  conda: agent-sandbox's micromamba, root %s%s -- %s\n" "$(_as_tilde "$_conda_root")" \
-          "$([[ -x "$_conda_mm/micromamba" ]] || printf ' (NOT INSTALLED: a launch with conda refuses; run install.sh)')" "$_conda_mode_src"
+        (printf "  conda: agent-sandbox's micromamba, root %s%s -- %s\n" "$(_as_tilde "$_conda_root")" \
+          "$([[ -x "$_conda_mm/micromamba" ]] || printf ' (NOT INSTALLED: a launch with conda refuses; run install.sh)')" "$_conda_mode_src")
         ;;
       host) printf "  conda: the host's at %s (conda) -- %s\n" "$(_as_tilde "${_conda_hbase:-${CONDA_PREFIX:-}}")" "$_conda_mode_src" ;;
     esac
@@ -12631,8 +12685,8 @@ _as_check_editable() {
     done
     ((ok)) && continue
     ((n++)) || printf '\nThe conda env %s imports from source trees this role cannot read (editable installs):\n' "$(_as_tilde "$CONDA_PREFIX")" >&2
-    printf "  %s -- its imports fail inside; to declare it: %s --apply '%s' '%s/ = read-only'\n" \
-      "$(_as_tilde "$s")" "$invoked" "$sect" "$(_as_tilde "$s")" >&2
+    (printf "  %s -- its imports fail inside; to declare it: %s --apply '%s' '%s/ = read-only'\n" \
+      "$(_as_tilde "$s")" "$invoked" "$sect" "$(_as_tilde "$s")" >&2)
   done < <(_as_env_editable_sources "$CONDA_PREFIX")
   return 0
 }
@@ -12862,7 +12916,7 @@ _as_check_source() {
   if [[ "$proj" == "$cwd" ]]; then
     printf 'from sandbox:@%s' "$role"
   else
-    printf 'from sandbox:%s%s' "$(_as_tilde "$proj")" "$([[ "$role" == default ]] || printf '@%s' "$role")"
+    (printf 'from sandbox:%s%s' "$(_as_tilde "$proj")" "$([[ "$role" == default ]] || printf '@%s' "$role")")
   fi
 }
 
@@ -12948,7 +13002,7 @@ _as_check_reach() {
       done
     fi
     _in+=("$(_rank "$how")"$'\t'"$how"$'\t'"$name"$'\t'"$mode, $src")
-    [[ "$mode" == read-write ]] && _out+=("$(_rank "$how")"$'\t'"$how"$'\t'"$(_as_check_name "$k")"$'\t'"read-write: this session's writes land there")
+    [[ "$mode" == read-write ]] && _out+=("$(_as_one "$(_rank "$how")"$'\t'"$how"$'\t'"$(_as_check_name "$k")"$'\t'"read-write: this session's writes land there")")
   done
   _show() { # TITLE SUBTITLE ROWS...
     local title="$1" sub="$2" how name what
@@ -13000,7 +13054,7 @@ _as_check_binds() {
   {
     printf '\nBinds, outer first:\n'
     if [[ -n "$profile_base" && -n "${_acct_dir:-}" ]]; then
-      _as_check_row "$(_as_tilde "$profile_base")" read-write "account $_acct_name: $(_as_tilde "$_acct_dir") (its state directory)"
+      (_as_check_row "$(_as_tilde "$profile_base")" read-write "account $_acct_name: $(_as_tilde "$_acct_dir") (its state directory)")
     elif [[ -n "$profile_base" && -n "${_acct_name:-}" ]]; then
       _as_check_row "$(_as_tilde "$profile_base")" read-write "account $_acct_name: not usable, a launch refuses"
     elif [[ -n "$profile_base" ]]; then
@@ -13084,7 +13138,7 @@ _as_check_binds() {
 _as_trust_check() {
   local cwd="$1" file rec
   file="$cwd/.agent-sandbox"
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")"
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")")"
   # What the review would list of the links (#401): a launch's that it could not ask
   # about, and the scan's.
   _as_links_found "$cwd"
@@ -13363,7 +13417,8 @@ _as_init() {
   local model="$1" env="$2"
   shift 2
   local proj mdir tpl project top
-  proj="$(pwd -P)" project="$(basename -- "$proj")"
+  proj="$(pwd -P)" || :
+  project="$(basename -- "$proj")"
   if _as_inside_sandbox; then
     _as_msg "--init runs on the host: it writes the policy a sandbox runs under."
     return 1
@@ -13390,7 +13445,7 @@ _as_init() {
     _as_init_envfile "$model" "$tpl" "$proj" || return $?
     if [[ -n "$_ief_path" ]]; then
       env="$_ief_env" envfile="$_ief_path" _init_shared="$_ief_shared"
-      _as_msg "--init: the environment from .agent-sandbox's model '$(basename -- "$model")' lines: $( ((_init_shared)) && printf -- --shared-env || printf -- --env) $env$([[ "$env" == "$envfile" ]] || printf ' (%s)' "$envfile")"
+      (_as_msg "--init: the environment from .agent-sandbox's model '$(basename -- "$model")' lines: $( ((_init_shared)) && printf -- --shared-env || printf -- --env) $env$([[ "$env" == "$envfile" ]] || printf ' (%s)' "$envfile")")
     fi
   fi
   # The template's text for this --init (#268): a line `#@own LINE` belongs to an
@@ -13682,9 +13737,10 @@ _as_init() {
       *)
         base="$_conda_hbase" envpath="$_conda_hbase/envs/$env"
         if [[ "$_conda_mode" == sandbox ]]; then
-          base="$(_as_conda_root)" envpath="$(_as_sandbox_env_prefix "$env" "$proj")"
+          base="$(_as_conda_root)" || :
+          envpath="$(_as_sandbox_env_prefix "$env" "$proj")"
           if ((${_init_shared:-0})) && [[ -z "$envfile" ]]; then
-            _as_msg "--init: --shared-env $env: under agent-sandbox's conda root each project's environments are its own, $(_as_tilde "$base")/envs/<project>-<hash>/<name> ($(_as_tilde "$envpath") is this project's $env), so a name cannot say whose: give the other project's environment by its path, --shared-env $(_as_tilde "$base")/envs/<project>-<hash>/$env"
+            (_as_msg "--init: --shared-env $env: under agent-sandbox's conda root each project's environments are its own, $(_as_tilde "$base")/envs/<project>-<hash>/<name> ($(_as_tilde "$envpath") is this project's $env), so a name cannot say whose: give the other project's environment by its path, --shared-env $(_as_tilde "$base")/envs/<project>-<hash>/$env")
             return 1
           fi
         fi
@@ -14035,7 +14091,8 @@ _as_init() {
   # or launch-named roles (a github file from before gh-setup has [connect:gh-*] alone).
   [[ -f "$df" ]] && marks="$(sed -n 's/^# ---- \(written\|added\) by asb --init \(.*\) ----$/\2/p' "$df")"
   while IFS= read -r q; do
-    [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && inmodel=1
+    # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+    [[ -n "$q" ]] && ([[ "$(basename -- "$q")" == "$(basename -- "$model")" ]]) && inmodel=1
   done <<<"$marks"
   if ((! inmodel)) && [[ -z "$marks" && -n "$sufs" ]]; then
     for i in "${!heads[@]}"; do
@@ -14321,7 +14378,8 @@ _as_init() {
   local setup_left=""
   local epmine=0
   while IFS= read -r q; do
-    [[ -n "$q" && "$(basename -- "$q")" == "$(basename -- "$model")" ]] && epmine=1
+    # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+    [[ -n "$q" ]] && ([[ "$(basename -- "$q")" == "$(basename -- "$model")" ]]) && epmine=1
   done <<<"$marks"
   if ((${#ep_k[@]} && epmine)); then
     local reg=0 sec="" x k1 kk l ephold=0
@@ -14341,7 +14399,8 @@ _as_init() {
     while IFS= read -r l || [[ -n "$l" ]]; do
       if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
         reg=0 ephold=0
-        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+        ([[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]]) && reg=1
       elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
         sec="${BASH_REMATCH[2]}" ephold=0
         if ((reg)) && [[ -n "${BASH_REMATCH[1]}" && -z "${ep_1["$sec"$'\t'"$l"]+x}" ]]; then
@@ -14401,7 +14460,8 @@ _as_init() {
       l="${L[i]}" keep[i]=1 H[i]=""
       if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
         reg=0
-        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+        ([[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]]) && reg=1
         H[i]="${BASH_REMATCH[1]}"$'\n'
       else
         _init_hdrv "$l" # as the parser reads it: a section of yours ends a removed one
@@ -14708,7 +14768,8 @@ _as_init() {
     case "$rel" in
       .asb/migrate/*)
         for t in "${iord1[@]}"; do
-          [[ "$(basename -- "$t")" == "${rel##*/}" && -n "$(cut -d$'\x1f' -f5 <<<"${itgt[$t]}")" ]] || continue
+          # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+          ([[ "$(basename -- "$t")" == "${rel##*/}" && -n "$(cut -d$'\x1f' -f5 <<<"${itgt[$t]}")" ]]) || continue
           _init_fate "$t"
           case "$_if" in
             new | same | update) _ic=remove ;;
@@ -14862,7 +14923,8 @@ _as_init() {
       [[ -n "$why" ]] || continue
       # a sandbox of another project: named with it, and shut down from there
       who="role '$role'" cmd="$invoked --role $role --shutdown $prof"
-      if [[ "$(basename -- "$(dirname -- "$sb")")" != "$(_as_path_slug "$proj")" ]]; then
+      # shellcheck disable=SC2233 # the subshell: one substitution per simple command (#423)
+      if ([[ "$(basename -- "$(dirname -- "$sb")")" != "$(_as_path_slug "$proj")" ]]); then
         if [[ -n "$a" ]]; then
           who+=" of the project $(printf '%q' "$a")"
           cmd="cd $(printf '%q' "$a") && $cmd"
@@ -15033,7 +15095,8 @@ _as_init() {
       l="${ep_lines[li]}"
       if [[ "$l" =~ ^#\ ----\ (written|added)\ by\ asb\ --init\ (.*)\ ----$ ]]; then
         reg=0
-        [[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]] && reg=1
+        # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+        ([[ "$(basename -- "${BASH_REMATCH[2]}")" == "$(basename -- "$model")" ]]) && reg=1
       elif [[ "$l" =~ ^(\# )?(\[[^]]*\]) ]]; then
         sec="${BASH_REMATCH[2]}"
       fi
@@ -15058,12 +15121,12 @@ _as_init() {
   fi
   if ((${#ep_k[@]} && epmine)); then
     if ((${#ep_left[@]})); then
-      _as_msg "--init: ${#ep_left[@]} environment line$( ((${#ep_left[@]} == 1)) || printf s) not completed: your .agent-sandbox does not have $( ((${#ep_left[@]} == 1)) && printf it || printf them) as --init wrote $( ((${#ep_left[@]} == 1)) && printf it || printf them) without an environment (changed or removed since), so $( ((${#ep_left[@]} == 1)) && printf 'it is' || printf 'they are') left as you have $( ((${#ep_left[@]} == 1)) && printf it || printf them); model '$model''s line$( ((${#ep_left[@]} == 1)) || printf s) for --env $env:"
+      (_as_msg "--init: ${#ep_left[@]} environment line$( ((${#ep_left[@]} == 1)) || printf s) not completed: your .agent-sandbox does not have $( ((${#ep_left[@]} == 1)) && printf it || printf them) as --init wrote $( ((${#ep_left[@]} == 1)) && printf it || printf them) without an environment (changed or removed since), so $( ((${#ep_left[@]} == 1)) && printf 'it is' || printf 'they are') left as you have $( ((${#ep_left[@]} == 1)) && printf it || printf them); model '$model''s line$( ((${#ep_left[@]} == 1)) || printf s) for --env $env:")
       printf '    %s\n' "${ep_left[@]}" >&2
     fi
   elif ((${#ep_k[@]} && ! epmine)) && grep -qE '^# \[conda|ENVPATH' "$df"; then
     mapfile -t ep_left < <(grep -nE '^# \[conda|ENVPATH' "$df" | tr -d '\r' | sed 's/^/line /')
-    _as_msg "--init: the environment's lines in .agent-sandbox could not be completed for --env $env: it has no '# ---- written by asb --init $(basename -- "$model") ----' line to find model '$model''s sections by$(grep -q $'\r' "$df" && printf ' (its lines end in CR LF)'); complete these by hand:"
+    (_as_msg "--init: the environment's lines in .agent-sandbox could not be completed for --env $env: it has no '# ---- written by asb --init $(basename -- "$model") ----' line to find model '$model''s sections by$(grep -q $'\r' "$df" && printf ' (its lines end in CR LF)'); complete these by hand:")
     printf '    %s\n' "${ep_left[@]}" >&2
   fi
   # The sections of the instances a re-run's count removes (_init_drop), in one rewrite
@@ -15303,7 +15366,7 @@ _as_init() {
         # for a file that names {envpath}, so not taken for granted here)
         local csrc="${envpath:-$env}"
         [[ -n "$envpath" || "$env" == */* ]] || csrc="$(_as_sandbox_env_prefix "$env" "$proj")"
-        "$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$csrc" -p "$proj/$prefix" >/dev/null || {
+        ("$(_as_micromamba_bin)/micromamba" create -q -y -r "$(_as_conda_root)" --clone "$csrc" -p "$proj/$prefix" >/dev/null) || {
           _as_msg "--init: 'micromamba create --clone $csrc -p $prefix' failed (conda base = sandbox, $_conda_mode_src)"
           return 1
         }
@@ -15338,7 +15401,8 @@ _as_init() {
   for f in "$mdir"/bin/*; do
     [[ -f "$f" ]] || continue
     _init_purpose "$f" ".asb/bin/$(basename -- "$f")" "" "" "" || return $?
-    [[ -L "$proj/.asb/bin/$(basename -- "$f")" || ! -f "$proj/.asb/bin/$(basename -- "$f")" || -x "$proj/.asb/bin/$(basename -- "$f")" ]] \
+    # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+    ([[ -L "$proj/.asb/bin/$(basename -- "$f")" || ! -f "$proj/.asb/bin/$(basename -- "$f")" || -x "$proj/.asb/bin/$(basename -- "$f")" ]]) \
       || chmod 755 -- "$proj/.asb/bin/$(basename -- "$f")" || return 1
   done
   # The project's test commands for the roles (`tests`, #301): written once with the
@@ -15500,7 +15564,7 @@ _as_init() {
   done
   if ((nmiss)); then
     printf '\n' >&2
-    _as_msg "--init: $nmiss line$( ((nmiss == 1)) || printf s) model '$model' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add $( ((nmiss == 1)) && printf it || printf them) with:"
+    (_as_msg "--init: $nmiss line$( ((nmiss == 1)) || printf s) model '$model' has now that your .agent-sandbox lacks -- --init does not write into an existing file; add $( ((nmiss == 1)) && printf it || printf them) with:")
     printf '%s' "$applies" >&2
   fi
 
@@ -15535,7 +15599,8 @@ _as_trust_review() {
   local cwd="$1" file ans
   file="$cwd/.agent-sandbox"
   _as_links_found "$cwd"
-  if [[ ! -f "$file" && ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]] && ((${#_lf_lines[@]} == 0)); then
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  if [[ ! -f "$file" ]] && ([[ ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]) && ((${#_lf_lines[@]} == 0)); then
     _as_msg "no .agent-sandbox in $cwd"
     return 1
   fi
@@ -15637,7 +15702,7 @@ _as_dotfile_write() {
       return 0
     fi
     exec {fd}<&-
-    _as_msg "$f could not be written in full, and may be half-written now. The text it was to have is kept in $t: put it in place with  cat $(printf '%q' "$t") >$(printf '%q' "$f")  (or restore the file), then review it with --trust"
+    (_as_msg "$f could not be written in full, and may be half-written now. The text it was to have is kept in $t: put it in place with  cat $(printf '%q' "$t") >$(printf '%q' "$f")  (or restore the file), then review it with --trust")
     return 1
   fi
   t="$(mktemp -- "$(dirname -- "$f")/.agent-sandbox.XXXXXX")" || {
@@ -15831,7 +15896,10 @@ _as_apply() {
   fi
   # When it applies: at a launch. A running role's policy does not change.
   _as_msg "the change applies at the next launch of $([[ -n "$glob" ]] && printf "the roles matching '%s'" "$glob" || printf 'every role')."
-  for d in "$(_as_state_dir)"/*/"$(_as_path_slug "$cwd")"/*/keeper/id; do
+  local sd sl
+  sd="$(_as_state_dir)" || :
+  sl="$(_as_path_slug "$cwd")" || :
+  for d in "$sd"/*/"$sl"/*/keeper/id; do
     [[ -e "$d" ]] || continue
     d="${d%/keeper/id}" r="${d##*/}" p="${d%/*}" p="${p%/*}" p="${p##*/}"
     # shellcheck disable=SC2053 # the glob is the pattern
@@ -16482,7 +16550,7 @@ _as_links_view_write() {
   # (never under native: _as_ro_pins returns before it)
   [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
   local _vw_f _vw_k _vw_m _vw_t
-  _vw_f="$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")"
+  _vw_f="$(_as_one "$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")")"
   _vw_t="$_vw_f.$BASHPID.tmp" # this launch's own: concurrent launches each rename theirs
   mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
   for ((_vw_k = 0; _vw_k < ${#_on[@]}; _vw_k++)); do
@@ -16737,7 +16805,7 @@ _as_links_where() {
   elif [[ "$1" == "$2" ]]; then
     printf '%s (the %s channel)' "$(_as_tilde "$1")" "$3"
   else
-    printf '%s, on the way of %s (the %s channel)' "$(_as_tilde "$1")" "$(_as_tilde "$2")" "$3"
+    (printf '%s, on the way of %s (the %s channel)' "$(_as_tilde "$1")" "$(_as_tilde "$2")" "$3")
   fi
 }
 
@@ -16751,7 +16819,7 @@ _as_links_unsupported() {
 # passes the checks a written outside: source does (_as_outside_ok); on no, the link is
 # refused with that refusal's message.
 _as_links_outside_ok() {
-  _as_outside_ok "$3" "$4" "connect: $(_as_tilde "$1") is reached through a symbolic link (${2// ; /, }) to $(_as_tilde "$3"), which stands for '$(_as_tilde "$1") = $4 outside:$(_as_tilde "$3")'; as written that is refused, so the link is: refusing 'outside:$(_as_tilde "$3")'"
+  (_as_outside_ok "$3" "$4" "connect: $(_as_tilde "$1") is reached through a symbolic link (${2// ; /, }) to $(_as_tilde "$3"), which stands for '$(_as_tilde "$1") = $4 outside:$(_as_tilde "$3")'; as written that is refused, so the link is: refusing 'outside:$(_as_tilde "$3")'")
 }
 
 # _as_ro_pins_chain PATH BIND src|dest -- for _as_ro_pins, on its locals: resolve PATH --
@@ -17660,7 +17728,7 @@ _as_roles_open() {
   # The review a launch runs (_as_trust_prompt), once, here; a no opens nothing, as every
   # pane would refuse, and so does no terminal to ask at.
   local df="$dir/.agent-sandbox" rec need=0 hit
-  rec="$(_as_config_dir)/trust/$(_as_sha256_str "$dir")"
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$dir")")"
   if [[ -f "$df" ]]; then
     _as_dotfile_trusted "$dir" "$df" || need=1
   elif [[ -f "$rec" ]]; then
@@ -17700,7 +17768,7 @@ _as_roles_open() {
         envpath="$(_as_dotfile_role_envpath "$df" setup)"
         if [[ -n "$envpath" && ! -d "$envpath/conda-meta" ]]; then
           _as_msg "--roles: the setup role has not built the environment at $(_as_tilde "$envpath") yet: running $invoked --role setup"
-          self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+          self="$(_as_one "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")")"
           exec "$self" ${_roles_setup_argv[@]+"${_roles_setup_argv[@]}"}
         fi
       fi
@@ -17878,7 +17946,7 @@ _as_roles_open() {
     return 1
   fi
   # This same engine, by the name it was run as (asb, agent-sandbox), from any directory.
-  self="$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")"
+  self="$(_as_one "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")")"
   local -a args=() aw=()
   local i=0
   for r in "${_roles[@]}"; do
@@ -17931,7 +17999,7 @@ _as_roles_open() {
         said[$k]=1
         how+="${how:+, }$k"
       done
-      log="$(_as_state_dir)/.roles-resets/$(_as_path_slug "$dir").log"
+      log="$(_as_one "$(_as_state_dir)/.roles-resets/$(_as_path_slug "$dir").log")"
       if mkdir -p -- "${log%/*}" \
         && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "${watch[@]}" </dev/null >>"$log" 2>&1; then
         _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start ($how) in that role's pane, then goes (log: $log)"
@@ -18790,7 +18858,7 @@ agent_sandbox() (
     local -a _ag_lines=()
     _ag_proj="$(pwd -P)"
     _ag_file="$_ag_proj/.agent-sandbox"
-    _ag_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_ag_proj")"
+    _ag_rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$_ag_proj")")"
     if [[ "$_ag_mode" == launch ]] && _as_has_terminal && ! _as_inside_sandbox; then
       if { [[ -f "$_ag_file" ]] && ! _as_dotfile_trusted "$_ag_proj" "$_ag_file"; } || { [[ ! -f "$_ag_file" && -f "$_ag_rec" ]]; }; then
         _trust_asked=1
@@ -18818,8 +18886,10 @@ agent_sandbox() (
         if [[ -f "$_ag_file" ]] && ((! _ag_read)); then
           # A running launch of the role under an approved copy (any profile's: the
           # profile is what is unknown here) is what a join would have joined.
-          local _ag_k _ag_live=0
-          for _ag_k in "$(_as_state_dir)"/*/"$(_as_path_slug "$_ag_proj")/$_ag_role"; do
+          local _ag_k _ag_live=0 _ag_sd _ag_sl
+          _ag_sd="$(_as_state_dir)" || :
+          _ag_sl="$(_as_path_slug "$_ag_proj")" || :
+          for _ag_k in "$_ag_sd"/*/"$_ag_sl/$_ag_role"; do
             [[ -f "$_ag_k/keeper/dotfile.copy" ]] && (_as_keeper_live "$_ag_k") && _ag_live=1
           done
           if ((_ag_live)); then
@@ -19324,7 +19394,7 @@ agent_sandbox() (
   # contract) and hands to the agent.
   local -a _perm_df=() _permission_rules=()
   local _trust_rec
-  _trust_rec="$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")"
+  _trust_rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$_proj")")"
   # THE REVIEW IS PART OF THE LAUNCH (#143). A dot-file that is new, changed since it
   # was approved, or gone though one was approved is shown -- the difference, when the
   # approved content was kept -- and asked about, when someone is at a terminal to
@@ -19374,7 +19444,7 @@ agent_sandbox() (
   if ((_do_manage && ! _pre_known)); then
     local -a _running=()
     local _rk
-    for _rk in "$(_as_state_dir)/$profile/$(_as_path_slug "$_proj")"/*/keeper/id; do
+    for _rk in "$(_as_one "$(_as_state_dir)/$profile/$(_as_path_slug "$_proj")")"/*/keeper/id; do
       [[ -e "$_rk" ]] || continue
       _rk="${_rk%/keeper/id}"
       _as_keeper_live "$_rk" && _running+=("${_rk##*/}")
@@ -19577,7 +19647,8 @@ agent_sandbox() (
     _as_conda_mode "$_df_conda_base"
   fi
   if [[ "$_conda_mode" == sandbox ]]; then
-    _conda_root="$(_as_conda_root)" _conda_mm="$(_as_micromamba_bin)"
+    _conda_root="$(_as_conda_root)" || :
+    _conda_mm="$(_as_micromamba_bin)"
     _cbase="$_conda_root" _cwhat="agent-sandbox's conda root $_conda_root is bound read-only, so micromamba runs"
     if [[ -n "${CONDA_PREFIX:-}" && "$CONDA_PREFIX" != "$_conda_root"/* ]]; then
       _as_info "the active conda env $CONDA_PREFIX is the host's: not bound; conda base = sandbox ($_conda_mode_src)"
@@ -20263,8 +20334,9 @@ agent_sandbox() (
   # out of ~/.gitconfig, which is not visible in here either.
   if command -v git >/dev/null \
     && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if [[ -z "$(git -C "$cwd" config --local user.name 2>/dev/null)" ||
-    -z "$(git -C "$cwd" config --local user.email 2>/dev/null)" ]]; then
+    # shellcheck disable=SC2233 # the subshell: one substitution per simple command (#423)
+    if ([[ -z "$(git -C "$cwd" config --local user.name 2>/dev/null)" ||
+    -z "$(git -C "$cwd" config --local user.email 2>/dev/null)" ]]); then
       local _gitroot
       _gitroot="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")"
       _as_msg "no repo-local git identity; commits inside the sandbox will fail"
@@ -20337,6 +20409,10 @@ agent_sandbox() (
     [[ -d "$_ruid" ]] && _world+=(--bind "$_ruid" "$_ruid")
   fi
 
+  # One substitution per command (#423): the ids before the array that names them.
+  local _as_uid _as_gid
+  _as_uid="$(id -u)" || :
+  _as_gid="$(id -g)" || :
   local -a args=(
     # Minimal system view (all read-only). Note: anything under /usr (incl.
     # /usr/local when it's a real directory) is already covered by the /usr
@@ -20374,7 +20450,7 @@ agent_sandbox() (
     # $USER (set below), which says the real user in both. Writes land on the host
     # as the real user either way; what changes is what the payload sees, and what
     # tools that branch on being root then do.
-    --uid "$(id -u)" --gid "$(id -g)"
+    --uid "$_as_uid" --gid "$_as_gid"
     # Drop all capabilities. A no-op in proxy/open/none, where bwrap is
     # unprivileged and the agent already has none; it matters in strict, where
     # bwrap runs inside pasta's root-owned user namespace and its child userns
@@ -20727,7 +20803,8 @@ agent_sandbox() (
           return 1
         fi
         local _pup _pwk
-        _pup="$(_as_sandbox_dir)/@project/upper" _pwk="$(_as_sandbox_dir)/@project/work"
+        _pup="$(_as_sandbox_dir)"
+        _pwk="$_pup/@project/work" _pup+="/@project/upper"
         mkdir -p -- "$_pup" "$_pwk" || return 1
         args+=(--overlay-src "$cwd" --overlay "$_pup" "$_pwk" "$cwd")
         ;;
@@ -20931,7 +21008,7 @@ agent_sandbox() (
       # launcher opens on fd 10, and pointing it at a missing file fails the
       # exec itself rather than falling back.
       local _sc_cand
-      _sc_cand="$(_as_seccomp_dir)/$(uname -m).bpf"
+      _sc_cand="$(_as_one "$(_as_seccomp_dir)/$(uname -m).bpf")"
       if [[ -r "$_sc_cand" ]]; then
         _seccomp_bpf="$_sc_cand"
         args+=(--seccomp 10)
@@ -21060,14 +21137,16 @@ agent_sandbox() (
       ;;
     proxy)
       local _pxy="http://${_proxy_auth:+$_proxy_auth@}127.0.0.1:$_proxy_port"
+      local _noprx
+      _noprx="$(_as_no_proxy)"
       args+=(
         --share-net
         --setenv HTTP_PROXY "$_pxy"
         --setenv HTTPS_PROXY "$_pxy"
         --setenv http_proxy "$_pxy"
         --setenv https_proxy "$_pxy"
-        --setenv NO_PROXY "$(_as_no_proxy)"
-        --setenv no_proxy "$(_as_no_proxy)"
+        --setenv NO_PROXY "$_noprx"
+        --setenv no_proxy "$_noprx"
       )
       _as_ca_bind
       _as_ca_env
@@ -21138,10 +21217,12 @@ agent_sandbox() (
       # variables at it. bwrap shares pasta's netns and makes its own user
       # namespace (via --unshare-all in args). NO_PROXY is set here (it does not
       # depend on the gateway; _as_no_proxy); the proxy URLs are set inside.
+      local _noprx
+      _noprx="$(_as_no_proxy)"
       args+=(
         --share-net
-        --setenv NO_PROXY "$(_as_no_proxy)"
-        --setenv no_proxy "$(_as_no_proxy)"
+        --setenv NO_PROXY "$_noprx"
+        --setenv no_proxy "$_noprx"
       )
       _as_ca_bind
       _as_ca_env
