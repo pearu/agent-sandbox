@@ -262,11 +262,13 @@ STUB
   [[ "$output" == *"joining role 'planner-1'"* ]]
   [[ "${JOINB[0]}" == --settings && "${JOINB[1]}" == /run/agent-sandbox/join.*/settings.json ]]
   [ "${JOINV[*]:1}" = "-p --resume 01234567-89ab-cdef-0123-456789abcdef --permission-mode bypassPermissions Read your inbox." ]
-  python3 - "$H/settings.json" <<'CHECK'
+  python3 - "$H/settings.json" "$H/home" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-# the engine's own two first (the briefing directory, the summary line), then the role's
-assert m["permissions"]["allow"] == ["Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)", "Bash(tail:*)", "Read"], m
+# the engine's own first (the briefing directory, the summary line, ~/.cache and /tmp),
+# then the role's
+c = "/" + sys.argv[2] + "/.cache/**"
+assert m["permissions"]["allow"] == ["Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)", f"Read({c})", f"Edit({c})", "Read(//tmp/**)", "Edit(//tmp/**)", "Bash(tail:*)", "Read"], m
 assert "SessionStart" in m["hooks"], m
 CHECK
   release_bg

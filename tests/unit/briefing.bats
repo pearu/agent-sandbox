@@ -27,6 +27,8 @@ fi
 STUB
   chmod +x "$H/bin/bwrap"
   OUT="$H/copied/briefing" # the session directory's briefing/, bound at $IN
+  OWN_RULES="$(printf '%s\n' 'Read(//run/agent-sandbox/**)' 'Edit(//run/agent-sandbox/summary/line)' \
+    "Read(/$H/home/.cache/**)" "Edit(/$H/home/.cache/**)" 'Read(//tmp/**)' 'Edit(//tmp/**)')"
 }
 
 # approve -- the project's dot-file, approved the way `--trust` records it (with the
@@ -224,11 +226,12 @@ trust() {
   mine='{"permissions":{"defaultMode":"plan","allow":["Bash(git *)"]},"env":{"FOO":"bar"},"model":"opus","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo theirs"}]}],"PreCompact":[{"hooks":[{"type":"command","command":"echo compact"}]}]}}'
   run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
   [ "$status" -eq 0 ]
-  python3 - "$OUT/settings.json" <<'CHECK'
+  python3 - "$OUT/settings.json" "$OWN_RULES" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-# theirs first; the engine's own two rules appended (the briefing directory, the summary line)
-assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)"]}, m
+# theirs first; the engine's own rules appended (the briefing directory, the summary line,
+# ~/.cache and /tmp)
+assert m["permissions"] == {"defaultMode": "plan", "allow": ["Bash(git *)", *sys.argv[2].split("\n")]}, m
 assert m["env"] == {"FOO": "bar"}, m
 assert m["model"] == "opus", m
 assert len(m["hooks"]["PreCompact"]) == 1, m    # an event we do not use: untouched
@@ -857,9 +860,77 @@ CHECK
   grep -qxF -- "- \$HOME is read-only: an empty tmpfs, the host's home directory is not here," "$OUT/briefing.md"
   grep -qF "plus ~/.cache, writable" "$OUT/briefing.md"
   grep -qF "(TRITON_HOME, XDG_CACHE_HOME, ...) in your own shell" "$OUT/briefing.md"
-  grep -qF "under ~ only ~/.cache (and /tmp)" "$OUT/hook-SessionStart.json"
+  grep -qF "; throwaway, gone at exit: ~/.cache and /tmp -- under ~, besides these, only ~/.cache is writable: point a tool that writes under ~ there with its variable. Other projects:" "$OUT/hook-SessionStart.json"
   argv_has --tmpfs "$H/home/.cache" # what the line promises
+  argv_has --tmpfs /tmp
   argv_has --remount-ro "$H/home"
+}
+
+# THROW -- the start line's throwaway clause, outside native (#435).
+THROW="; throwaway, gone at exit: ~/.cache and /tmp -- under ~, besides these, only ~/.cache is writable: point a tool that writes under ~ there with its variable"
+
+@test "the start line and the briefing say where kept work goes (#435): the role's own paths kept, ~/.cache and /tmp gone at exit; no kept clause without own paths" {
+  local h="$OUT/hook-SessionStart.json" md="$OUT/briefing.md"
+  # no own path: no kept clause at all, and kept work goes in a writable path
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qF "Writable: $PROJ$THROW. Other projects:" "$h"
+  run ! grep -qF 'kept:' "$h"
+  grep -qxF -- "- writable: $PROJ" "$md"
+  grep -qxF -- "- anything to keep (worktrees, prototypes, measurements, drafts) goes in a" "$md"
+  grep -qxF "  writable path above, where it belongs to the work; ~/.cache and" "$md"
+  grep -qxF "  /tmp are for caches and builds you can lose: both are gone at exit, a" "$md"
+  grep -qxF "  scratchpad your agent gives you under /tmp included" "$md"
+  # the role's own paths, as the dot-file names them, in its order, after the writable
+  # ones; read-only and read-write declarations are not among them, nor an own path
+  # with a shorter scope, whose store goes when the run or the join ends
+  mkdir -p "$PROJ/rw" "$PROJ/ro"
+  printf '%s\n' '[connect]' '.asb/scratch/ = own' './rw/ = read-write' './ro/ = read-only' './hist/ = own' \
+    './run/ = own run-scoped' './join/ = own join-scoped' >"$PROJ/.agent-sandbox"
+  trust
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  grep -qF "Writable: $PROJ, $PROJ/rw; kept: .asb/scratch/, ./hist/ (yours, across launches)$THROW. Other projects:" "$h"
+  grep -qxF -- "- writable: $PROJ, $PROJ/rw; kept: .asb/scratch/, ./hist/ (yours, across launches)" "$md"
+  # where kept work goes names no path (an own path can be a history mask); no purpose
+  # file here, so no "as your purpose says"
+  grep -qxF -- "- anything to keep (worktrees, prototypes, measurements, drafts) goes where it" "$md"
+  grep -qxF "  is kept (your scratch, or your clone)," "$md"
+  grep -qxF "  never in ~/.cache or /tmp: those are for caches and builds you can lose," "$md"
+  grep -qxF "  both gone at exit, a scratchpad your agent gives you under /tmp included" "$md"
+  run ! grep -qF 'kept above' "$md"
+  # a role with a purpose file: where it is kept is that purpose's to say
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Keep your work in your scratch.\n' >"$PROJ/.asb/roles/worker-1.md"
+  printf '%s\n' '[connect]' '.asb/scratch/ = own' '[briefing:worker-*]' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role worker-1 claude --version
+  [ "$status" -eq 0 ]
+  grep -q '^Keep your work in your scratch.$' "$md"
+  grep -qxF "  is kept, as your purpose says (your scratch, or your clone)," "$md"
+  # what the lines promise: the own paths are the role's store, kept; the tmpfs mounts go
+  grep -qF -- "- .asb/scratch/ (own) is, on the host, " "$md"
+  argv_has --tmpfs "$H/home/.cache"
+  argv_has --tmpfs /tmp
+}
+
+@test "under native the start line keeps the kept clause, and has no throwaway clause nor ~/.cache advice; the briefing no where-to-keep line (#435)" {
+  printf '%s\n' '[connect]' '.asb/scratch/ = own' >"$PROJ/.agent-sandbox"
+  trust
+  TEST_PRESET="" run_engine BWRAP_COPY="$OUT" -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  local h="$OUT/hook-SessionStart.json" md="$OUT/briefing.md"
+  grep -qF "Writable: $PROJ; kept: .asb/scratch/ (yours, across launches). Other projects:" "$h"
+  run ! grep -qF 'throwaway' "$h"
+  # shellcheck disable=SC2088 # the text, not a path
+  run ! grep -qF '~/.cache' "$h"
+  run ! grep -qF 'and /tmp' "$h" # the project is under /tmp in the harness
+  grep -qxF -- "- writable: $PROJ; kept: .asb/scratch/ (yours, across launches)" "$md"
+  grep -qxF -- "- \$HOME is the host's own, writable" "$md"
+  run ! grep -qF 'anything to keep' "$md"
+  run ! grep -qF 'gone at exit' "$md"
 }
 
 # perm_allow FILE -- the settings file's permissions.allow, one rule per line (none: empty).
@@ -868,9 +939,11 @@ perm_allow() {
 }
 
 # The engine's own allow rules, in every briefed launch's and join's settings: reading the
-# briefing directory, writing the summary line. A leading // is an absolute path in Claude
-# Code's Read/Edit rules (code.claude.com/docs/en/permissions).
-OWN_RULES="$(printf '%s\n' 'Read(//run/agent-sandbox/**)' 'Edit(//run/agent-sandbox/summary/line)')"
+# briefing directory, writing the summary line, and (not under native) reading and writing
+# the sandbox's private ~/.cache and /tmp (#435). A leading // is an absolute path in Claude
+# Code's Read/Edit rules (code.claude.com/docs/en/permissions). OWN_RULES, set in setup
+# (it names the harness's home), is them one per line; NATIVE_RULES, native's two.
+NATIVE_RULES="$(printf '%s\n' 'Read(//run/agent-sandbox/**)' 'Edit(//run/agent-sandbox/summary/line)')"
 
 @test "[permissions]: the role's rules, the file's and its own section's, reach the agent in the briefing's --settings; none without an approved file" {
   run_engine BWRAP_COPY="$OUT" -- asb claude --version
@@ -905,11 +978,39 @@ OWN_RULES="$(printf '%s\n' 'Read(//run/agent-sandbox/**)' 'Edit(//run/agent-sand
   run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"merged your --settings"* ]]
-  python3 - "$OUT/settings.json" <<'CHECK'
+  python3 - "$OUT/settings.json" "$OWN_RULES" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
-assert m["permissions"] == {"allow": ["Read", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)", "Bash(git push:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "plan"}, m
+own = sys.argv[2].split("\n")
+assert m["permissions"] == {"allow": ["Read", *own, "Bash(git push:*)"], "deny": ["Bash(rm:*)"], "defaultMode": "plan"}, m
 assert "SessionStart" in m["hooks"], m
+CHECK
+}
+
+@test "the engine's rules for ~/.cache and /tmp (#435): in the settings outside native, absolute; not under native; a user's deny of one kept, ranked over our allow" {
+  run_engine BWRAP_COPY="$OUT" -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$OWN_RULES" ]
+  # absolute: a leading // (a single / is relative to the settings file), the harness's own
+  # home, which is the sandbox's ~ and its --tmpfs
+  grep -qxF "Read(/$H/home/.cache/**)" <<<"$OWN_RULES"
+  [[ "$H" == /* ]]
+  argv_has --tmpfs "$H/home/.cache"
+  # native: $HOME and /tmp are the host's own; the engine's two only
+  rm -rf "$OUT"
+  TEST_PRESET="" run_engine BWRAP_COPY="$OUT" -- asb --preset native claude --version
+  [ "$status" -eq 0 ]
+  [ "$(perm_allow "$OUT/settings.json")" = "$NATIVE_RULES" ]
+  # a user's deny of one of them stays in the merged file; Claude Code ranks deny over
+  # allow (code.claude.com/docs/en/permissions), so it still refuses
+  rm -rf "$OUT"
+  local mine='{"permissions":{"deny":["Edit(//tmp/**)"],"ask":["Read(//tmp/**)"]}}'
+  run_engine BWRAP_COPY="$OUT" -- asb claude --settings "$mine" --version
+  [ "$status" -eq 0 ]
+  python3 - "$OUT/settings.json" "$OWN_RULES" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["permissions"] == {"deny": ["Edit(//tmp/**)"], "ask": ["Read(//tmp/**)"], "allow": sys.argv[2].split("\n")}, m
 CHECK
 }
 
@@ -962,11 +1063,11 @@ STUB
     [ "$(perm_allow "$H/snap.json")" = "$OWN_RULES" ]
     run_engine SNAP="$H/snap-user.json" -- asb --role "$role" claude --settings "$mine" --continue
     [ "$status" -eq 0 ]
-    python3 - "$H/snap-user.json" <<'CHECK'
+    python3 - "$H/snap-user.json" "$OWN_RULES" <<'CHECK'
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m["permissions"] == {
-    "allow": ["Bash(make:*)", "Read(//run/agent-sandbox/**)", "Edit(//run/agent-sandbox/summary/line)"],
+    "allow": ["Bash(make:*)", *sys.argv[2].split("\n")],
     "deny": ["Bash(rm:*)"],
     "ask": ["Edit(//run/agent-sandbox/summary/line)"],
 }, m
@@ -992,7 +1093,7 @@ STUB
   run_engine SNAP="$H/snap.json" -- asb claude --continue
   [ "$status" -eq 0 ]
   [[ "$output" == *"joining role"* ]]
-  [ "$(perm_allow "$H/snap.json")" = "Read(//run/agent-sandbox/**)" ]
+  [ "$(perm_allow "$H/snap.json")" = "$(grep -vxF 'Edit(//run/agent-sandbox/summary/line)' <<<"$OWN_RULES")" ]
   release_bg
 }
 

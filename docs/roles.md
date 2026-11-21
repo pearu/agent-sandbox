@@ -54,7 +54,7 @@ which is whose.
 | **Measurements** | Planner | Planner, you | what the Planner measured to compare the options, kept for the next round |
 | **Messages** | each role, its own file | every role, you | what a role is doing, what it needs, what it wrote and where; `ack N` and `done N` for its inbox (section 5) |
 | **Instructions** | the Supervisor, each one approved by you, or relayed on the word you gave for the Task (section 5) | the role it is for | the next step for one role, numbered `## N`, in that role's inbox `.asb/coord/to/<role>.md` (section 5) |
-| **Scratch** | each role | that role only | test scripts, probes, notes: `.asb/scratch/`, private to each role at the same path, kept across its launches |
+| **Scratch** | each role | that role only | test scripts, probes, notes, worktrees, measurements, drafts: `.asb/scratch/`, private to each role at the same path, kept across its launches; the session's start line names it as kept, and `~/.cache` and `/tmp` as gone at exit (#435) |
 
 Every instance has a **handle** you and the roles address it by: `P1`, `P2`, `I1`, `I2`,
 `R1`, `S`, `G`. The dot-file keeps the names (`implementer-1`); the purpose file says

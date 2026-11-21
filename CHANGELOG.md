@@ -1247,6 +1247,21 @@ names are gone; there are no aliases for removed names before 1.0.
   `probes/orphans.sh` now lists that shape (a pasta whose parent is gone with a keeper
   payload below it, or a watcher whose parent is gone) and ends it with `--kill`. The
   other network modes are unchanged.
+- **A role is told where its kept work goes, and Claude's file tools no longer ask
+  about `~/.cache` and `/tmp`** (#435). The session's start line listed as writable the
+  project's mode and the paths declared `read-write`, but not the role's `own` ones (its
+  `.asb/scratch/`, a history of its own), and then named `~/.cache` and `/tmp`, which are
+  tmpfs mounts gone at exit; the briefing's "writable:" line had the same gap. An
+  Implementer put a Task's worktrees in `~/.cache`, where every Read prompted the user
+  and the work would have gone with the session. Now both lines add `kept: .asb/scratch/,
+  ... (yours, across launches)`, every `own` path that is not scoped to a run or a
+  join; the start line names `~/.cache` and `/tmp` as throwaway, gone at exit; and the
+  briefing says that anything to keep goes where it is kept, as the role's purpose says,
+  never in `~/.cache` or `/tmp`, which are for what can be lost. Under `native`, where
+  both are the host's own, neither the throwaway clause nor the sentence. The claude
+  profile adds `Read` and `Edit` rules for `~/.cache/**` and `/tmp/**` beside the
+  engine's own two, outside `native`: the sandbox's own mounts, so no dot-file line or
+  trust review.
 - **`--init --env NAME` resolves NAME under the conda base the model's roles launch with,
   the file's `[conda] base` included** (#432). `--init` skipped that key, while a launch
   honours it. Measured on main 2a6172a, with a file holding only `[conda]`

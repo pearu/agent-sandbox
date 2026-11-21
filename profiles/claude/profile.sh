@@ -355,12 +355,16 @@ profile_telemetry_hosts() {
 # user's --settings keeps its own rules; ours are added after theirs, and their deny
 # and ask rules still win, as Claude Code ranks deny and ask over allow.
 #
-# Before those, on every briefed launch and join, the engine's own two: Read of the
+# Before those, on every briefed launch and join, the engine's own: Read of the
 # briefing directory (INSIDE_DIR/**) and Edit of the summary line (_summary_line, when
-# the engine bound it), so neither asks "outside the working directories". Narrower
-# than --add-dir, which would also allow edits anywhere there. Not shown by the trust
-# review or --check: no dot-file line asked for them, and they reach nothing the binds
-# do not already give (the directory is read-only inside, the line the session's own).
+# the engine bound it), so neither asks "outside the working directories"; and, outside
+# native, Read and Edit of ~/.cache/** and /tmp/** (#435), the sandbox's private tmpfs
+# mounts, where a tool's cache or a build goes. Narrower than --add-dir, which would
+# also allow edits anywhere in the briefing directory, and given where --add-dir is not
+# (it goes only with a first turn, _claude_start_ok). Not shown by the trust review or
+# --check: no dot-file line asked for them, and they reach nothing the binds do not
+# already give (the directory is read-only inside, the line the session's own, the
+# tmpfs mounts the sandbox's alone).
 #
 # A third pair, PostToolUse and PostToolUseFailure on Bash, runs refusal-hook.sh
 # (beside this file, copied next to the settings file so it is in view inside):
@@ -463,6 +467,12 @@ profile_briefing_args() {
   # Write, whose own path rules never match (code.claude.com/docs/en/permissions).
   local -a allow=("Read(/$inside/**)")
   [[ -n "${_summary_line:-}" ]] && allow+=("Edit(/$_summary_line)")
+  # And the sandbox's private ~/.cache and /tmp (#435): tmpfs mounts of its own, gone at
+  # exit, which the file tools otherwise ask about at every Read. Not under native, where
+  # both are the host's own. $HOME starts with /, as $inside does.
+  # shellcheck disable=SC2154 # _preset: the engine's, by dynamic scope
+  [[ "${_preset:-}" == native ]] \
+    || allow+=("Read(/$HOME/.cache/**)" "Edit(/$HOME/.cache/**)" "Read(//tmp/**)" "Edit(//tmp/**)")
   # shellcheck disable=SC2154 # _permission_rules: the engine's, by dynamic scope
   allow+=(${_permission_rules[@]+"${_permission_rules[@]}"})
   local r rules=""
