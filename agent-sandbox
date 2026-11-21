@@ -3598,6 +3598,9 @@ _as_connect_placeholder() {
 
 # The payload's marker: argv[0] of the process that holds the namespaces.
 _as_keeper_marker='agent-sandbox-keeper'
+# The strict keeper's watcher (_as_keeper_tie): its $0, the fourth word of its command
+# line (`bash -c BODY agent-sandbox-tie ...`), which probes/orphans.sh looks for.
+_as_keeper_tie_name='agent-sandbox-tie'
 
 # _as_proc_start PID -- set _ps_start to the process's start time (field 22 of its
 # stat), empty if there is no such process. The comm field can hold spaces and
@@ -3858,6 +3861,118 @@ _as_keeper_find() {
   _kf_found="$c ${prev:-$c}"
 }
 
+# _as_keeper_tie SUPERVISOR PID START [PID START...] -- a watcher that ends the given
+# subtrees when SUPERVISOR dies, however it dies (#430). SUPERVISOR is the caller's own
+# pid; each PID START names a process by its pid and start time (field 22 of its stat),
+# and the watcher ends it and everything below it. Sets _kt_pid to the watcher, the
+# caller's child; _as_keeper_untie ends it. Fails, saying so on stdout (the keeper's log),
+# when there is no setpriv (util-linux) to start one with.
+#
+# WHY A PROCESS OF ITS OWN. A supervisor killed with SIGKILL (or by the OOM killer, or a
+# crash) runs nothing, so whatever must end with it has to be tied to it by the kernel. Under
+# `none`, `proxy` and `open` bwrap is its child, and bwrap's --die-with-parent is that tie.
+# Under `strict` pasta is its child and bwrap is pasta's, and on Ubuntu, where passt's
+# AppArmor profile confines pasta, neither link holds (measured, kernel 7.0, passt
+# 2026-01-20; probes in the T11 handoff):
+#   - a parent-death signal set before the exec into pasta is lost (`setpriv --pdeathsig
+#     KILL pasta ...`: pasta alive after its parent's -9; the same for a python sleep,
+#     unconfined: gone). Likely the profile transition's secure exec, which clears it.
+#   - a parent-death signal SENT by a dying pasta is not delivered: a child of pasta that
+#     sets its own outlives pasta's -9, and dies with a plain bash parent's. Its profile
+#     has no `signal` rule.
+# So a supervisor killed with -9 left pasta, both bwraps and the payload running under pid
+# 1. The watcher is unconfined, so its own death signal holds, and a SIGKILL from it
+# reaches pasta and bwrap; the pid 1 of the sandbox takes the rest of its pid namespace.
+#
+# WHAT IT DOES. It waits. On its death signal, or a TERM from _as_keeper_untie, it
+# collects every subtree whose root is still the process named (pid and start time), the
+# whole subtree first and then the kills, so a process reparented mid-walk is not missed,
+# and sends SIGKILL to each process that is still the one it collected. At a normal end
+# the supervisor has waited for the launch before it TERMs the watcher, so it finds
+# nothing and kills nothing. A start that fails is the exception: the supervisor TERMs
+# the watcher first, while the launch still runs, because a pasta sent TERM leaves its
+# child running (measured), and the watcher ends pasta's whole subtree.
+#
+# THE DEATH SIGNAL IS SIGURG, whose default action is to be ignored: one that arrives
+# before the watcher's trap is set is lost rather than fatal, and the watcher then reads
+# its parent from /proc: not SUPERVISOR any more, it acts at once. Its wait is a sleep
+# with a death signal of its own, so a watcher that is itself killed leaves nothing. Its
+# body runs no command substitution (bash 5.2, #423) and reads /proc with builtins.
+#
+# LIMITS. A watcher killed together with its supervisor (`pkill -9 -f agent-sandbox`
+# matches its name) leaves the sandbox as before; probes/orphans.sh lists that shape. It
+# is one more process per strict keeper, two with its sleep.
+_as_keeper_tie() {
+  _kt_pid=""
+  command -v setpriv >/dev/null || {
+    printf 'agent-sandbox: no setpriv (util-linux), so this keeper is not tied to its supervisor: a SIGKILL of the supervisor leaves it running (#430)\n'
+    return 1
+  }
+  # shellcheck disable=SC2016 # the watcher's own variables, expanded in the watcher
+  setpriv --pdeathsig URG -- bash -c '
+    sup=$1
+    shift
+    roots=("$@")
+    sl=""
+    # start PID -- set s to the start time of PID; fails once it is gone
+    start() {
+      local st
+      local -a f
+      s=""
+      { read -r st <"/proc/$1/stat"; } 2>/dev/null || return 1
+      st=${st##*) }
+      read -r -a f <<<"$st"
+      s=${f[19]:-}
+      [[ -n $s ]]
+    }
+    end() {
+      trap "" TERM URG
+      [[ -z $sl ]] || kill -KILL "$sl" 2>/dev/null
+      local -a todo=() all=() kids=()
+      local i p f k
+      for ((i = 0; i + 1 < ${#roots[@]}; i += 2)); do
+        start "${roots[i]}" && [[ $s == "${roots[i + 1]}" ]] && todo+=("${roots[i]}" "$s")
+      done
+      while ((${#todo[@]})); do
+        p=${todo[0]}
+        all+=("$p" "${todo[1]}")
+        todo=("${todo[@]:2}")
+        for f in /proc/"$p"/task/*/children; do
+          kids=()
+          { read -r -a kids <"$f"; } 2>/dev/null
+          for k in ${kids[@]+"${kids[@]}"}; do
+            start "$k" && todo+=("$k" "$s")
+          done
+        done
+      done
+      for ((i = 0; i < ${#all[@]}; i += 2)); do
+        start "${all[i]}" && [[ $s == "${all[i + 1]}" ]] && kill -KILL "${all[i]}" 2>/dev/null
+      done
+      exit 0
+    }
+    trap end TERM URG
+    pp=""
+    while read -r k v; do
+      [[ $k == PPid: ]] && pp=$v && break
+    done <"/proc/$$/status"
+    [[ $pp == "$sup" ]] || end
+    while :; do
+      setpriv --pdeathsig KILL -- sleep infinity &
+      sl=$!
+      wait "$sl"
+    done
+  ' "$_as_keeper_tie_name" "$@" &
+  _kt_pid=$!
+}
+
+# _as_keeper_untie [PID] -- end the watcher _as_keeper_tie started, and wait for it.
+_as_keeper_untie() {
+  [[ -n "${1:-}" ]] || return 0
+  kill "$1" 2>/dev/null
+  { wait "$1"; } 2>/dev/null
+  return 0
+}
+
 # _as_keeper_supervise SANDBOXDIR -- LAUNCHER... -- the keeper's host side. Runs in
 # the background, a fork of the engine, so it has the launch's whole state.
 _as_keeper_supervise() {
@@ -3901,7 +4016,13 @@ _as_keeper_supervise() {
     exit 1
   fi
   "$@" &
-  local b=$! found="" t tstart init istart i
+  local b=$! found="" t tstart init istart i tie=""
+  # Under strict the launch is pasta, which no parent-death signal ties to this process:
+  # a watcher does (_as_keeper_tie, #430). From here on, every way out of the supervisor
+  # waits for the launch and then ends the watcher.
+  if [[ -n "${_launch_tie:-}" ]] && _as_proc_start "$b" && _as_keeper_tie "$me" "$b" "$_ps_start"; then
+    tie="$_kt_pid"
+  fi
   for ((i = 0; i < 1000; i++)); do
     _as_keeper_find "$b" && found="$_kf_found" && break
     kill -0 "$b" 2>/dev/null || break
@@ -3911,6 +4032,10 @@ _as_keeper_supervise() {
     # The launch's own status is what the engine reports: 127 and 126 mean bwrap
     # itself could not run, which is when the unsandboxed way back is worth naming.
     local brc=0
+    # The watcher first, while the launch is still the process it was given: under
+    # strict a pasta that is sent TERM leaves its child running (measured), and the
+    # watcher ends pasta's whole subtree. A launch that has ended already is not touched.
+    _as_keeper_untie "$tie"
     kill "$b" 2>/dev/null
     { wait "$b"; } 2>/dev/null || brc=$?
     _as_own_proxy_stop
@@ -3986,6 +4111,7 @@ _as_keeper_supervise() {
   local dog=$!
   { wait "$b"; } 2>/dev/null
   kill "$dog" 2>/dev/null
+  _as_keeper_untie "$tie"
   _as_own_proxy_stop
   flock 8 # held already when it ended because it was idle; taken when it ended from inside
   _as_session_cleanup
@@ -17623,6 +17749,9 @@ _as_launch_pasta() {
   local phelp
   phelp="$(pasta --help 2>&1 || true)"
   [[ "$phelp" != *--hostname* ]] || hopts=(--hostname "$(uname -n)")
+  # pasta is the supervisor's child and bwrap pasta's, and on a SIGKILL of the supervisor
+  # neither is ended by a parent-death signal (_as_keeper_tie, #430): it gets a watcher.
+  _launch_tie=1
   # shellcheck disable=SC2016
   _launch=(pasta --config-net --quiet -T "$tcp_ns" -U none "${topts[@]}" -u none ${hopts[@]+"${hopts[@]}"} -- bash -c '
     nftbin=$1 sshrules=$2 sd=$3 bpf=$4 pport=$5
@@ -18159,6 +18288,8 @@ agent_sandbox() (
   # network mode, run by _as_launch. bwrap's options are not on it: they are in
   # _bwrap_opts, which reach bwrap through a file (see _as_launch).
   local -a _launch=() _bwrap_opts=()
+  # Set when the launch needs the keeper's watcher (_as_keeper_tie): strict's pasta.
+  local _launch_tie=""
   # A declared source as declared, by its DEST (_as_connect_bind_path,
   # _as_connect_bind_channel), for the pins to resolve link by link (_as_ro_pins_chain).
   local -A _decl_src=()

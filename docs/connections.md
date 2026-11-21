@@ -824,7 +824,9 @@ foreground/background scope axis and the `<scope>` key segment it planned are wi
 - `--reset` is refused while anything is joined; an idle keeper is ended first.
 - Its host side is a supervisor, a background copy of the engine that started it: it
   owns the launch's exit (the session directory, the ssh agent, the mount-point files)
-  and writes `<sandbox>/keeper.log`, which a launch that fails to start prints.
+  and writes `<sandbox>/keeper.log`, which a launch that fails to start prints. A
+  supervisor killed with -9 takes the sandbox with it; under `strict` that takes a
+  watcher process beside pasta (#430, [design.md](design.md#residual-risks)).
 
 ### Background sessions (#123)
 

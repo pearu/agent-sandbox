@@ -52,7 +52,9 @@ for anyone auditing what the sandbox promises. To *use* agent-sandbox, start wit
   capability set, `no_new_privs` and seccomp filter). A second invocation of a
   running role builds nothing: it joins. The launch's host side is a supervisor, a
   background copy of the engine, which ends the keeper once nothing is joined (after
-  a two-second grace) and then does what a launch's exit did. See
+  a two-second grace) and then does what a launch's exit did. A supervisor killed with
+  SIGKILL takes the sandbox with it: bwrap's `--die-with-parent` under `none`, `proxy`
+  and `open`, and a watcher of its own under `strict` (#430, see the residual risks). See
   [connections.md](connections.md#the-keeper-one-running-instance-per-role-121).
 - **Session state**: `$XDG_RUNTIME_DIR/agent-sandbox.<uid>/session.XXXXXX/`
   holds the liveness stamp (`owner.id`: the keeper's supervisor's PID and start
@@ -628,12 +630,44 @@ Stated plainly. These are what the adversary above can still do.
   new one, which the clients must then be given.
 - **The `sshd` profile's proxy of its own is an unsandboxed process of the account.**
   It runs the installed mitmdump and addon, as the account's own proxy unit does, and
-  ends with the keeper. A SIGKILL of the keeper's supervisor orphans it together with
-  the sandbox: measured, sshd keeps serving logins whose requests the proxy now refuses
-  (407, the session's owner gone), and `--status` and `--shutdown` call the role not
-  running, so the processes are ended by hand ([sshd.md](sshd.md#limits)).
+  ends with the keeper. A SIGKILL of the keeper's supervisor orphans it: the sandbox ends
+  with the supervisor (#430, below), the proxy keeps running and holding its port, and is
+  ended by hand ([sshd.md](sshd.md#limits)).
 - **An orphaned ssh-agent is reaped, not prevented.** If the engine is
   SIGKILLed, its agent lives until the next launch's janitor finds it dead.
+- **A strict keeper ends with its supervisor through a watcher, which can be killed with
+  it** (#430). A supervisor killed with SIGKILL (or by the OOM killer, or a crash) runs
+  nothing, so the sandbox has to be tied to it by the kernel. Under `strict` the
+  supervisor's child is pasta and bwrap is pasta's, and on Ubuntu, where passt's AppArmor
+  profile confines pasta (`pasta (enforce)`), neither parent-death signal holds. Measured
+  on kernel 7.0, passt 2026-01-20, util-linux 2.41.3:
+
+  | `setpriv --pdeathsig KILL CMD` under a bash, the bash killed with -9 | CMD after it |
+  |---|---|
+  | `python3` sleeping (`unconfined`) | gone |
+  | `pasta --config-net -- python3 ...` (`pasta (enforce)`) | running, reparented to pid 1 |
+
+  | a child that sets its own `PR_SET_PDEATHSIG(SIGKILL)`; its parent killed with -9 | the child after it |
+  |---|---|
+  | its parent is pasta | running, reparented to pid 1 |
+  | its parent is a plain bash | gone |
+
+  The signal set before the exec into pasta's profile is lost (likely the profile
+  transition's secure exec, which clears it), and the one a dying pasta sends is not
+  delivered (its profile has no `signal` rule). So a supervisor killed with -9 left pasta,
+  both bwraps and the payload running under pid 1, holding the role's resources, its
+  mount-point files among them; the next launch started a second keeper beside it. Now the
+  supervisor starts a watcher beside pasta (`_as_keeper_tie`): an unconfined process with
+  a parent-death signal of its own, which on the supervisor's death collects pasta's whole
+  subtree, each process by pid and start time, and sends SIGKILL to each one still the
+  process it collected; the sandbox's pid 1 takes the rest of its pid namespace. A watcher
+  that is killed with its supervisor (`pkill -9 -f agent-sandbox` matches it) leaves the
+  sandbox running as before: `probes/orphans.sh` lists that shape (a pasta whose parent is
+  gone with a keeper payload below it, or a watcher whose parent is gone) and `--kill` ends
+  it. It costs a strict keeper two processes, the watcher and the sleep it waits on. The
+  other modes are unchanged: bwrap is the supervisor's child, and its `--die-with-parent`
+  is sent by an unconfined parent. Without `setpriv` (util-linux) there is no watcher,
+  and the keeper's log says so.
 - **The mount-point files the engine created are removed by path, from a list.** The
   last session out removes an empty file listed in `<state>/placeholders`. After a
   SIGKILL the entry stays: if you then delete that file and make an empty one of your

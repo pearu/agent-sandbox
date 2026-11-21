@@ -405,3 +405,89 @@ STUB
   [ "$status" -eq 0 ]
   run ! grep -qx -- --hostname "$H/pasta_argv"
 }
+
+# The keeper's watcher (#430, _as_keeper_tie). Here the stub pasta execs the wrapper,
+# which execs the stub bwrap, which execs the payload: the launch is one process, the
+# supervisor's child, and nothing but the watcher ends it when the supervisor is killed.
+
+teardown() {
+  rm -f "$H/hold" 2>/dev/null
+  local p
+  for p in ${LEFT[@]+"${LEFT[@]}"}; do kill -KILL "$p" 2>/dev/null; done
+  [[ -n "${BG_PID:-}" ]] && wait "$BG_PID" 2>/dev/null
+  return 0
+}
+
+keeper_id() { printf '%s/home/.local/state/agent-sandbox/claude/%s/default/keeper/id' "$H" "${PROJ//[^A-Za-z0-9-]/-}"; }
+
+# live PID -- PID runs (a zombie does not)
+live() {
+  local st
+  { read -r st <"/proc/$1/stat"; } 2>/dev/null || return 1
+  st="${st##*) }"
+  [[ "${st:0:1}" != Z ]]
+}
+
+# gone PID... -- every PID ends within 10 s
+gone() {
+  local i p left
+  for ((i = 0; i < 200; i++)); do
+    left=""
+    for p in "$@"; do live "$p" && left+=" $p"; done
+    [[ -z "$left" ]] && return 0
+    sleep 0.05
+  done
+  echo "still running:$left" >&2
+  return 1
+}
+
+# tie_of PID -- the watcher among PID's children: the fourth word of its command line is
+# agent-sandbox-tie
+tie_of() {
+  local f c
+  local -a k a
+  for f in /proc/"$1"/task/*/children; do
+    k=()
+    { read -r -a k <"$f"; } 2>/dev/null || :
+    for c in ${k[@]+"${k[@]}"}; do
+      a=()
+      { mapfile -d '' -t a <"/proc/$c/cmdline"; } 2>/dev/null || :
+      [[ "${a[3]:-}" == agent-sandbox-tie ]] && printf '%s\n' "$c" && return 0
+    done
+  done
+  return 1
+}
+
+@test "strict: the supervisor killed with -9 takes the launch with it, through its watcher (#430)" {
+  LEFT=()
+  engine_bg AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" AGENT_SANDBOX_KEEPER_GRACE=600 -- asb claude --version
+  local spid t w
+  read -r spid _ t _ <"$(keeper_id)"
+  LEFT+=("$t")
+  w="$(tie_of "$spid")"
+  LEFT+=("$w")
+  live "$t"
+  kill -KILL "$spid"
+  gone "$t" "$w"
+}
+
+@test "strict: a normal end leaves no watcher; the other network modes start none" {
+  LEFT=()
+  engine_bg AGENT_SANDBOX_NET=strict AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+  local spid t w
+  read -r spid _ t _ <"$(keeper_id)"
+  w="$(tie_of "$spid")"
+  LEFT+=("$t" "$w")
+  release_bg
+  [ "$BG_STATUS" -eq 0 ]
+  gone "$spid" "$t" "$w"
+  local mode
+  for mode in proxy none; do
+    engine_bg AGENT_SANDBOX_NET=$mode AGENT_SANDBOX_PROXY_CA="$H/ca.pem" -- asb claude --version
+    read -r spid _ t _ <"$(keeper_id)"
+    LEFT+=("$t")
+    run ! tie_of "$spid"
+    release_bg
+    gone "$spid" "$t"
+  done
+}
