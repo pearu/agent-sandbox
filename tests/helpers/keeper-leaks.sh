@@ -5,7 +5,8 @@
 #                                      after the settle window; name it, say where it
 #                                      came from (describe), and kill it
 #   keeper-leaks.sh describe PID...    where each keeper payload PID came from
-# tests/run.sh takes a snapshot before the suites and checks after them. The suites
+# tests/run.sh checks after the suites, counting only its run's keepers (WHICH KEEPERS
+# ARE THE RUN'S, below); it takes no snapshot. The suites
 # run with no idle grace, so a keeper ends with its last join; one still running
 # after the settle window is a leak. It is killed as well as reported, so a leak
 # costs one failed run rather than a slowly filling process table -- 128 overlay
@@ -18,9 +19,16 @@
 # Killing the payload ends the keeper: bwrap's pid 1 goes with it, and the
 # supervisor then cleans up after the launch.
 #
-# A keeper whose HOME is the user's own belongs to a real session started during the
-# run, not to a test (the tests all use a throwaway HOME), and is never counted or
-# killed.
+# WHICH KEEPERS ARE THE RUN'S (#444). The check counts only a keeper the run can have
+# started, so that nothing else on the machine fails the run or is killed by it:
+# - its payload's real uid is the run's (`Uid:` in /proc/PID/status, not the owner of
+#   /proc/PID, which is root for a process that is not dumpable): another user's
+#   keeper is not the run's, and the check could not kill it anyway;
+# - its HOME is under AS_KEEPER_SCOPE, when that is set: tests/run.sh sets it to the
+#   run's own directory, bats' TMPDIR, which every test's throwaway HOME is under (the
+#   user's own roles and a concurrent run of the suites have theirs elsewhere);
+# - and its HOME is not the user's own: a real session started during the run, not a
+#   test.
 #
 # WHERE A LEAK CAME FROM (describe), read only once there is one, from the host's
 # /proc: under bats the check runs after bats has removed the tests' directories, so
@@ -46,21 +54,37 @@
 #   AS_KEEPER_SETTLE  seconds to wait before the recount (default 7)
 #   AS_REAL_HOME      the real home directory (default: $HOME)
 #   AS_KEEPER_SCOPE   count only keepers whose HOME is under this directory (default:
-#                     all). The check's own tests set it: suites may run side by side
-#                     (scripts/coverage.sh runs files in parallel), and a check that
-#                     kills every new keeper on the machine kills other tests' keepers.
+#                     all). tests/run.sh sets it to its run's directory, and the check's
+#                     own tests to theirs: suites may run side by side (scripts/coverage.sh
+#                     runs files in parallel), and a check that kills every new keeper on
+#                     the machine kills other tests' keepers.
+#   AS_KEEPER_UID     count only keepers of this uid (default: the run's, `id -u`); the
+#                     check's own tests set another to stand for another user's keeper
 set -euo pipefail
 
 real_home="${AS_REAL_HOME:-$HOME}"
+run_uid="${AS_KEEPER_UID:-$(id -u)}"
+
+# uid_of PID -- its real uid, the first field of Uid: in its status; returns 1 when it
+# cannot be read (it has exited).
+uid_of() {
+  local k v _
+  while read -r k v _; do
+    [[ "$k" == Uid: ]] && printf '%s' "$v" && return 0
+  done 2>/dev/null <"/proc/$1/status" || return 1
+  return 1
+}
 
 # keepers -- one line per keeper payload: PID, a tab, its HOME.
 keepers() {
-  local c p a0 home
+  local c p a0 home uid
   for c in /proc/[0-9]*/cmdline; do
     p="${c#/proc/}" p="${p%/cmdline}"
     a0=""
     { IFS= read -r -d '' a0 <"$c"; } 2>/dev/null || true # it may exit while we look
     [[ "$a0" == agent-sandbox-keeper ]] || continue
+    uid="$(uid_of "$p")" || continue # it exited while we looked
+    [[ "$uid" == "$run_uid" ]] || continue
     # Braced: the redirection fails when the process exits while we look, and bash
     # reports a failed redirection before the command's own 2> is in place.
     home="$({ tr '\0' '\n' <"/proc/$p/environ"; } 2>/dev/null | sed -n 's/^HOME=//p' | head -1)" || true
