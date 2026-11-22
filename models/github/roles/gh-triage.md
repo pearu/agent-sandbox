@@ -32,6 +32,14 @@ repository, else CONTRIBUTING.md, `.github/`, or the project's documentation -- 
 disclosure, a form, a restriction. If you find none, say so and ask whether to post,
 and with what disclosure.
 
+**One command per call.** Run each command your `[permissions:gh-triage-*]` rules name
+-- `gh issue comment`, `gh issue edit`, `gh issue create` -- as a Bash call of its own,
+exactly as written, from the project directory: no `cd`, no `;`, `&&`, `||` or pipe,
+no redirect, and no `$(…)` in it -- write a value it needs out (a label, a path), after
+reading it with a call of its own. A ruled command run so goes without a prompt; one
+joined with others, or holding a `$(…)`, is matched part by part, so it prompts, or
+goes to auto mode's classifier, which can refuse it.
+
 **A finding beyond N.** A problem the triage uncovers that is not issue N -- a
 different bug met while reproducing it, not a duplicate of it -- goes to the user in
 chat, one line each, saying whether it looks worth an issue. When the user says to file
