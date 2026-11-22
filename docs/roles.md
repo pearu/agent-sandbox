@@ -303,7 +303,11 @@ to do it, not the model's.
 Code's Write and Edit tools write a temp file beside the target and rename it over the
 target, which a lone writable file in a read-only directory refuses.) It notes there
 what it is doing, what it needs from another role (addressed by handle), what it wrote
-where, and its `ack N` and `done N`. `.asb/coord/COORDINATION.md` lists every instance
+where, and its `ack N` and `done N`. A question for you goes there too, addressed to
+the Supervisor, which brings it to you; the role's terminal reply only names it as
+pending and asks nothing, in the reply or in a question dialog, so your answer goes
+through the Supervisor (#445). The Gate is the exception: it asks in its own terminal
+about a post that mentions `@name`. `.asb/coord/COORDINATION.md` lists every instance
 -- handle, role, messages, its directories; `--init` writes it and adds a row per new
 instance when run again. The Supervisor watches them all; you can read them all.
 

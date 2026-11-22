@@ -1233,6 +1233,22 @@ names are gone; there are no aliases for removed names before 1.0.
   `asb --init roles` or `asb --init github` is run again (a purpose file edited since it
   was written is kept, and said).
 
+- **A role behind the Supervisor asks its question in its messages, not in its terminal**
+  (#445). The roles model's Planner, Implementer, Reviewer and Gate were told "When you
+  stop for the user's word, your last line is the question", which did not say whose
+  last line: the messages file, or the terminal reply. A Planner sent each question to
+  the Supervisor in its messages and also ended its terminal replies with it, so the
+  user was asked one decision in two places, and an answer typed in the role's terminal
+  bypassed the Supervisor. The Planner's, Implementer's and Reviewer's line now says the
+  question goes in the role's messages, as their last line or the last before the role's
+  `done N`, addressed to the Supervisor, which brings it to the user; the terminal reply
+  names it as pending, without a question mark ("waiting for S on: whether ..."), and
+  asks nothing, nor opens a question dialog; and a user who talks to the role in its
+  terminal is answered there. The Gate asks in its terminal only what the user answers
+  there, a post that mentions `@name`, and writes every other stop in its messages
+  (`back N: ...`). A project's own copies change when `asb --init roles` is run again (a
+  purpose file edited since it was written is kept, and said).
+
 - **The roles' watcher no longer misses a change made between two of its runs** (#339).
   `inbox-wait` took each FILE's state when it started as its baseline, so a change made
   after one run's exit and before the next one's start -- a role's whole turn, seconds
