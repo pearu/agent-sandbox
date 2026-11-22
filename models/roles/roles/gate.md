@@ -60,9 +60,8 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
   `origin`'s URL with `git config --get remote.origin.url` (read-only, so it needs no
   rule), then run `git push URL BRANCH` with that URL written out. A push to an SSH
   remote needs its host in the project's file: when it fails for lack of SSH, send back
-  exactly `asb --apply '[ssh:{role}]' HOST` (the host of `origin`), then a restart of
-  this role: `asb --role {role} --shutdown claude`, then its launch again (a launch that
-  joins a session of it still running keeps the old policy).
+  exactly `asb --apply '[ssh:{role}]' HOST` (the host of `origin`); once the user
+  approves it, S restarts this role, which applies it.
 - A pull request, a comment, an issue: `gh pr create`, `gh pr comment`,
   `gh issue comment`, `gh issue create`, `gh issue close`, with `--body-file` for the
   named file. Mail only where the project's file grants a route (an allow line for the
@@ -70,6 +69,13 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
 - After a push, report done with the commit range and, when the remote runs CI on it,
   the run's URL (from `gh run list` or the push's output), then stop: watching the run
   is the Supervisor's.
+- A restart question from S (an approved change to your policy or purpose file, which
+  only a relaunch applies): answer `ready` in your messages once no message is in hand
+  and no background command but your watcher runs, after writing there what is
+  pending; otherwise answer `wait:` with what you are finishing, and about how long.
+  S restarts you as soon as it reads `ready`, so write N to your cursor first, then
+  `ready` and `done N` in one append. The relaunch resumes this conversation and
+  re-arms your watcher from its start text, so saving is your messages, nothing more.
 - A turn cut short (a lost connection, an interruption) is resumed at your next wake or
   prompt without asking: nothing in your inbox changed, so the message is still yours
   until you report it done.

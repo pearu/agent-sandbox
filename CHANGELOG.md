@@ -153,6 +153,28 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The host restarts a role in an `asb --roles` pane after a policy change you
+  approved, once the role says it is ready (#416).** A role's policy and purpose file
+  are fixed when its keeper starts: after an `asb --apply` (or a hand edit and
+  `asb --trust`) you exited the role and resumed it by hand, and `tmux respawn-pane`
+  alone only joined the role's running keeper, under the old policy. Now the Supervisor
+  asks each affected role to finish its step, record what is in flight and answer
+  `ready` or `wait: ...`; on `ready` it writes an empty `.asb/coord/to/ROLE.restart`.
+  The host process `--roles` starts beside its session -- now for every role, served
+  ones too, while resets stay with the roles they covered -- checks that
+  `.agent-sandbox` is approved as it is and that the role can resume, ends it
+  (`asb --profile PROFILE --role ROLE --shutdown`), saves the pane's last screen in its
+  log, respawns the pane with its own line, `--resume` added, and removes the marker
+  once the role's keeper is live (within 30 s). A failure leaves its reason in the
+  marker, one line, which the Supervisor brings to you; a marker nobody takes within
+  its 60 s wait gets you the relaunch line, as before. Measured with stub sandboxes:
+  1-2 s from marker to gone. A `/clear` does not hand a running role a changed purpose
+  file (its session-start text is written at launch), so a restart applies that too.
+  The Supervisor never restarts itself: after an `--init` that changes its own file you
+  relaunch it, as before. The Planner's, Implementers', Reviewers' and Gate's purpose
+  files say how to answer; `asb --init roles` run again takes them where you have not
+  changed them, and a `--roles` session opened before this takes no restarts until it
+  is opened again.
 - **Whether a role's agent compacts on its own: `[agent] auto-compact = on | off |
   idle-off`, off by default for roles (#438).** Claude Code compacts a conversation by
   itself at its context limit and, on accounts its server enables it for, after about

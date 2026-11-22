@@ -75,6 +75,15 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   ("waiting for S on: whether ..."), and asks nothing, nor do you open a question
   dialog (AskUserQuestion): an answer given here would bypass S. When the user talks
   to you here, answer here.
+- A restart question from S (an approved change to your policy or purpose file, which
+  only a relaunch applies): answer `ready` in your messages once no turn's work is in
+  flight and no background command but your watcher runs, after writing there what
+  the relaunched session must pick up -- the step you are in, and what is pending;
+  otherwise answer `wait:` with what you are finishing, and about how long. S restarts
+  you as soon as it reads `ready`, so write N to your cursor first, then `ready` and
+  `done N` in one append. The relaunch resumes this conversation and re-arms your
+  watcher from its start text, so saving is your messages and your usual memory rule,
+  nothing more.
 - Before you report a Task done, write what the next session needs to your memory: how
   the build behaves, what the tests need, what the Reviewer tends to raise.
 - A turn cut short (a lost connection, an interruption) is resumed at your next wake or

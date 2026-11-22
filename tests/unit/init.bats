@@ -2849,7 +2849,7 @@ shared_env() {
   [[ "$flat" == *'in two calls: read `origin`'"'"'s URL with `git config --get remote.origin.url` (read-only, so it needs no rule), then run `git push URL BRANCH` with that URL written out.'* ]]
   run ! grep -qF 'git remote get-url' "$PROJ/.asb/roles/gate.md"
   grep -qF "asb --apply '[ssh:gate]' HOST" "$PROJ/.asb/roles/gate.md"
-  grep -qF 'asb --role gate --shutdown claude`, then its launch again' "$PROJ/.asb/roles/gate.md"
+  grep -qxF '  approves it, S restarts this role, which applies it.' "$PROJ/.asb/roles/gate.md"
   run ! grep -qF 'publish -- push the branch' "$PROJ/.asb/roles/supervisor.md"
   grep -q '^| G | gate | .asb/coord/gate/messages.md | - |$' "$PROJ/.asb/coord/COORDINATION.md"
 }
@@ -3068,7 +3068,7 @@ shared_env() {
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
-@test "the roles model: the Supervisor watches .agent-sandbox -- its watcher's first file; an affected role is told to finish and say ready, the user gets the relaunch line" {
+@test "the roles model: the Supervisor watches .agent-sandbox -- its watcher's first file; an affected role is told to finish and answer ready or wait, the user gets the relaunch line when nobody takes the restart (#416)" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md"
@@ -3076,11 +3076,11 @@ shared_env() {
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
   # the bullet closes **Sending a message.**, before the Gate's turn
-  [ "$(grep -B2 -xF "**The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the" "$sup" | head -1)" = "  so: the user relaunches you." ]
+  [ "$(grep -B2 -xF "**The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the" "$sup" | head -1)" = "    user relaunches you." ]
   grep -qF 'line from the index with `--resume`' "$sup"
   grep -qF "not when it joins one still running" "$sup"
   grep -qF '(a served role: `asb --role R --shutdown`)' "$sup"
-  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 10 ]
+  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 30 ]
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
 
@@ -3263,6 +3263,64 @@ effort_of() {
   # the Gate has no **Protocol.**: the bullet closes **Executing a message.**
   [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- '- A turn cut short (a lost connection, an interruption) is resumed at your next wake or')" -eq 1 ]
   grep -qxF '  prompt without asking: nothing in your inbox changed, so the message is still yours' "$PROJ/.asb/roles/gate.md"
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: a restart after an approved policy change -- every role but the Supervisor answers ready or wait; the Supervisor writes .restart on ready and waits for it, one at a time, never with a .reset, never its own; the waits agree with the engine's (#416)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" gate="$PROJ/.asb/roles/gate.md" r f q g w flat docs
+  q='- A restart question from S (an approved change to your policy or purpose file, which
+  only a relaunch applies): answer `ready` in your messages once no turn'"'"'s work is in
+  flight and no background command but your watcher runs, after writing there what
+  the relaunched session must pick up -- the step you are in, and what is pending;
+  otherwise answer `wait:` with what you are finishing, and about how long. S restarts
+  you as soon as it reads `ready`, so write N to your cursor first, then `ready` and
+  `done N` in one append. The relaunch resumes this conversation and re-arms your
+  watcher from its start text, so saving is your messages and your usual memory rule,
+  nothing more.'
+  # the whole bullet, once, in **Protocol.**
+  for r in planner-1 implementer-1 reviewer-1; do
+    f="$PROJ/.asb/roles/$r.md"
+    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -A8 -xF -- "${q%%$'\n'*}")" = "$q" ]
+    [ "$(grep -cF -- 'A restart question from S' "$f")" -eq 1 ]
+  done
+  # the Gate's, in **Executing a message.**; its SSH request names no restart of its own
+  g='- A restart question from S (an approved change to your policy or purpose file, which
+  only a relaunch applies): answer `ready` in your messages once no message is in hand
+  and no background command but your watcher runs, after writing there what is
+  pending; otherwise answer `wait:` with what you are finishing, and about how long.
+  S restarts you as soon as it reads `ready`, so write N to your cursor first, then
+  `ready` and `done N` in one append. The relaunch resumes this conversation and
+  re-arms your watcher from its start text, so saving is your messages, nothing more.'
+  [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$gate" | grep -A6 -xF -- "${g%%$'\n'*}")" = "$g" ]
+  grep -qxF -- '  approves it, S restarts this role, which applies it.' "$gate"
+  run ! grep -qF -- '--shutdown' "$gate"
+  # the Supervisor's, in the bullet that watches .agent-sandbox: the question, the marker
+  # without asking again, its wait and its three outcomes, one at a time, never its own
+  run ! grep -qF -- 'A restart question from S' "$sup"
+  flat="$(sed -n '/^- Watch `.agent-sandbox` too/,/^\*\*The Gate/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$flat" == *'A running role keeps the policy and the purpose file it was launched with, through a `/clear` (a `.reset`) too: only a relaunch applies a change, the restart below.'* ]]
+  [[ "$flat" == *'answer `ready` or `wait: <what, and about how long>`.'* ]]
+  [[ "$flat" == *'On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again: the user approved the change, and the restart only applies it -- then wait with `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`.'* ]]
+  [[ "$flat" == *'Gone: report it in one line. Not empty: the host'"'"'s reason, one line; tell the user, then remove the marker. Still there and empty: nobody takes restarts for this role'* ]]
+  [[ "$flat" == *'so remove the marker -- left, the next `asb --roles` with the role takes it -- and give the user the relaunch:'* ]]
+  [[ "$flat" == *'One `.restart` at a time: the next once the last has gone or been answered. Never a `.restart` and a `.reset` for one role at once: the restart'"'"'s marker is gone first, then a `.reset` when the role'"'"'s next Task needs one.'* ]]
+  [[ "$flat" == *'On `wait`: tell the user that the role asked to wait, and why;'* ]]
+  [[ "$flat" == *'Never your own `.restart`: it would end you in the turn that wrote it.'* ]]
+  # the waits, from the engine: its wait for a live keeper and --shutdown's 15 s, which
+  # the Supervisor's 60 s outlasts with the second between looks, and the docs say so
+  w="$(sed -n 's/^  local w="\${AGENT_SANDBOX_RESTART_WAIT:-\([0-9][0-9]*\)}"$/\1/p' "$ENGINE")"
+  [ "$w" = 30 ]
+  grep -qxF '  for ((i = 0; i < 1500; i++)); do' "$ENGINE" # _as_keeper_shutdown: 1500 x 0.01 s
+  ((60 > 15 + w + 1))
+  [[ "$flat" == *"up to 15 s to end it, $w s to see it run and 1 s to look, inside the 60."* ]]
+  docs="$(tr '\n' ' ' <"$(dirname "$ENGINE")/docs/roles.md" | tr -s ' ')"
+  [[ "$docs" == *"it waits up to $w s for the role's keeper to be live, then removes the marker."* ]]
+  [[ "$docs" == *"waits up to 60 s for it: more than the 15 s an end may take, the $w s of the relaunch and the second between looks;"* ]]
+  for r in supervisor planner implementer reviewer gate; do
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
+  done
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
