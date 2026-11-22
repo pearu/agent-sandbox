@@ -320,13 +320,36 @@ no_tmux_path() {
   [ "$(grep -c -x -- --effort < <(printf '%s\n' "${JOINV[@]}"))" -eq 1 ]
 }
 
+@test "[agent] auto-compact under an agent whose profile has no profile_auto_compact_args (#438): a role's launch says its value is not applied, once, and where it came from; --check says so" {
+  two_profiles
+  agents '[connect:*]' '[agent:r]' 'auto-compact = idle-off'
+  run_engine "$P2" -- asb --role q codex --x
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'q': its auto-compact value off (the default for a role) is not applied: profile 'codex' has no way to give its agent one (profile_auto_compact_args)"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  [ "${JOINV[*]:1}" = "--x" ]
+  run_engine "$P2" -- asb --role r codex --x
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'r': its auto-compact value idle-off (.agent-sandbox [agent:r]) is not applied: profile 'codex' has no way to give its agent one (profile_auto_compact_args)"* ]]
+  run_engine "$P2" -- asb --check --role r codex
+  [[ "$output" == *"  auto-compact: idle-off -- .agent-sandbox [agent:r]; NOT APPLIED: profile codex has no way to give its agent one (profile_auto_compact_args)"* ]]
+  # a plain session: nothing to say
+  run_engine "$P2" -- asb codex --x
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"auto-compact"* ]]
+  # claude's profile gives it
+  run_engine "$P2" -- asb --role q claude
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not applied"* ]]
+}
+
 @test "[agent] effort under an agent whose profile has no profile_effort_args: the launch says the level is not applied, and runs the agent without it" {
   two_profiles
   agents '[agent]' 'effort = high'
   run_engine "$P2" -- asb --role r codex --x
   [ "$status" -eq 0 ]
   [[ "$output" == *"role 'r': its effort level high (.agent-sandbox [agent]) is not applied: profile 'codex' has no way to give its agent one (profile_effort_args)"* ]]
-  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  [ "$(grep -c 'effort level.*is not applied' <<<"$output")" -eq 1 ]
   [ "${JOINV[0]##*/}" = codex ]
   [ "${JOINV[*]:1}" = "--x" ]
   # --check says so too; claude's profile gives it

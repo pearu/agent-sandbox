@@ -140,6 +140,10 @@ def forget_profile(path):
     return 0
 
 
+# Claude Code's settings keys for automatic compaction (#438): all of it, or only idle.
+_COMPACT_KEYS = ("autoCompactEnabled", "idleCompaction")
+
+
 def merge_settings(ours, user, out):
     """The user's --settings (a path or inline JSON) with OUR hook entries appended,
     written to OUT.
@@ -151,13 +155,19 @@ def merge_settings(ours, user, out):
     the dot-file's [permissions] rules, permissions.allow entries, appended after
     theirs the same way (their deny and ask rules stand: Claude Code ranks them over
     allow) -- and our statusLine only when theirs has none: a status line of their own
-    wins (#287). Nothing else of theirs is read, rewritten or merged. A hooks shape we
+    wins (#287) -- and our compaction key (a role's auto-compact, #438:
+    autoCompactEnabled or idleCompaction) only when theirs sets neither of the two: a
+    user who passes their own autoCompactEnabled or idleCompaction still decides how the
+    session compacts, whichever of the two ours would have been. Nothing else of theirs
+    is read, rewritten or merged. A hooks shape we
     do not recognise is refused rather than coerced (list() of a dict would replace
     their data with its keys). A permissions that is not an object, or an allow that
     is not an array, is left exactly as it is and none of our rules is added: the
     hooks still go in, and `permissions-skipped` is printed so the shell can say the
     agent will ask. Prints `hooks-disabled` when their settings switch every hook
-    off, so the hook can say the briefing will not arrive."""
+    off, so the hook can say the briefing will not arrive, and `compact-kept` when
+    ours carried a compaction key that theirs displaced, so the shell can say the
+    role's auto-compact is not added."""
     try:
         text = user.strip()
         if text.startswith("{"):
@@ -188,6 +198,9 @@ def merge_settings(ours, user, out):
     merged["hooks"] = hooks
     if "statusLine" in mine and "statusLine" not in theirs:
         merged["statusLine"] = mine["statusLine"]
+    compact_kept = any(k in theirs for k in _COMPACT_KEYS) and any(k in mine for k in _COMPACT_KEYS)
+    if not any(k in theirs for k in _COMPACT_KEYS):
+        merged.update((k, mine[k]) for k in _COMPACT_KEYS if k in mine)
     rules = mine.get("permissions", {}).get("allow", [])
     skipped = False
     if rules:
@@ -207,6 +220,8 @@ def merge_settings(ours, user, out):
         print("hooks-disabled")
     if skipped:
         print("permissions-skipped")
+    if compact_kept:
+        print("compact-kept")
     return 0
 
 

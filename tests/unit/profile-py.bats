@@ -162,6 +162,37 @@ CHECK
   done
 }
 
+@test "merge-settings: our compaction key (a role's auto-compact, #438) only when theirs sets neither autoCompactEnabled nor idleCompaction; theirs kept as it is" {
+  local ours u k
+  for k in autoCompactEnabled idleCompaction; do
+    ours="{\"hooks\":{},\"$k\":false}"
+    # theirs sets neither: ours is added
+    run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out.json"
+    [ "$status" -eq 0 ]
+    [ "$(pyget "$T/out.json" '{x: d[x] for x in ("autoCompactEnabled", "idleCompaction", "model") if x in d}')" = "{'$k': False, 'model': 'm'}" ]
+    # theirs sets either key, to either value: theirs alone, ours not added
+    for u in '{"autoCompactEnabled":true}' '{"autoCompactEnabled":false}' '{"idleCompaction":true}' '{"idleCompaction":false}'; do
+      run py merge-settings --ours "$ours" --user "$u" --out "$T/out2.json"
+      [ "$status" -eq 0 ]
+      [ "$output" = compact-kept ]
+      python3 -I - "$T/out2.json" "$u" <<'CHECK'
+import json, sys
+d, theirs = json.load(open(sys.argv[1])), json.loads(sys.argv[2])
+assert {x: d[x] for x in ("autoCompactEnabled", "idleCompaction") if x in d} == theirs, (d, theirs)
+CHECK
+    done
+  done
+  # ours without a key (a plain session, or `on`): nothing added
+  run py merge-settings --ours '{"hooks":{}}' --user '{"model":"m"}' --out "$T/out3.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(pyget "$T/out3.json" 'sorted(d)')" = "['hooks', 'model']" ]
+  # and theirs setting one: nothing displaced, nothing said
+  run py merge-settings --ours '{"hooks":{}}' --user '{"idleCompaction":true}' --out "$T/out4.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "merge-settings: our statusLine only when theirs has none; theirs, even an odd one, is kept as it is (#287)" {
   local ours='{"hooks":{},"statusLine":{"type":"command","command":"bash s.sh r","refreshInterval":1}}'
   run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out.json"

@@ -760,7 +760,8 @@ lines bind only the tools that use the proxy.
 # ---- every role's agent: what a launch with no command runs, the native arguments
 #   after it (asb --role NAME --resume, asb --roles NAME... --resume); one role's own
 #   is an [agent:NAME] command = AGENT ARGS section of yours. Each role's effort level
-#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL)
+#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL), and
+#   its auto-compact = off there is a role's default, written to be seen and changed
 [agent]
 command = claude
 # ---- what every role gets: --init writes it per role, [connect:planner-*] and so on --
@@ -866,6 +867,7 @@ prompt = .asb/serve/planner-2.md
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
@@ -894,6 +896,7 @@ prompt = .asb/serve/implementer-2.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
@@ -906,6 +909,7 @@ prompt = .asb/serve/reviewer-1.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -926,6 +930,7 @@ Bash(micromamba env update:*)
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 [agent:supervisor]
 effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -956,6 +961,7 @@ file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 [agent:gate]
 effort = low                      # executes an approved message as written
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- setup: builds the environment, once per project, again after main moves ----
 #   asb --role setup claude
@@ -972,6 +978,7 @@ git = refuse
 file = .asb/roles/setup.md
 [agent:setup]
 effort = high                     # a failing build is debugged here
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 ```
 
 Each role has an effort level of its own, `[agent:...] effort` (`--effort LEVEL` for
@@ -995,6 +1002,18 @@ Change one by editing the `effort` line of the role's section, then `asb --trust
 `effort = -` runs the role at its agent's own level (yours, from its settings), and
 `--init` leaves such a section as it is. An `--init` run on a file from before the
 levels adds the sections the file lacks.
+
+Each role's section also says `auto-compact = off` ([config.md](config.md#auto-compact)),
+which is every role's default anyway, written to be seen: a role waits on its inbox most
+of its life, and Claude Code compacting it there, idle, replaces what it was told and
+has read with a summary nobody chose, sometimes mid-Task. With it off, a role whose
+context fills stops at its next request ("Context limit reached"), and you type
+`/compact` or `/clear` at its terminal. A served role's turn there ends with "Prompt is
+too long" on the loop's output and exit status 1, which the loop appends to the role's
+messages as `turn failed (exit 1)`, the reason not said; every turn after it ends the
+same, until a reset marker gives the role a new session. `auto-compact = idle-off` keeps
+compaction at the limit and drops only the idle one; it takes effect at the role's next
+launch.
 
 Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
 change.

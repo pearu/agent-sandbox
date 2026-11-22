@@ -1394,6 +1394,18 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
 }
 
+@test "[agent] effort: a value of two levels (low medium) is no level -- refused at the review and by a launch, though each word is one" {
+  printf '[connect:*]\n[agent:r]\neffort = low medium\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [[ "$output" == *"[agent:r] effort = low medium: not an effort level -- one of low medium high xhigh max; a launch refuses it"* ]]
+  [ ! -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+  trust "$PROJ"
+  run_engine -- asb --role r claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'r': .agent-sandbox [agent:r] effort = low medium is not an effort level (low medium high xhigh max); refusing the launch"* ]]
+  [ ! -s "$H/join" ]
+}
+
 @test "the review and --check show a role's effort level and where it came from" {
   printf '[connect:*]\n[agent]\neffort = medium\n[agent:r1]\neffort = high\n[agent:r*]\neffort = low\n' >"$PROJ/.agent-sandbox"
   run_review
@@ -1519,6 +1531,147 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   [ "$status" -eq 0 ]
   [ "${JOINV[*]:1}" = "-p hi" ]
   [[ "$output" != *"effort"* ]]
+}
+
+@test "[agent] auto-compact (#438): a value that is not one is refused at the review and by --check, naming the values; a launch on a file approved with one refuses" {
+  printf '[connect:*]\n[agent:r]\nauto-compact = never\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [[ "$output" == *"[agent:r] auto-compact = never: not a value -- one of on off idle-off; a launch refuses it"* ]]
+  [[ "$output" == *"a launch refuses this file as it is, so it cannot be approved."* ]]
+  [ ! -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+  run_engine -- asb --check --role r claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[agent:r] auto-compact = never: not a value"* ]]
+  # approved anyway (an engine that did not read the key approved it): the launch refuses
+  trust "$PROJ"
+  run_engine -- asb --role r claude
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"role 'r': .agent-sandbox [agent:r] auto-compact = never is not a value (on off idle-off); refusing the launch"* ]]
+  [ ! -s "$H/join" ]
+  # another role does not take the line, nor does an empty value count as one
+  run_engine -- asb --role q claude
+  [ "$status" -eq 0 ]
+  printf '[connect:*]\n[agent]\nauto-compact =\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[agent] auto-compact names no value (auto-compact = on off idle-off, or - for none); ignoring"* ]]
+}
+
+@test "[agent] auto-compact: a value of two words (on off, off idle-off) is no value -- refused at the review and by a launch, though each word is one" {
+  local v
+  for v in 'on off' 'off idle-off'; do
+    printf '[connect:*]\n[agent:r]\nauto-compact = %s\n' "$v" >"$PROJ/.agent-sandbox"
+    run_trust 'y\n'
+    [[ "$output" == *"[agent:r] auto-compact = $v: not a value -- one of on off idle-off; a launch refuses it"* ]]
+    [ ! -f "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" ]
+    trust "$PROJ"
+    run_engine -- asb --role r claude
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"role 'r': .agent-sandbox [agent:r] auto-compact = $v is not a value (on off idle-off); refusing the launch"* ]]
+    [ ! -s "$H/join" ]
+    rm -f "$CFG/trust/"*
+  done
+}
+
+@test "[agent] auto-compact: [agent:<glob>] beats [agent], whatever the order; - is none for the roles it names, whatever a weaker line or the default for a role says; profile_auto_compact_args once per launch" {
+  effort_hook_profiles
+  printf '[connect:*]\n[agent:r*]\nauto-compact = idle-off\n[agent]\ncommand = claude\nauto-compact = on\n[agent:gate]\nauto-compact = -\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine "$PE" -- asb --role r1 claude -p hi
+  [ "$status" -eq 0 ]
+  [ "$(auto_compact_calls)" = idle-off ]
+  [[ "$output" == *"auto-compact: idle-off (.agent-sandbox [agent:r*])"* ]]
+  run_engine "$PE" -- asb --role q claude -p hi
+  [ "$status" -eq 0 ]
+  [ "$(auto_compact_calls)" = on ]
+  [[ "$output" == *"auto-compact: on (.agent-sandbox [agent])"* ]]
+  # -: no value, no call, nothing said -- not even the default for a role
+  run_engine "$PE" -- asb --role gate claude -p hi
+  [ "$status" -eq 0 ]
+  [ -z "$(auto_compact_calls)" ]
+  [[ "$output" != *"auto-compact"* ]]
+  # no line: off for a role, nothing for the plain session
+  printf '[connect:*]\n[agent]\ncommand = claude\n[agent:gate]\nauto-compact = -\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine "$PE" -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [ "$(auto_compact_calls)" = off ]
+  [[ "$output" == *"auto-compact: off (the default for a role)"* ]]
+  run_engine "$PE" -- asb claude -p hi
+  [ "$status" -eq 0 ]
+  [ -z "$(auto_compact_calls)" ]
+  run_engine "$PE" -- asb --role gate claude -p hi
+  [ -z "$(auto_compact_calls)" ]
+  # never for --exec, --check, a verb, --status or --shutdown; once for a join
+  run_engine "$PE" -- asb --role r --profile claude --exec true x
+  [ "$status" -eq 0 ]
+  [ -z "$(auto_compact_calls)" ]
+  run_engine "$PE" -- asb --role r --check claude
+  [ "$status" -eq 0 ]
+  [ -z "$(auto_compact_calls)" ]
+  engine_bg "$PE" -- asb --role r claude
+  auto_compact_calls >/dev/null
+  run_engine "$PE" -- asb --role r claude -p hi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'r'"* ]]
+  [ "$(auto_compact_calls)" = off ]
+  run_engine "$PE" -- asb --role r claude agents
+  [ "$status" -eq 0 ]
+  [ -z "$(auto_compact_calls)" ]
+  run_engine "$PE" -- asb --role r --status
+  [ -z "$(auto_compact_calls)" ]
+  run_engine "$PE" -- asb --role r --shutdown
+  [ -z "$(auto_compact_calls)" ]
+  release_bg
+}
+
+@test "the review and --check show a role's auto-compact value and where it came from, the default for a role included" {
+  printf '[connect:*]\n[agent]\nauto-compact = on\n[agent:r1]\nauto-compact = off\n[agent:r*]\nauto-compact = idle-off\n[agent:g]\nauto-compact = -\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *"[agent] auto-compact = on: every role run with auto-compact on, given to their agent by its profile (profile_auto_compact_args) in the briefing's settings"* ]]
+  [[ "$output" == *"[agent:r1] auto-compact = off: the roles r1 run with auto-compact off"* ]]
+  [[ "$output" == *"[agent:r1] auto-compact = off: role r1 takes the later [agent:r*] auto-compact = idle-off instead"* ]]
+  [[ "$output" == *"[agent:g] auto-compact = -: the roles g run with their agent's own default for compaction, whatever a weaker line says, and not the default for a role (off)"* ]]
+  trust "$PROJ"
+  run_engine -- asb --check --role q claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  auto-compact: on -- .agent-sandbox [agent]; given by profile claude (profile_auto_compact_args) in the briefing's settings"* ]]
+  run_engine -- asb --check --role r2 claude
+  [[ "$output" == *"  auto-compact: idle-off -- .agent-sandbox [agent:r*]; given by profile claude (profile_auto_compact_args) in the briefing's settings"* ]]
+  [[ "$output" == *"  agent: [agent:r*] auto-compact = idle-off"* ]]
+  run_engine -- asb --check --role g claude
+  [[ "$output" == *"  auto-compact: none, the agent's own (-, .agent-sandbox [agent:g])"* ]]
+  # no line: the default for a role; none for the plain session; the briefing off, said
+  printf '[connect:*]\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --check --role q claude
+  [[ "$output" == *"  auto-compact: off -- the default for a role; given by profile claude (profile_auto_compact_args) in the briefing's settings"* ]]
+  run_engine -- asb --check claude
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"auto-compact"* ]]
+  run_engine AGENT_SANDBOX_BRIEFING=off -- asb --check --role q claude
+  [[ "$output" == *"  auto-compact: off -- the default for a role; NOT APPLIED: profile claude gives it in the briefing's settings, and the briefing is off"* ]]
+}
+
+@test "[agent] auto-compact under --preset none, and for the agent an asb inside a sandbox runs: no briefing there, so said not applied, once; no settings key passed" {
+  printf '[connect:*]\n[agent]\ncommand = claude\n' >"$PROJ/.agent-sandbox"
+  trust "$PROJ"
+  run_engine -- asb --preset none --role r claude mcp list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: mcp list"* ]]
+  [[ "$output" == *"role 'r': its auto-compact value off (the default for a role) is not applied: profile 'claude' gives it in the briefing's settings (profile_briefing_args), and --preset none gives its agent no briefing"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  # a verb: no value at all
+  run_engine -- asb --preset none --role r claude agents
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"auto-compact"* ]]
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" bash -c '
+    cd "$1" && source "$2" && _as_inside_sandbox() { return 0; } && agent_sandbox --role r claude -p hi
+  ' _ "$PROJ" "$ENGINE" </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stub-agent argv: -p hi"* ]]
+  [[ "$output" == *"role 'r': its auto-compact value off (the default for a role) is not applied: profile 'claude' gives it in the briefing's settings (profile_briefing_args), and an asb inside a sandbox runs its agent with no briefing of its own"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
 }
 
 @test "the role's agent: an unapproved file is not read, and no agent anywhere names both places; at a terminal it is asked about once (#355)" {

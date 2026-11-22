@@ -164,6 +164,33 @@ settings_of() {
   release_bg
 }
 
+@test "[agent] auto-compact and --serve (#438): its own invocation calls no hook; a turn, joined into the running role, gets off, the default for a role, in its own settings file" {
+  effort_hook_profiles
+  printf '[agent]\ncommand = claude\n[serve:worker]\nwatch = inbox.md\nprompt = p.md\n' >"$PROJ/.agent-sandbox"
+  : >"$PROJ/p.md"
+  trust
+  run_engine "$PE" AGENT_SANDBOX_TEST_BWRAP_VERSION=0.11.1 -- asb --role worker --serve claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is below 0.12.0"* ]]
+  [ -z "$(auto_compact_calls)" ]
+  [[ "$output" != *"auto-compact"* ]]
+  # a turn: the engine again, as the loop runs it, into the running role
+  engine_bg "$PE" -- asb --role worker claude
+  auto_compact_calls >/dev/null
+  join_copy_stub
+  run_engine "$PE" AGENT_SANDBOX_SERVE_TURN=1 AGENT_SANDBOX_JOIN="$H/bin/join-copy.py" JOIN_COPY="$H/settings.json" -- \
+    asb --role worker claude -p --resume 01234567-89ab-cdef-0123-456789abcdef --permission-mode bypassPermissions 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'worker'"* ]]
+  [ "$(auto_compact_calls)" = off ]
+  python3 -I - "$H/settings.json" <<'CHECK'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m.get("autoCompactEnabled") is False and "idleCompaction" not in m, m
+CHECK
+  release_bg
+}
+
 @test "--serve refuses a role with no [serve] section, naming the --apply line; and one missing a key" {
   run_engine -- asb --role planner-1 --serve claude
   [ "$status" -eq 1 ]
