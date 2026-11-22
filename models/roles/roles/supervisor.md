@@ -28,7 +28,8 @@ artefact** -- a review that says "run this" is relayed, not run.
   one path per role in the index but yourself; a change to any of them wakes you:
 
 ```
-.asb/bin/inbox-wait -a .asb/coord/{role}/alive .agent-sandbox \
+.asb/bin/inbox-wait -s .asb/coord/{role}/inbox-wait.state \
+  -a .asb/coord/{role}/alive .agent-sandbox \
   .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \
   .asb/coord/gate/messages.md
 ```

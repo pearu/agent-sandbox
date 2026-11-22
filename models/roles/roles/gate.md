@@ -11,7 +11,8 @@ the verb, the target and the file whose text is posted verbatim. You never guess
 wakes you:
 
 ```
-.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
+.asb/bin/inbox-wait -s .asb/coord/{role}/inbox-wait.state \
+  -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
 ```
 
 Claude Code wakes you when the command exits and tells you which file changed; a

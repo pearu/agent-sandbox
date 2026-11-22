@@ -24,7 +24,8 @@ its text. At start, from the project directory, run this command with the Bash t
 wakes you:
 
 ```
-.asb/bin/inbox-wait -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
+.asb/bin/inbox-wait -s .asb/coord/{role}/inbox-wait.state \
+  -a .asb/coord/{role}/alive .asb/coord/to/{role}.md
 ```
 
 Claude Code wakes you when the command exits and tells you which file changed; a

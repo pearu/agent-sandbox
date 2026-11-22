@@ -2802,14 +2802,16 @@ shared_env() {
   done
   grep -A6 -xF '[permissions:gate]                # the verbs it executes, each from an approved message' "$df" | grep -qxF 'Bash(git push:*)'
   # the purpose files arm it, with the role's own inbox and alive file
-  grep -qxF '.asb/bin/inbox-wait -a .asb/coord/planner-2/alive .asb/coord/to/planner-2.md' "$PROJ/.asb/roles/planner-2.md"
+  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/planner-2/inbox-wait.state \\" "$PROJ/.asb/roles/planner-2.md"
+  grep -qxF '  -a .asb/coord/planner-2/alive .asb/coord/to/planner-2.md' "$PROJ/.asb/roles/planner-2.md"
   # the closing line comes with the done N write, never before
   local r
   for r in planner-1 implementer-1 reviewer-1 gate; do
     # shellcheck disable=SC2016 # backquotes in the text, not an expansion
     tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | grep -qF '**Closing line.** "done; in my file; S has it" is said once, in the reply in which you append `done N` to your messages, and never before: a reply with work still pending (a suite running, a section unwritten) ends by naming what is pending and what follows.'
   done
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
   printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"
   printf '#!/bin/sh\nexit 0\n' >"$PROJ/.asb/bin/inbox-wait"
@@ -2829,7 +2831,8 @@ shared_env() {
   local r f sup="$PROJ/.asb/roles/supervisor.md" idx="$PROJ/.asb/coord/COORDINATION.md"
   for r in planner-1 planner-2 implementer-1 reviewer-1; do
     f="$PROJ/.asb/roles/$r.md"
-    grep -qxF ".asb/bin/inbox-wait -a .asb/coord/$r/alive .asb/coord/to/$r.md" "$f"
+    grep -qxF ".asb/bin/inbox-wait -s .asb/coord/$r/inbox-wait.state \\" "$f"
+    grep -qxF "  -a .asb/coord/$r/alive .asb/coord/to/$r.md" "$f"
     grep -qF 'with the Bash tool and' "$f"
     grep -qxF "\`run_in_background: true\`, and run it again after each wake; a change to your inbox" "$f"
     grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
@@ -2837,7 +2840,8 @@ shared_env() {
   done
   # the Gate arms one as the others do; it is never served, so no --serve rule
   f="$PROJ/.asb/roles/gate.md"
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/gate/alive .asb/coord/to/gate.md" "$f"
+  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/gate/inbox-wait.state \\" "$f"
+  grep -qxF "  -a .asb/coord/gate/alive .asb/coord/to/gate.md" "$f"
   grep -qxF '**At start.** From the project directory, run this command with the Bash tool and' "$f"
   grep -qxF "\`run_in_background: true\`, and run it again after each wake; a change to your inbox" "$f"
   grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
@@ -2847,7 +2851,8 @@ shared_env() {
   # the Supervisor: one command, its paths from the index, every role's but its own
   grep -qxF "  \`run_in_background: true\`, and run it again after each wake: \`.agent-sandbox\`, then" "$sup"
   grep -qxF '  one path per role in the index but yourself; a change to any of them wakes you:' "$sup"
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
+  grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF "  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \\" "$sup"
   grep -qxF '  .asb/coord/gate/messages.md' "$sup"
   run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
@@ -2993,7 +2998,8 @@ shared_env() {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md"
-  grep -qxF ".asb/bin/inbox-wait -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
+  grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
   # the bullet closes **Sending a message.**, before the Gate's turn
   [ "$(grep -B2 -xF "**The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the" "$sup" | head -1)" = "  so: the user relaunches you." ]
