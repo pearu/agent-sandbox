@@ -24,6 +24,10 @@ teardown() {
   return 0
 }
 
+# track PID -- kill PID in teardown (a test's own body does not append to FAKES: to
+# ShellCheck, that is a change made in a subshell, and every later read is suspect)
+track() { FAKES+=("$1"); }
+
 fake_keeper() { # fake_keeper SECONDS HOME
   (HOME="$2" exec -a agent-sandbox-keeper sleep "$1") </dev/null >/dev/null 2>&1 3>&- &
   FAKES+=("$!")
@@ -252,7 +256,7 @@ while time.time() < end:
     'import ctypes, time; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); time.sleep(60)') \
     </dev/null >/dev/null 2>&1 3>&- &
   p=$!
-  FAKES+=("$p")
+  track "$p"
   disown "$p"
   sleep 0.5
   run cat "/proc/$p/environ"
@@ -298,4 +302,95 @@ os.waitpid(pid, 0)
   run "$KL" describe 999999999
   [ "$status" -eq 0 ]
   [[ "$output" == *"pid 999999999:"$'\n'"    it ended before it could be described" ]]
+}
+
+# Which keepers are the run's (#444): only its uid's, and only under its scope.
+
+@test "a keeper of another uid is neither counted nor killed: it is not the run's (#444)" {
+  local before
+  before="$("$KL" snapshot)"
+  fake_keeper 60 "$BATS_TEST_TMPDIR/testhome"
+  # AS_KEEPER_UID stands for the run's uid; this keeper's real uid is then another's.
+  # shellcheck disable=SC2086 # a list of pids
+  AS_KEEPER_UID="$(($(id -u) + 1))" run "$KL" check $before
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -d "/proc/${FAKES[0]}" ]
+  # the same keeper, as the run's uid's: a leak
+  # shellcheck disable=SC2086
+  run "$KL" check $before
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pid ${FAKES[0]}: HOME=$BATS_TEST_TMPDIR/testhome"* ]]
+}
+
+@test "a keeper outside AS_KEEPER_SCOPE is neither counted nor killed, a sibling that shares its prefix included (#444)" {
+  local before scope="$BATS_TEST_TMPDIR/run"
+  before="$("$KL" snapshot)"
+  fake_keeper 60 "$BATS_TEST_TMPDIR/elsewhere/home"
+  fake_keeper 60 "$scope.other/home" # a concurrent run's directory beside this one's
+  fake_keeper 60 "$scope/test/1/home"
+  # shellcheck disable=SC2086 # a list of pids
+  AS_KEEPER_SCOPE="$scope" run "$KL" check $before
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pid ${FAKES[2]}: HOME=$scope/test/1/home"* ]]
+  [[ "$output" != *"pid ${FAKES[0]}"* && "$output" != *"pid ${FAKES[1]}"* ]]
+  sleep 0.5
+  [ ! -d "/proc/${FAKES[2]}" ]
+  [ -d "/proc/${FAKES[0]}" ]
+  [ -d "/proc/${FAKES[1]}" ]
+}
+
+# run_suite NAME BODY -- run tests/run.sh on a one-test bats file whose test is BODY,
+# with TMPDIR=$BATS_TEST_TMPDIR/t, so the run's own directory is made there. The check's
+# variables are the run's own: none is inherited from this test's setup.
+run_suite() {
+  mkdir -p "$BATS_TEST_TMPDIR/t" "$BATS_TEST_TMPDIR/inner"
+  printf '@test "%s" {\n%s\n}\n' "$1" "$2" >"$BATS_TEST_TMPDIR/inner/$1.bats"
+  run env -u AS_KEEPER_SCOPE -u AS_KEEPER_UID -u AS_REAL_HOME TMPDIR="$BATS_TEST_TMPDIR/t" \
+    OUTER="$BATS_TEST_TMPDIR" "$REPO_ROOT/tests/run.sh" "$BATS_TEST_TMPDIR/inner/$1.bats"
+}
+
+# The inner test's keeper: HOME is its first argument, and its pid goes to $OUTER/kpid.
+# Its parent is a shell that waits for it and outlives the inner test: an orphaned keeper
+# (parent pid 1) is what orphans.bats' `probes/orphans.sh --kill` ends, on the host,
+# while this file runs beside it under --jobs.
+# shellcheck disable=SC2016 # expanded by the inner test
+INNER_KEEPER='HOME="$1" bash -c "exec -a agent-sandbox-keeper sleep 60 & echo \$! >\"\$OUTER/kpid\"; wait" \
+  </dev/null >/dev/null 2>&1 3>&- &'
+
+@test "tests/run.sh: a keeper its run leaves running fails the run, named under the run's own directory, which is then removed (#444)" {
+  # shellcheck disable=SC2016 # expanded by the inner test
+  run_suite leak "set -- \"\$BATS_TEST_TMPDIR/home\"
+$INNER_KEEPER"
+  track "$(cat "$BATS_TEST_TMPDIR/kpid")"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ok 1 leak"* ]]
+  # bats ran in the run's directory: the HOME is under it
+  [[ "$output" =~ "pid ${FAKES[0]}: HOME=$BATS_TEST_TMPDIR/t/asb-run-"[^/]+/bats-run-[^/]+/test/1/home ]]
+  sleep 0.5
+  [ ! -d "/proc/${FAKES[0]}" ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/t")" ] # the run's directory is gone
+}
+
+@test "tests/run.sh: a keeper started during the run under another run's directory does not fail it, and is left alone (#444)" {
+  # shellcheck disable=SC2016 # expanded by the inner test
+  run_suite other "set -- \"\$OUTER/t/asb-run-other/test/1/home\"
+$INNER_KEEPER"
+  track "$(cat "$BATS_TEST_TMPDIR/kpid")"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok 1 other"* ]]
+  [[ "$output" != *"left role keepers running"* ]]
+  [ -d "/proc/${FAKES[0]}" ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/t")" ] # the run's directory is gone
+}
+
+@test "tests/run.sh --no-tempdir-cleanup: bats' directory, which it names, is kept with the run's (#444)" {
+  mkdir -p "$BATS_TEST_TMPDIR/t" "$BATS_TEST_TMPDIR/inner"
+  # shellcheck disable=SC2016 # expanded by the inner test
+  printf '@test "keep" {\n  echo kept >"$BATS_TEST_TMPDIR/mark"\n}\n' >"$BATS_TEST_TMPDIR/inner/keep.bats"
+  run env -u AS_KEEPER_SCOPE -u AS_KEEPER_UID -u AS_REAL_HOME TMPDIR="$BATS_TEST_TMPDIR/t" \
+    "$REPO_ROOT/tests/run.sh" "$BATS_TEST_TMPDIR/inner/keep.bats" --no-tempdir-cleanup
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ BATS_RUN_TMPDIR:\ ("$BATS_TEST_TMPDIR/t/asb-run-"[^/]+/bats-run-[^/[:space:]]+) ]]
+  [ "$(cat "${BASH_REMATCH[1]}/test/1/mark")" = kept ]
 }

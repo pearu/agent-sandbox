@@ -80,10 +80,26 @@ esac
 # Run bats, then fail the run if it left role keepers behind (tests/helpers/keeper-leaks.sh):
 # a leaked keeper passes every test and is only ever noticed by counting.
 # The run's start goes to the check, which says how far into the run a leak started.
-before="$(tests/helpers/keeper-leaks.sh snapshot)"
+#
+# The check counts only this run's keepers (#444). bats runs with TMPDIR in a directory
+# of the run's own, so it makes its bats-run-XXXXXX there, and every test's throwaway HOME
+# is under it; the check is given that directory as its scope (AS_KEEPER_SCOPE). A keeper
+# that is not the run's -- the user's own roles, a concurrent run's, another user's --
+# has its HOME elsewhere and is neither counted nor killed. The directory is new, so no
+# keeper can be under it before bats starts: there is no snapshot to take. It is removed
+# when the run ends, an interrupted run included. (Not bats' --tempdir, which its source
+# marks internal.) bats told to keep its directory (--no-tempdir-cleanup, to debug a
+# test) prints where it is, and the run's directory is then kept with it.
+# No dot in its name: tests derive a Claude project slug from a path with ${p//\//-}, as
+# Claude Code does for one of letters, digits, - and / (profile-claude/memory.bats).
+scope="$(mktemp -d "${TMPDIR:-/tmp}/asb-run-XXXXXX")"
+keep=0
+for a in "$@"; do
+  if [[ "$a" == --no-tempdir-cleanup ]]; then keep=1; fi
+done
+trap '[[ "$keep" == 1 ]] || rm -rf -- "$scope"' EXIT
 start="$(date +%s)"
 status=0
-bats --recursive ${jobs[@]+"${jobs[@]}"} "$@" || status=$?
-# shellcheck disable=SC2086 # a list of pids
-AS_RUN_START="$start" tests/helpers/keeper-leaks.sh check $before || status=1
+TMPDIR="$scope" bats --recursive ${jobs[@]+"${jobs[@]}"} "$@" || status=$?
+AS_KEEPER_SCOPE="$scope" AS_RUN_START="$start" tests/helpers/keeper-leaks.sh check || status=1
 exit "$status"
