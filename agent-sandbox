@@ -4046,7 +4046,12 @@ _as_keeper_supervise() {
   # from its record (keeper/id), when a join can first signal it, to the end of its loop
   # the supervisor runs no command substitution, and once it is ending, when nothing
   # needs waking, USR1 is ignored.
-  trap ':' USR1
+  # The handler RECORDS the wake, a builtin assignment: one that lands while the
+  # supervisor is not inside a `wait` (between its record and its first wait, in its
+  # checks after a wake) is kept for the next wait, which it skips, instead of being
+  # lost to a full five seconds (#441). Set from here, before the record.
+  _as_woke=0
+  trap '_as_woke=1' USR1
   local me mestart
   me="$BASHPID"
   _as_proc_start "$me"
@@ -4109,14 +4114,22 @@ _as_keeper_supervise() {
   local again=0
   while :; do
     # Woken by a join's exit (USR1), or every five seconds to notice one that died
-    # without saying so.
+    # without saying so. A wake that came since this turn's checks began (_as_woke) is
+    # not waited for: the sleep is started and ended, and the checks run at once. Ended
+    # with KILL: a sleep ended that soon may not have exec'd yet, and a fork of the
+    # supervisor sent TERM there loses it and lives on as the sleep (measured).
     if ((! again)); then
       sleep 5 8>&- &
       sl=$!
-      wait "$sl" 2>/dev/null
-      kill "$sl" 2>/dev/null
+      ((_as_woke)) || wait "$sl" 2>/dev/null
+      kill -KILL "$sl" 2>/dev/null
     fi
     again=0
+    # Cleared BEFORE any state is read, never after: a wake during the checks below is
+    # then kept for the next wait. Checked after, it would be lost again. What is left
+    # is the gap between `((_as_woke))` and `wait` taking the signal: one test, not a
+    # whole turn.
+    _as_woke=0
     _as_proc_is "$t" "$tstart" || break # the launch ended from inside
     if [[ -e "$kd/force" ]]; then       # --shutdown: whatever is joined or running
       flock 8
@@ -4130,12 +4143,18 @@ _as_keeper_supervise() {
     _as_keeper_daemon "$kd" && continue
     # The grace, interruptible: a reset that ends an idle keeper signals it here. Any
     # other signal is a join that came and went meanwhile, and the grace starts over.
+    # A wake already recorded in this turn's checks is that interruption too (138, as
+    # wait's own for USR1).
     if [[ ! -e "$kd/stop" && "$grace" != 0 ]]; then
       sleep "$grace" 8>&- &
       sl=$!
       local wrc=0
-      wait "$sl" 2>/dev/null || wrc=$?
-      kill "$sl" 2>/dev/null
+      if ((_as_woke)); then
+        wrc=138
+      else
+        wait "$sl" 2>/dev/null || wrc=$?
+      fi
+      kill -KILL "$sl" 2>/dev/null
       if ((wrc > 128)) && [[ ! -e "$kd/stop" ]]; then
         again=1
         continue
@@ -17872,12 +17891,11 @@ _as_launch() {
   # A signal during the start, recorded (_as_handover_defer), checked once the handlers are
   # reset, so that none falls between: the launch does not join, and the keeper it
   # started, with nothing joined, ends at once, with its cleanup. The launch ends after
-  # it. Woken until it is gone, as a join with no grace wakes it, because the supervisor
-  # can lose a wake: a USR1 that lands between its checks and its `wait` (here, between
-  # its keeper/id record and its first wait) runs its `:` handler, and it then sleeps its
-  # five seconds (52 of 238 such runs, measured, with one USR1). A fix of that window in
-  # the supervisor (a flag its handler sets, checked before each wait; drafted as an
-  # issue) would let this go back to one USR1. A second signal meanwhile ends the
+  # it. Woken until it is gone, as a join with no grace wakes it. One USR1 would do now:
+  # the supervisor keeps a wake that lands outside its `wait` (here, between its
+  # keeper/id record and its first wait), in a flag checked before each wait (#441);
+  # before that, it slept its five seconds (tests/unit/keeper-wake.bats holds it in
+  # that window). The loop stays, belt and braces. A second signal meanwhile ends the
   # launch; the keeper, told to stop, then ends within that wait.
   if ((${_as_handover_sig:-0})); then
     : >"$_keeper_sb/keeper/stop" || :

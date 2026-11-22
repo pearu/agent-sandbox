@@ -144,7 +144,7 @@ _as_session_signal 1|HUP
 _as_handover_sig=2|INT
 _as_handover_sig=15|TERM
 _as_handover_sig=1|HUP
-:|USR1
+_as_woke=1|USR1
 :|INT QUIT
 sig=1|INT TERM HUP
 _serve_stop=1|INT TERM HUP
@@ -158,7 +158,8 @@ EOF
   #   per simple command there.
   # _as_handover_sig=N (_as_handover_defer): while a keeper starts, the signal recorded
   #   by a builtin assignment, no cleanup; acted on once the start's outcome is known.
-  # : USR1 (_as_keeper_supervise): no substitution once a join can signal it (#419).
+  # _as_woke=1 USR1 (_as_keeper_supervise): a builtin assignment, the wake kept for the
+  #   next wait (#441); no substitution once a join can signal it (#419).
   # : INT QUIT (_as_keeper_join): around one foreground command.
   # sig=1 (_as_summarize): around the turn and _as_summarize_forget; no substitution.
   # _serve_stop=1 (_as_serve): the loop; single substitutions, and the ending ignores the

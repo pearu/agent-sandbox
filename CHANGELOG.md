@@ -1217,6 +1217,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The keeper's supervisor keeps a wake that comes outside its wait** (#441). A join's
+  exit, `--shutdown` and a reset wake it with one USR1, and its handler was `:`, which
+  only cuts a `wait` short: a USR1 that came between its `keeper/id` record and its
+  first wait, or during its checks after a wake, was lost, and it slept its five-second
+  poll (or a whole grace) before it acted on a stop, a reset or a join's exit. Measured
+  with the supervisor held in its checks while a join ends and a stop is written: 50 of
+  50 runs ended 5.0 s late on main. Now the handler records the wake
+  (`_as_woke=1`, a builtin assignment, as the handler rule needs), the flag is cleared
+  before each turn's checks read any state, and each wait -- the poll and the grace's --
+  is skipped when it is already set: 50 of 50 ended within 0.03 s. What is left is the
+  gap between that test and the `wait`. The hand-over's wake loop (#422) stays, though
+  one USR1 now does.
+
 - **The roles model's Gate pushes under its rule; the ruled roles run one command per
   call.** The Gate's purpose file pushed with
   `git push "$(git remote get-url origin)" BRANCH`, and a `$(…)` in the arguments
