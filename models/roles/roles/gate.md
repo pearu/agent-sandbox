@@ -46,7 +46,9 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
 - A post that mentions a GitHub user (`@name`) notifies a person: do not post it on
   the message alone. Append `back N: mentions @...; the user approves it here` and tell
   S; post it when the user approves it in this terminal.
-- When you stop for the user's word, your last line is the question.
+- When you stop for the user's word, write why in your messages (`back N: ...`), as
+  above. Ask in this terminal only what the user answers here -- a post that mentions
+  `@name` -- and then the question is your reply's last line.
 - **One command per call.** Run each command your `[permissions:{role}]` rules name --
   the push and the `gh` verbs -- as a Bash call of its own, exactly as written, from
   the project directory: no `cd`, no `;`, `&&`, `||` or pipe, no redirect, and no

@@ -3084,21 +3084,42 @@ shared_env() {
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
 
-@test "the roles model: a reply that stops for the user's word ends with the question -- the Supervisor's Send it?, a bullet in every other role's file" {
+@test "the roles model: a role stops for the user's word with the question in its messages, addressed to S, and asks nothing in its terminal; the Gate asks there only about @name; the Supervisor ends with Send it?" {
+  # #445: "your last line is the question" did not say whose last line, and a Planner
+  # asked in its terminal as well as through S: two places for one decision.
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
-  local sup="$PROJ/.asb/roles/supervisor.md" r f q="- When you stop for the user's word, your last line is the question."
+  local sup="$PROJ/.asb/roles/supervisor.md" r f old="your last line is the question"
+  local q g
+  q="- When you stop for the user's word, the question goes in your messages, addressed to
+  S, as their last line or the last before your \`done N\`; S brings it to the user.
+  Your terminal reply names it as pending, as a statement without a question mark
+  (\"waiting for S on: whether ...\"), and asks nothing, nor do you open a question
+  dialog (AskUserQuestion): an answer given here would bypass S. When the user talks
+  to you here, answer here."
+  # shellcheck disable=SC2016 # backticks: the text, not a command
+  g='- When you stop for the user'"'"'s word, write why in your messages (`back N: ...`), as
+  above. Ask in this terminal only what the user answers here -- a post that mentions
+  `@name` -- and then the question is your reply'"'"'s last line.'
   # in **Sending a message.**, the bullet that shows the user the message
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- Show the user the message, whole, and the role it goes to, and end your reply with')" -eq 1 ]
   # shellcheck disable=SC2016 # backticks: the text, not a command
   grep -qxF -- '  the question, as its last line: `Send it?`; write it only on a yes. Then append it' "$sup"
+  # the whole bullet, once, in **Protocol.**: the question goes to S, the reply asks nothing
   for r in planner-1 implementer-1 reviewer-1; do
     f="$PROJ/.asb/roles/$r.md"
-    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -cxF -- "$q")" -eq 1 ]
+    [ "$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$f" | grep -A5 -xF -- "${q%%$'\n'*}")" = "$q" ]
+    [ "$(grep -cF -- "${q%%$'\n'*}" "$f")" -eq 1 ]
+    run ! grep -qF -- "$old" "$f"
+    run ! grep -qF -- "your reply's last line" "$f"
   done
-  # the Gate's is in **Executing a message.**
-  [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- "$q")" -eq 1 ]
-  run ! grep -qF -- "$q" "$sup"
+  # the Gate's is in **Executing a message.**: it asks in its terminal only about @name
+  f="$PROJ/.asb/roles/gate.md"
+  [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$f" | grep -A2 -xF -- "${g%%$'\n'*}")" = "$g" ]
+  [ "$(grep -cF -- "When you stop for the user's word" "$f")" -eq 1 ]
+  run ! grep -qF -- "$old" "$f"
+  run ! grep -qF -- "$old" "$sup"
+  run ! grep -qF -- "When you stop for the user's word" "$sup"
   for r in supervisor planner implementer reviewer gate; do
     [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
   done
