@@ -7,7 +7,8 @@
 # ---- every role's agent: what a launch with no command runs, the native arguments
 #   after it (asb --role NAME --resume, asb --roles NAME... --resume); one role's own
 #   is an [agent:NAME] command = AGENT ARGS section of yours. Each role's effort level
-#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL)
+#   is its [agent:...] effort below, in its agent's words (claude: --effort LEVEL), and
+#   its auto-compact = off there is a role's default, written to be seen and changed
 [agent]
 command = claude
 
@@ -44,6 +45,7 @@ prompt = .asb/serve/{role}.md
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
@@ -64,6 +66,7 @@ prompt = .asb/serve/{role}.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
@@ -77,6 +80,7 @@ prompt = .asb/serve/{role}.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -98,6 +102,7 @@ Bash(git merge:*)
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 [agent:supervisor]
 effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -129,6 +134,7 @@ file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 [agent:gate]
 effort = low                      # executes an approved message as written
+auto-compact = off                # at its context limit a turn stops: /compact or /clear
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
 #@own #   asb --role setup claude
@@ -146,3 +152,4 @@ effort = low                      # executes an approved message as written
 #@own file = .asb/roles/setup.md
 #@own [agent:setup]
 #@own effort = high                     # a failing build is debugged here
+#@own auto-compact = off                # at its context limit a turn stops: /compact or /clear

@@ -79,6 +79,18 @@
 #                               puts them before the agent's own arguments,
 #                               after the briefing's. Without it, a level is
 #                               said not to be applied.
+#   profile_auto_compact_args VALUE
+#                               optional. Takes a role's auto-compact value
+#                               ([agent] auto-compact = on, off or idle-off;
+#                               off by default for every role but `default`)
+#                               for the launches that take the effort level;
+#                               called once, after the value is validated,
+#                               never for `auto-compact = -`. The value
+#                               travels with the briefing: the hook records
+#                               it, and profile_briefing_args gives it to the
+#                               agent; where no briefing is given, the engine
+#                               says it is not applied. Without the hook, the
+#                               same.
 #   profile_start_args TEXT ARGS...
 #                               optional. Sets profile_start_argv to the
 #                               agent's arguments that run TEXT as the
@@ -415,9 +427,13 @@ profile_briefing_args() {
   local host_file="$_brief_out_host/settings.json" inside_file="$_brief_out_inside/settings.json"
   local ours user_val="" i
   local refusal="bash $_brief_out_inside/refusal-hook.sh" f kv bg=off ev
+  # The role's auto-compact value (profile_auto_compact_args), said with a failure below
+  # that leaves it out.
+  local ac_lost=""
+  [[ -z "${_claude_auto_compact:-}" ]] || ac_lost=" (and the role's auto-compact $_claude_auto_compact is not applied)"
   for f in refusal-hook.sh state-hook.sh statusline.sh; do
     cp -- "$profile_home/$f" "$_brief_out_host/$f" || {
-      _as_msg "briefing: cannot copy $f to $_brief_out_host; continuing without the session hooks"
+      _as_msg "briefing: cannot copy $f to $_brief_out_host; continuing without the session hooks$ac_lost"
       return 0
     }
   done
@@ -480,7 +496,17 @@ profile_briefing_args() {
     r="${r//\\/\\\\}" r="${r//\"/\\\"}" r="${r//$'\t'/\\t}" # a JSON string
     rules+="${rules:+,}\"$r\""
   done
-  ours+=",\"permissions\":{\"allow\":[$rules]}}"
+  ours+=",\"permissions\":{\"allow\":[$rules]}"
+  # The role's auto-compact value (#438), recorded by profile_auto_compact_args: Claude
+  # Code's settings keys, as it has no option for them. autoCompactEnabled false turns off
+  # every compaction it starts on its own (at the threshold, the reactive one after a
+  # prompt too long, idle); idleCompaction false only the idle one. `on` writes neither.
+  # A user's --settings that sets either key keeps its own (profile.py merge-settings).
+  case "${_claude_auto_compact:-}" in
+    off) ours+=",\"autoCompactEnabled\":false" ;;
+    idle-off) ours+=",\"idleCompaction\":false" ;;
+  esac
+  ours+="}"
 
   # The LAST --settings, deliberately: Claude Code honours only the last one, so
   # that is the value the user's command line resolves to, and merging any
@@ -501,7 +527,7 @@ profile_briefing_args() {
   if [[ -n "$user_val" ]]; then
     local _merge_note=""
     if ! _merge_note=$(_claude_py merge-settings --ours "$ours" --user "$user_val" --out "$host_file"); then
-      _as_msg "briefing: keeping your --settings unchanged; the briefing's hooks were not installed. $inside/briefing.md is bound read-only either way."
+      _as_msg "briefing: keeping your --settings unchanged; the briefing's hooks were not installed$ac_lost. $inside/briefing.md is bound read-only either way."
       return 0
     fi
     _as_msg "briefing: merged your --settings with the briefing's session hooks"
@@ -522,9 +548,11 @@ profile_briefing_args() {
       && _as_msg "briefing: your settings set disableAllHooks, so the briefing will NOT be injected into the session; $inside/briefing.md is bound read-only and can be read on request"
     [[ "$_merge_note" == *permissions-skipped* ]] \
       && _as_msg "briefing: your --settings has a permissions value that is not an object (or allow that is not an array); the engine's and [permissions] rules were not added, so the agent will ask"
+    [[ "$_merge_note" == *compact-kept* ]] \
+      && _as_msg "briefing: your --settings sets autoCompactEnabled or idleCompaction, so it decides how the session compacts; the role's auto-compact $_claude_auto_compact is not added"
   else
     printf '%s\n' "$ours" >"$host_file" || {
-      _as_msg "briefing: cannot write $host_file; continuing without the session hooks"
+      _as_msg "briefing: cannot write $host_file; continuing without the session hooks$ac_lost"
       return 0
     }
   fi
@@ -596,6 +624,18 @@ _claude_watch_ok() {
 # in the request Claude Code sends, interactive and -p, the briefing's words on or off.
 profile_effort_args() {
   profile_effort_argv=(--effort "$1")
+}
+
+# profile_auto_compact_args VALUE -- engine hook: a role's auto-compact value (on, off,
+# idle-off; #438), recorded for profile_briefing_args, which writes it into the launch's
+# --settings file: Claude Code has no command-line option for it, only settings keys
+# (`autoCompactEnabled`, the /config toggle "Auto-compact"; `idleCompaction`). The
+# --settings file outranks the user's own settings files, /config's included (Claude
+# Code reads policy, then --settings, then local, project and user settings). Called
+# before profile_briefing_args on every path that has one, a join's included: the engine
+# hands the value over once per invocation, and each invocation writes its own file.
+profile_auto_compact_args() {
+  _claude_auto_compact="$1"
 }
 
 # profile_start_args TEXT [AGENT ARGS...] -- engine hook: the arguments that make Claude

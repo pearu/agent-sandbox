@@ -262,19 +262,30 @@ run_engine() {
 }
 
 # effort_hook_profiles -- a profile directory whose claude profile records each call of
-# its profile_effort_args, the level one line per call, in $H/effort.calls, then does
-# what the claude profile does. A launch takes it with "$PE" before its `--`; a test
-# empties the record before the invocation it counts (effort_calls).
+# its profile_effort_args, the level one line per call, in $H/effort.calls, and of its
+# profile_auto_compact_args, the value, in $H/auto-compact.calls, then does what the
+# claude profile does. A launch takes it with "$PE" before its `--`; a test empties the
+# record before the invocation it counts (effort_calls, auto_compact_calls).
 effort_hook_profiles() {
   mkdir -p "$H/profiles-e"
   cp -r "$REPO_ROOT/profiles/claude" "$H/profiles-e/claude"
   cat >>"$H/profiles-e/claude/profile.sh" <<HOOK
 eval "_t_\$(declare -f profile_effort_args)"
 profile_effort_args() { printf '%s\\n' "\$*" >>"$H/effort.calls"; _t_profile_effort_args "\$@"; }
+eval "_t_\$(declare -f profile_auto_compact_args)"
+profile_auto_compact_args() { printf '%s\\n' "\$*" >>"$H/auto-compact.calls"; _t_profile_auto_compact_args "\$@"; }
 HOOK
   # shellcheck disable=SC2034 # read by the suites
   PE="AGENT_SANDBOX_PROFILE_DIR=$H/profiles-e"
   : >"$H/effort.calls"
+  : >"$H/auto-compact.calls"
+}
+
+# auto_compact_calls -- the values profile_auto_compact_args was called with since the
+# record was emptied, space-separated, and empties it.
+auto_compact_calls() {
+  paste -sd' ' "$H/auto-compact.calls"
+  : >"$H/auto-compact.calls"
 }
 
 # effort_calls -- the levels profile_effort_args was called with since the record was

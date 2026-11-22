@@ -153,6 +153,34 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **Whether a role's agent compacts on its own: `[agent] auto-compact = on | off |
+  idle-off`, off by default for roles (#438).** Claude Code compacts a conversation by
+  itself at its context limit and, on accounts its server enables it for, after about
+  54 minutes idle at 200K tokens or more; a role spends most of its life idle on its
+  inbox, so it compacted while it waited, sometimes mid-Task, and nothing could turn
+  that off: the launch's `--settings` file outranks your `settings.json`. Now every role
+  but `default` gets `off` with no line (named by `--role`, `AGENT_SANDBOX_ROLE` or
+  `[sandbox] role`, its `--serve` and `--summarize` turns included); a plain session
+  gets nothing, as before. Per role with `[agent:<glob>]`, which beats `[agent]`, as for
+  `effort`; `-` is none, the agent's own default. The value is the engine's word,
+  handed once per launch to a new optional profile hook, `profile_auto_compact_args
+  VALUE`, after it is validated; it travels with the briefing. claude: `off` writes
+  `"autoCompactEnabled": false` into the briefing's `--settings` file (all automatic
+  compaction: at the threshold, the reactive one, idle), `idle-off`
+  `"idleCompaction": false` (only idle), `on` neither; the merge adds it only when your
+  own `--settings` sets neither key. A join writes it into its own file too. With no
+  briefing (`[briefing] mode = off`, `--preset none`, a join of a role with none, an
+  `asb` inside a sandbox), or a profile without the hook, the launch says, once, that it
+  is not applied. A launch says the value and where it came from; the review says each
+  line and refuses a value that is not one of the three, as `--check` and a launch do;
+  `--check` shows the value, "the default for a role" included. The roles model writes
+  `auto-compact = off` in each role's `[agent:...]` section, beside `effort`. With it
+  off, a full context ends the turn ("Context limit reached · /compact or /clear to
+  continue"; a served turn: "Prompt is too long", exit 1, a `turn failed` line in the
+  role's messages). Measured on Claude Code 2.1.311 against a local stub API: with the
+  profile's file, 0 `compacting` events where 2 without the key, the same with
+  `"autoCompactEnabled": true` in the user's own `settings.json`.
+
 - **`docs/developing.md`, agent-sandbox's own repository under the roles model**
   (#425): the development environment (`asb --init roles --env agent-sandbox-dev`, the
   conda base on a first run, `micromamba create -p PREFIX -f environment.yml` as CI),

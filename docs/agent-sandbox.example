@@ -85,6 +85,10 @@
 # to its agent by the agent's profile before the agent's own arguments (claude:
 # --effort LEVEL); an --effort you type on the line wins. `-` is none: the agent's own
 # level, yours from its settings.
+# `auto-compact = on|off|idle-off`: whether the role's agent compacts its conversation
+# on its own; idle-off, only at its context limit, not while idle. Every role but
+# `default` gets off with no line; `-` is none: the agent's own default. Given in the
+# briefing's settings (claude: autoCompactEnabled / idleCompaction), so not with it off.
 #[agent]
 #command = claude
 #account = work
@@ -93,6 +97,7 @@
 #command = codex
 #account = -
 #effort = high
+#auto-compact = idle-off
 
 
 # --- Memory scoping ------------------------------------------------------

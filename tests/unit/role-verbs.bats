@@ -996,6 +996,26 @@ STUB
   [ "$(grep -c -x -- --effort "$H/join")" -eq 1 ]
 }
 
+@test "[agent] auto-compact and --summarize (#438): its own invocation calls no hook; its one turn, a launch, gets the value once" {
+  effort_hook_profiles
+  summ_setup
+  printf '[agent]\ncommand = claude\nauto-compact = idle-off\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  auto_compact_calls >/dev/null
+  run_engine "$PE" AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=line -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' summarized:"* ]]
+  # one call: the turn's (the engine again), none for the invocation that runs it
+  [ "$(auto_compact_calls)" = idle-off ]
+  # a role's own invocation, which has the default for a role, calls none either (one
+  # refused before its turn: no conversation)
+  run_engine "$PE" AGENT_SANDBOX_JOIN="$H/bin/summ-join" -- asb --role fresh --summarize claude
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'fresh' has no conversation to summarize"* ]]
+  [ -z "$(auto_compact_calls)" ]
+}
+
 @test "--summarize's clean-up never writes the prompt history through a link a sandbox left beside it: the old fixed temp name history.jsonl.asb-summarize pointing outside is left as it is, its target unchanged (#314)" {
   # A store the record names can be a directory the sandbox writes (transcripts
   # read-write: the native path); the clean-up runs on the host.

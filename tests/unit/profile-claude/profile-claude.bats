@@ -500,3 +500,155 @@ stop_cmds() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"watcher:"* ]]
 }
+
+# ----- a role's auto-compact (#438) ---------------------------------------------------
+
+# compact_keys FILE -- the settings file's compaction keys as KEY=VALUE, space-separated
+# (autoCompactEnabled first), or `none`.
+compact_keys() {
+  python3 -I -c 'import json, sys
+m = json.load(open(sys.argv[1]))
+print(" ".join(f"{k}={json.dumps(m[k])}" for k in ("autoCompactEnabled", "idleCompaction") if k in m) or "none")' "$1"
+}
+
+# approve_lines LINE... -- the project's .agent-sandbox is LINEs, approved with --trust.
+approve_lines() {
+  printf '%s\n' "$@" >"$H/proj/.agent-sandbox"
+  engine_cmd
+  (cd "$H/proj" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+}
+
+@test "[agent] auto-compact (#438): a role's settings file has autoCompactEnabled false with no line, said at the start; a plain session none, nothing said" {
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = "autoCompactEnabled=false" ]
+  [[ "$output" == *"auto-compact: off (the default for a role)"* ]]
+  check_state_settings "$OUT/settings.json" planner-1 off # the rest as before
+  # a role named by AGENT_SANDBOX_ROLE, and by [sandbox] role: a role all the same
+  settings_of AGENT_SANDBOX_ROLE=r2 asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = "autoCompactEnabled=false" ]
+  # no role: the default role, a plain session -- no key, Claude Code's own default
+  settings_of asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = none ]
+  [[ "$output" != *"auto-compact"* ]]
+  # --role default is the plain session too
+  settings_of asb --role default claude --version
+  [ "$(compact_keys "$OUT/settings.json")" = none ]
+  approve_lines '[sandbox]' 'role = r3' '[connect:*]'
+  settings_of asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role: r3 (.agent-sandbox [sandbox] role)"* ]]
+  [ "$(compact_keys "$OUT/settings.json")" = "autoCompactEnabled=false" ]
+}
+
+@test "[agent] auto-compact: idle-off writes only idleCompaction false, on neither key, - neither for a role, whatever a weaker line says; a plain session takes a line naming it" {
+  approve_lines '[connect:*]' '[agent]' 'auto-compact = idle-off' '[agent:gate]' 'auto-compact = on' '[agent:free]' 'auto-compact = -'
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = "idleCompaction=false" ]
+  [[ "$output" == *"auto-compact: idle-off (.agent-sandbox [agent])"* ]]
+  settings_of asb --role gate claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = none ]
+  [[ "$output" == *"auto-compact: on (.agent-sandbox [agent:gate])"* ]]
+  settings_of asb --role free claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = none ]
+  [[ "$output" != *"auto-compact"* ]]
+  # [agent] names every launch, the plain session's too
+  settings_of asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(compact_keys "$OUT/settings.json")" = "idleCompaction=false" ]
+}
+
+@test "[agent] auto-compact: a user's own --settings that sets either key keeps its own, either value, and gets neither of ours" {
+  local u want
+  for u in autoCompactEnabled=true autoCompactEnabled=false idleCompaction=true idleCompaction=false; do
+    settings_of asb --role planner-1 claude --settings "{\"${u%=*}\": ${u#*=}, \"model\": \"opus\"}" --version
+    [ "$status" -eq 0 ]
+    [ "$(compact_keys "$OUT/settings.json")" = "$u" ]
+    grep -q '"model": "opus"' "$OUT/settings.json"
+    [[ "$output" == *"briefing: your --settings sets autoCompactEnabled or idleCompaction, so it decides how the session compacts; the role's auto-compact off is not added"* ]]
+  done
+  # theirs without either: ours added to theirs, nothing said
+  settings_of asb --role planner-1 claude --settings '{"model":"opus"}' --version
+  [ "$(compact_keys "$OUT/settings.json")" = "autoCompactEnabled=false" ]
+  [[ "$output" != *"decides how the session compacts"* ]]
+  # a plain session (ours has no key) with theirs setting one: nothing to say
+  settings_of asb claude --settings '{"idleCompaction": true}' --version
+  [ "$(compact_keys "$OUT/settings.json")" = "idleCompaction=true" ]
+  [[ "$output" != *"decides how the session compacts"* ]]
+  # an idle-off role, theirs saying autoCompactEnabled: theirs alone
+  approve_lines '[connect:*]' '[agent:planner-*]' 'auto-compact = idle-off'
+  settings_of asb --role planner-1 claude --settings '{"autoCompactEnabled": true}' --version
+  [ "$(compact_keys "$OUT/settings.json")" = "autoCompactEnabled=true" ]
+  settings_of asb --role planner-1 claude --settings '{"model":"opus"}' --version
+  [ "$(compact_keys "$OUT/settings.json")" = "idleCompaction=false" ]
+}
+
+# ac_join_copy_stub -- a join stub that also copies this join's settings file out (to
+# $JOIN_COPY), before the engine removes it with the join.
+ac_join_copy_stub() {
+  cat >"$H/bin/join-copy.py" <<'STUB'
+import glob, os, shutil, sys
+with open(os.environ["JOIN_DUMP"], "w") as fh:
+    for a in sys.argv[1:]:
+        fh.write(a + "\n")
+for f in glob.glob(os.path.join(os.environ["AGENT_SANDBOX_SESSION_BASE"], "*", "briefing", "join.*", "settings.json")):
+    shutil.copy(f, os.environ["JOIN_COPY"])
+STUB
+}
+
+@test "[agent] auto-compact: a later join writes the key into its own settings file, from its own resolution; a plain session's join none" {
+  approve_lines '[connect:*]' '[agent:idle]' 'auto-compact = idle-off'
+  ac_join_copy_stub
+  local r want
+  for r in planner-1:autoCompactEnabled=false idle:idleCompaction=false default:none; do
+    want="${r#*:}" r="${r%%:*}"
+    engine_bg -- asb --role "$r" claude
+    rm -f "$H/settings.json"
+    run_engine AGENT_SANDBOX_JOIN="$H/bin/join-copy.py" JOIN_COPY="$H/settings.json" -- asb --role "$r" claude -p hi
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"joining role '$r'"* ]]
+    [[ "${JOINB[0]}" == --settings && "${JOINB[1]}" == /run/agent-sandbox/join.*/settings.json ]]
+    [ "$(compact_keys "$H/settings.json")" = "$want" ]
+    release_bg
+  done
+}
+
+@test "[agent] auto-compact with no briefing settings: not applied, said once, and why -- the briefing off, a merge refused; never DISABLE_AUTO_COMPACT" {
+  settings_of AGENT_SANDBOX_BRIEFING=off asb --role quiet claude --version
+  [ "$status" -eq 0 ]
+  [ ! -e "$OUT/settings.json" ]
+  [[ "$output" == *"role 'quiet': its auto-compact value off (the default for a role) is not applied: profile 'claude' gives it in the briefing's settings (profile_briefing_args), and the briefing is off"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  run ! grep -q DISABLE_AUTO_COMPACT "$H/argv"
+  # a plain session with the briefing off: nothing to say
+  settings_of AGENT_SANDBOX_BRIEFING=off asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"auto-compact"* ]]
+  # a --settings of theirs the merge refuses: theirs kept, the key with the hooks lost, said
+  settings_of asb --role planner-1 claude --settings '{"hooks": []}' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the briefing's hooks were not installed (and the role's auto-compact off is not applied)"* ]]
+}
+
+@test "[agent] auto-compact, no briefing to give it: a join of a role whose keeper has none, and a profile with the hook but no profile_briefing_args, say it is not applied, once" {
+  engine_bg AGENT_SANDBOX_BRIEFING=off -- asb --role planner-1 claude
+  run_engine -- asb --role planner-1 claude -p hi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"joining role 'planner-1'"* ]]
+  [[ "$output" == *"role 'planner-1': its auto-compact value off (the default for a role) is not applied: profile 'claude' gives it in the briefing's settings (profile_briefing_args), and the running role has no briefing to join"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+  release_bg
+  # a profile that takes the value but has no briefing hook
+  mkdir -p "$H/profiles-nb"
+  cp -r "$REPO_ROOT/profiles/claude" "$H/profiles-nb/claude"
+  printf 'unset -f profile_briefing_args\n' >>"$H/profiles-nb/claude/profile.sh"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles-nb" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'planner-1': its auto-compact value off (the default for a role) is not applied: profile 'claude' gives it in the briefing's settings (profile_briefing_args), and it has no briefing hook"* ]]
+  [ "$(grep -c 'is not applied' <<<"$output")" -eq 1 ]
+}

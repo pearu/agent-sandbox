@@ -8873,6 +8873,85 @@ _as_effort_apply() {
   profile_effort_args "$_effort" || return 1
 }
 
+# _as_auto_compact_values -- the values a role's [agent] auto-compact takes, space-separated
+# (#438): whether its agent compacts its conversation on its own. `on`, it may; `off`,
+# never (claude: not at its context limit, nor idle); `idle-off`, not while idle, only at
+# the limit. The engine's own words; the agent's profile gives one to its agent
+# (profile_auto_compact_args, _as_auto_compact_apply). `auto-compact = -` is none: the
+# agent's own default.
+_as_auto_compact_values() { printf 'on off idle-off'; }
+
+# _as_auto_compact_ok VALUE -- VALUE is one of _as_auto_compact_values.
+_as_auto_compact_ok() {
+  [[ " $(_as_auto_compact_values) " == *" $1 "* && "$1" != *[[:space:]]* && -n "$1" ]]
+}
+
+# _as_auto_compact_resolve ROLE [LINE...] -- the auto-compact value of ROLE: sets
+# _auto_compact (the value as written, `-` for none named, empty for none) and
+# _auto_compact_from (`dotfile:[agent:<glob>]`, `dotfile:[agent]`, or `role`), from an
+# approved dot-file's [agent] lines by _as_dotfile_pick, [agent:<glob>] over [agent], as
+# for effort. With no line, `off` for every role but `default` (`role`, the default for a
+# role): a role mostly waits on its inbox, and a compaction there replaces what it was told
+# with a summary nobody chose (#438). The default role, a plain session, has none: its
+# agent's own default, as before.
+_as_auto_compact_resolve() {
+  local role="$1" _dp_val _dp_from
+  shift
+  _as_dotfile_pick "$role" auto-compact "$@"
+  _auto_compact="$_dp_val" _auto_compact_from="$_dp_from"
+  if [[ -z "$_auto_compact" && -n "$role" && "$role" != default ]]; then
+    _auto_compact=off _auto_compact_from=role
+  fi
+  return 0
+}
+
+# _as_auto_compact_where FROM -- where an auto-compact value came from, for a message: the
+# dot-file line's section, or the default for a role.
+_as_auto_compact_where() {
+  case "$1" in
+    role) printf 'the default for a role' ;;
+    *) printf '.agent-sandbox %s' "${1#dotfile:}" ;;
+  esac
+}
+
+# _as_auto_compact_apply ROLE [LINE...] -- the auto-compact value of ROLE, for the launches
+# that take its effort level (_as_effort_apply; the caller decides which): resolved by
+# _as_auto_compact_resolve. None, or `-`: nothing. One that is not a value refuses the
+# launch (rc 2), as an effort level does. A value is said (the start line, with where it
+# came from) and handed, once, to the profile's profile_auto_compact_args, which records it:
+# it travels with the briefing (claude: a key in the launch's --settings file, which
+# profile_briefing_args writes; Claude Code has no option for it). The value handed is kept
+# in the caller's _auto_compact_given (and _auto_compact_given_from), so that a path that
+# gives no briefing says, once, that it is not applied (_as_auto_compact_unapplied). A
+# profile without the hook: said not to be applied, and the launch goes on.
+_as_auto_compact_apply() {
+  local _auto_compact="" _auto_compact_from="" _aa_role="$1"
+  _as_auto_compact_resolve "$@"
+  [[ -n "$_auto_compact" && "$_auto_compact" != - ]] || return 0
+  if ! _as_auto_compact_ok "$_auto_compact"; then
+    _as_msg "role '$_aa_role': .agent-sandbox ${_auto_compact_from#dotfile:} auto-compact = $_auto_compact is not a value ($(_as_auto_compact_values)); refusing the launch"
+    return 2
+  fi
+  if ! declare -F profile_auto_compact_args >/dev/null; then
+    _as_msg "role '$_aa_role': its auto-compact value $_auto_compact ($(_as_auto_compact_where "$_auto_compact_from")) is not applied: profile '$profile' has no way to give its agent one (profile_auto_compact_args)"
+    return 0
+  fi
+  _as_info "auto-compact: $_auto_compact ($(_as_auto_compact_where "$_auto_compact_from"))"
+  profile_auto_compact_args "$_auto_compact" || return 1
+  _auto_compact_given="$_auto_compact" _auto_compact_given_from="$_auto_compact_from"
+}
+
+# _as_auto_compact_unapplied ROLE WHY -- for a launch path that gives its agent no
+# briefing: the auto-compact value handed to the profile (_auto_compact_given,
+# _as_auto_compact_apply) is said not to be applied, and WHY. Nothing when none was
+# handed. Each path that gives no briefing calls it once, on its way to running the agent
+# (a launch's briefing block, a join's, --preset none's, an asb inside a sandbox), and no
+# invocation takes two of them: so it is said once.
+_as_auto_compact_unapplied() {
+  [[ -n "${_auto_compact_given:-}" ]] || return 0
+  _as_msg "role '$1': its auto-compact value $_auto_compact_given ($(_as_auto_compact_where "$_auto_compact_given_from")) is not applied: profile '$profile' gives it in the briefing's settings (profile_briefing_args), and $2"
+}
+
 # _as_account_where FROM -- where an account was named, for a message: `--account`, or the
 # dot-file line's section.
 _as_account_where() {
@@ -9839,7 +9918,8 @@ _as_base_entry_binds() {
 # written. `--permission-mode bypassPermissions` or `--dangerously-skip-permissions` there is
 # said in its own sentence: it turns off the agent's own prompts, so the sandbox's
 # policy is all that is left. An effort level, for which roles, or `-`, none; one that is
-# not a level (_as_effort_ok) fails it, as a launch refuses the file.
+# not a level (_as_effort_ok) fails it, as a launch refuses the file. The same for an
+# auto-compact value (_as_auto_compact_ok).
 _as_agent_notes() {
   local e g k v n sect b i what flag bad=0
   local -a w=()
@@ -9864,6 +9944,17 @@ _as_agent_notes() {
         _as_msg ".agent-sandbox: $sect effort = $v: $n run at the effort level $v, given to their agent by its profile (profile_effort_args) before the agent's own arguments"
       else
         _as_msg ".agent-sandbox: $sect effort = $v: not an effort level -- one of $(_as_effort_levels); a launch refuses it"
+        bad=1
+      fi
+      continue
+    fi
+    if [[ "$k" == auto-compact ]]; then
+      if [[ "$v" == - ]]; then
+        _as_msg ".agent-sandbox: $sect auto-compact = -: $n run with their agent's own default for compaction, whatever a weaker line says, and not the default for a role (off)"
+      elif _as_auto_compact_ok "$v"; then
+        _as_msg ".agent-sandbox: $sect auto-compact = $v: $n run with auto-compact $v, given to their agent by its profile (profile_auto_compact_args) in the briefing's settings"
+      else
+        _as_msg ".agent-sandbox: $sect auto-compact = $v: not a value -- one of $(_as_auto_compact_values); a launch refuses it"
         bad=1
       fi
       continue
@@ -9897,10 +9988,11 @@ _as_agent_notes() {
   done
   # Among suffixed sections the later line wins (_as_dotfile_pick), so a role a section
   # names exactly takes a later glob's line when that glob matches it too: said, per key
-  # (command, account, effort), since the exact name reads as the stronger one.
+  # (command, account, effort, auto-compact), since the exact name reads as the stronger
+  # one.
   local -a sfx=()
   local j eg ev lg lv key
-  for key in command account effort; do
+  for key in command account effort auto-compact; do
     sfx=()
     for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'"$key"$'\t'* ]] || sfx+=("$e")
@@ -9934,9 +10026,9 @@ _as_agent_notes() {
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
 #   - each [remote:ALIAS] in full (_as_remote_notes, #344);
 #   - each [agent] line: the roles, the agent, its fixed arguments, the account, the
-#     effort level (_as_agent_notes, #355).
+#     effort level, the auto-compact value (_as_agent_notes, #355).
 # Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice,
-# an [agent] effort that is not a level.
+# an [agent] effort or auto-compact that is not a value.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
@@ -10647,7 +10739,8 @@ _as_dotfile_line() {
     agent)
       # [agent] and [agent:<glob>] (#355): the role's agent and the native arguments
       # always passed to it, `command = AGENT [ARGS]`, words split at blanks, its
-      # account, `account = NAME` or `-`, and its effort level, `effort = LEVEL` or `-`; kept
+      # account, `account = NAME` or `-`, its effort level, `effort = LEVEL` or `-`, and
+      # whether it compacts on its own, `auto-compact = on|off|idle-off` or `-`; kept
       # with the section's glob, in file order. While a profile's own dot-file is read,
       # `profile` is `agent` (_as_profile_dotfile) and [agent] is that profile's
       # section: its keys go to the profile, as any profile-named section's do.
@@ -10683,6 +10776,16 @@ _as_dotfile_line() {
               _as_msg ".agent-sandbox: [agent] effort names no level (effort = $(_as_effort_levels), or - for none); ignoring"
             else
               _df_agent+=("$sglob"$'\t'effort$'\t'"$cv")
+            fi
+            ;;
+          auto-compact)
+            # Whether the role's agent compacts on its own (#438), agent-neutral: the
+            # agent's profile gives it (profile_auto_compact_args, _as_auto_compact_apply);
+            # `-`, none, the agent's own. Kept as written, as effort is.
+            if [[ -z "$cv" ]]; then
+              _as_msg ".agent-sandbox: [agent] auto-compact names no value (auto-compact = $(_as_auto_compact_values), or - for none); ignoring"
+            else
+              _df_agent+=("$sglob"$'\t'auto-compact$'\t'"$cv")
             fi
             ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
@@ -12740,6 +12843,23 @@ _as_check_plan() {
       [[ "${_role:-default}" == $_ag_g ]] || continue
       printf '  agent: %s %s = %s\n' "$(_as_agent_sect "$_ag_g")" "${_ag_e%%$'\t'*}" "${_ag_e#*$'\t'}"
     done
+    # Its auto-compact value (#438), as its effort level is, the default for a role included,
+    # after the lines: the profile records it for the briefing's settings, so with the
+    # briefing off it is not applied either (a launch says so).
+    local _auto_compact="" _auto_compact_from="" _acw
+    _as_auto_compact_resolve "${_role:-default}" ${_df_agent[@]+"${_df_agent[@]}"}
+    _acw="$(_as_auto_compact_where "$_auto_compact_from")"
+    if [[ "$_auto_compact" == - ]]; then
+      printf "  auto-compact: none, the agent's own (-, %s)\n" "$_acw"
+    elif [[ -n "$_auto_compact" ]] && ! _as_auto_compact_ok "$_auto_compact"; then
+      printf '  auto-compact: %s -- %s; NOT A VALUE (%s), so a launch refuses\n' "$_auto_compact" "$_acw" "$(_as_auto_compact_values)"
+    elif [[ -n "$_auto_compact" ]] && ! declare -F profile_auto_compact_args >/dev/null; then
+      printf "  auto-compact: %s -- %s; NOT APPLIED: profile %s has no way to give its agent one (profile_auto_compact_args)\n" "$_auto_compact" "$_acw" "$profile"
+    elif [[ -n "$_auto_compact" && "${_knob_briefing:-on}" =~ ^(off|0)$ ]]; then
+      printf "  auto-compact: %s -- %s; NOT APPLIED: profile %s gives it in the briefing's settings, and the briefing is off\n" "$_auto_compact" "$_acw" "$profile"
+    elif [[ -n "$_auto_compact" ]]; then
+      printf "  auto-compact: %s -- %s; given by profile %s (profile_auto_compact_args) in the briefing's settings\n" "$_auto_compact" "$_acw" "$profile"
+    fi
     case "${_knob_gpu:-on}" in
       off | 0) printf '  gpu: off -- no GPU device in the sandbox\n' ;;
       *)
@@ -19415,6 +19535,11 @@ agent_sandbox() (
   # every path that runs the agent as a session. Declared here, beside the profile's
   # other words, since the level is applied once, ahead of the paths that use it.
   local -a profile_effort_argv=()
+  # A role's auto-compact value as handed to the profile's profile_auto_compact_args
+  # (_as_auto_compact_apply), and where it came from: it travels with the briefing, so a
+  # path that gives none says it is not applied (_as_auto_compact_unapplied). Empty: none
+  # handed.
+  local _auto_compact_given="" _auto_compact_given_from=""
   # Its agent's files that are an account's, under its base (#355): none, no accounts.
   local -a profile_account_paths=()
   # What starts its agent's login, for --login (#355); read here only so that the
@@ -19541,8 +19666,8 @@ agent_sandbox() (
       _as_msg "preset none: running '$1' with no sandbox"
       exec "$@"
     fi
-    # The role's effort level, as a sandboxed launch takes it (see the role block below);
-    # not for a profile's verb.
+    # The role's effort level and auto-compact value, as a sandboxed launch takes them (see
+    # the role block below); not for a profile's verb.
     local _na_verb=0 _na_v
     for _na_v in ${profile_verbs[@]+"${profile_verbs[@]}"}; do
       [[ "${1:-}" != "$_na_v" ]] || _na_verb=1
@@ -19550,6 +19675,8 @@ agent_sandbox() (
     if ((! _na_verb && ! _do_serve && ! _do_summarize && ! _do_status && ! _do_shutdown && ! _do_delete && ! _check_plan)) \
       && [[ -z "$_reset_connection" ]]; then
       _as_effort_apply "${_na_role:-default}" ${_na_lines[@]+"${_na_lines[@]}"} || return $?
+      _as_auto_compact_apply "${_na_role:-default}" ${_na_lines[@]+"${_na_lines[@]}"} || return $?
+      _as_auto_compact_unapplied "${_na_role:-default}" "--preset none gives its agent no briefing"
     fi
     ((! _install_pending)) || _as_install_now "${_cmd_word:-$profile_command}" "$_rb_role" none || return $?
     _as_msg "preset none: running $profile_command with no sandbox"
@@ -20020,7 +20147,7 @@ agent_sandbox() (
   ((_df_from_keeper)) && _df_role="$_pre_role"
   _as_role_resolve || return 1
 
-  # ---- the role's effort level (_as_effort_apply) ----
+  # ---- the role's effort level (_as_effort_apply) and auto-compact value ----
   # For the launches that run the agent as a session -- a command typed on the line too,
   # whose own options are not looked into, a join, and the agent an `asb` inside a
   # sandbox runs -- under every preset (--preset none applies it above): not --exec, a
@@ -20042,6 +20169,10 @@ agent_sandbox() (
       _ef_lines=(${_ef_lines[@]+"${_ef_lines[@]:1}"})
     fi
     _as_effort_apply "$_role" ${_ef_lines[@]+"${_ef_lines[@]}"} || return $?
+    # Its auto-compact value (#438) likewise, for the same launches, the default for a role
+    # included: handed to the profile here, written by its briefing (profile_briefing_args,
+    # below, a join's own too), and said not applied where no briefing is given.
+    _as_auto_compact_apply "$_role" ${_ef_lines[@]+"${_ef_lines[@]}"} || return $?
   fi
   # A SELF-CONTAINED PROFILE'S SESSIONS LIVE IN THE ROLE'S STORE (#335), not under
   # $XDG_RUNTIME_DIR: logind removes /run/user/UID and all it holds at the account's last
@@ -20294,6 +20425,7 @@ agent_sandbox() (
   # this path runs the agent unsandboxed. --exec runs its command; anything else, the
   # agent with its arguments. `--trust` is not routed.
   if ((! _do_trust)) && _as_inside_sandbox; then
+    _as_auto_compact_unapplied "$_role" "an asb inside a sandbox runs its agent with no briefing of its own"
     exec "$profile_bin" ${profile_effort_argv[@]+"${profile_effort_argv[@]}"} "$@" # (an --exec was run before the agent was looked up)
   fi
 
@@ -20451,6 +20583,8 @@ agent_sandbox() (
           local _brief_out_host="$_join_brief" _brief_out_inside
           _brief_out_inside="$(_as_briefing_inside)/join.$BASHPID"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
+        else
+          _as_auto_compact_unapplied "${_role:-default}" "the running role has no briefing to join"
         fi
         local -a profile_start_argv=() profile_session_argv=()
         # The session's own arguments, for the preset the keeper was built with: the
@@ -21293,6 +21427,7 @@ agent_sandbox() (
       # off, the agent asks as it would without them. A narrowing, said.
       ((${#_permission_rules[@]})) \
         && _as_msg ".agent-sandbox [permissions]: not passed to the agent -- they travel with the briefing, which is off"
+      _as_auto_compact_unapplied "${_role:-default}" "the briefing is off"
       ;;
     on | 1)
       if _as_briefing_write; then
@@ -21300,9 +21435,12 @@ agent_sandbox() (
           local _brief_out_host="$_session_dir/briefing" _brief_out_inside
           _brief_out_inside="$(_as_briefing_inside)"
           profile_briefing_args "$(_as_briefing_inside)" "$@" || return 1
+        elif ((_brief_args)); then
+          _as_auto_compact_unapplied "${_role:-default}" "it has no briefing hook"
         fi
       else
         _as_msg "briefing: could not be written; continuing without it"
+        _as_auto_compact_unapplied "${_role:-default}" "the briefing could not be written"
       fi
       ;;
     *)

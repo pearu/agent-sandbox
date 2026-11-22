@@ -3059,12 +3059,36 @@ effort_of() {
   [ "$(grep -c '^effort = ' "$df")" -eq 5 ]
 }
 
+@test "the roles model: each role's [agent:...] section says auto-compact = off beside its effort, the default made visible (#438); the review takes it; a file from before gets it per role as --apply lines" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" h
+  for h in '[agent:planner-*]' '[agent:implementer-*]' '[agent:reviewer-*]' '[agent:supervisor]' '[agent:gate]' '[agent:setup]'; do
+    # the line right after the section's effort line
+    sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" | grep -A1 '^effort = ' | tail -1 | grep -q '^auto-compact = off  *# '
+  done
+  [ "$(grep -c '^auto-compact = ' "$df")" -eq 6 ]                      # once per role pattern, never per instance
+  run ! grep -q '^auto-compact' <(sed -n '/^\[agent\]$/,/^\[/p' "$df") # not in the unsuffixed [agent]: a plain session keeps its own
+  run_review
+  [[ "$output" == *"[agent:gate] auto-compact = off: the roles gate run with auto-compact off"* ]]
+  [[ "$output" != *"not a value"* ]]
+  # a file from before #438: the lines, per role, as --apply lines; the file unchanged
+  sed -i '/^auto-compact = /d' "$df"
+  cp "$df" "$H/before"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  for h in planner-\* implementer-\* reviewer-\* supervisor gate setup; do
+    grep -qxF "    agent-sandbox --apply '[agent:$h]' 'auto-compact = off'" <<<"$output"
+  done
+}
+
 @test "the roles model on a file written before the effort levels: --init adds the [agent:...] sections it lacks, and an existing [agent:ROLE] section without effort gets its --apply line" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox"
   # a file from before: no [agent:...] section; the gate's agent named by the user
-  sed -i '/^\[agent:/,/^effort = /d' "$df"
+  sed -i '/^\[agent:/,/^auto-compact = /d' "$df"
   run ! grep -q '^effort = ' "$df"
   printf '[agent:gate]\ncommand = claude --model x\n' >>"$df"
   cp "$df" "$H/before"
@@ -3073,7 +3097,7 @@ effort_of() {
   [[ "$output" == *"added to .agent-sandbox: [agent:planner-*] [agent:implementer-*] [agent:reviewer-*] [agent:supervisor] [agent:setup]"* ]]
   cmp <(head -n "$(wc -l <"$H/before")" "$df") "$H/before" # nothing before it changed
   [ "$(effort_of '[agent:supervisor]' "$df")" = medium ]
-  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low'" <<<"$output"
+  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low' 'auto-compact = off'" <<<"$output"
 }
 
 @test "the roles model with a role's effort = - (no level, the agent's own): a second --init leaves the file byte-identical, the section being there, and offers no --apply line for it" {

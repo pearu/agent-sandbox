@@ -1408,6 +1408,67 @@ a launch refuses it. The review says each line, for which roles; `--check` shows
 level in force and where it was named, and whether the role's agent's profile gives
 it.
 
+### Auto-compact
+
+```ini
+[agent:planner-*]
+auto-compact = idle-off           # compacts at its context limit, not while idle
+[agent:gate]
+auto-compact = on                 # Claude Code's own behaviour
+```
+
+`auto-compact = VALUE` says whether the role's agent compacts its conversation on its
+own (#438): `on`, it may; `off`, never; `idle-off`, not while idle. Or `-`, none: the
+agent's own default. **Every role but `default` gets `off` with no line**, whether it
+was named by `--role`, `AGENT_SANDBOX_ROLE` or `[sandbox] role`, its `--serve` and
+`--summarize` turns included: a role spends most of its life idle on its inbox, and a
+compaction there replaces what it was told and has read with a summary nobody chose the
+focus of, sometimes mid-Task, with nothing in its messages to say so. A plain session
+(no role) gets nothing, and the agent's own default applies, as before. The roles model
+writes `auto-compact = off` in each role's `[agent:...]` section, so the default is
+visible and can be changed there. `[agent:<glob>]` beats `[agent]` as for `effort`;
+`auto-compact = -` names no value for the roles it names, whatever a weaker line says,
+the default for a role included.
+
+The value is the engine's word; the role's agent's profile gives it to its agent (its
+`profile_auto_compact_args` hook, [profiles.md](profiles.md)), in the launch's
+briefing. Claude Code has no option for it, only settings keys, so claude's profile
+writes one into the `--settings` file the briefing already gives the session: `off` is
+`"autoCompactEnabled": false` (the `/config` toggle "Auto-compact"), which turns off
+every compaction Claude Code starts on its own -- at the threshold, the reactive one
+after a prompt too long, and idle -- and `idle-off` is `"idleCompaction": false`, which
+turns off only the idle one; `on` writes neither. The `--settings` file outranks your
+own settings files and the `/config` toggle (Claude Code reads policy, then
+`--settings`, then local, project and user settings; measured on 2.1.311).
+
+- **What `off` costs.** When the context fills, the turn ends, with nothing compacted
+  and nothing spent: the request is refused before it is sent ("Prompt is too long";
+  in a print run, exit status 1). The terminal shows "Context limit reached ·
+  /compact or /clear to continue", and the role waits there until you type `/compact`
+  or `/clear`. The work so far is in the transcript, so `/compact` and then a message
+  picks the Task up.
+- **What `idle-off` keeps.** Compaction at the context limit, which a long Task may
+  need; it drops only the idle one, which on accounts Anthropic's server enables it for
+  compacts a conversation of 200K tokens or more after about 54 minutes idle, before
+  the prompt cache expires. The price of turning that off: a role woken more than an
+  hour after its last turn reads its whole context again without the cache's discount.
+- **Your own `--settings` wins.** A `--settings` you type that sets
+  `autoCompactEnabled` or `idleCompaction`, either one, keeps its own and gets neither
+  of ours (profile.py's merge), and the launch says so: a role at `off` given
+  `"idleCompaction": true` alone compacts as Claude Code does by default.
+
+The value travels with the briefing: with `[briefing] mode = off` (or
+`AGENT_SANDBOX_BRIEFING=off`), under `--preset none`, in a join of a role whose keeper
+has no briefing, and for the agent an `asb` inside a sandbox runs, there is no settings
+file to carry it, and the launch says, once, that it is not applied. So does a launch
+whose agent's profile has no `profile_auto_compact_args`. A launch says the value in
+force at its start (`auto-compact: off (the default for a role)`). A value that is not
+one of the three (nor `-`) is refused at the review and by `--check`, and a launch
+refuses it. The review says each line, for which roles; `--check` shows the value in
+force, where it came from, "the default for a role" included, and whether it is given.
+A value takes effect at the role's next launch, not at a `/clear`: Claude Code reads
+the `--settings` file when it starts.
+
 ## The config file: the `config` channel
 
 Claude Code's top-level config file, `~/.claude.json`, holds app state
