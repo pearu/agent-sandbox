@@ -60,6 +60,14 @@ repository, else CONTRIBUTING.md, `.github/`, or the project's documentation -- 
 disclosure, a form, a restriction. If you find none, say so and ask whether to post,
 and with what disclosure.
 
+**One command per call.** Run each command your `[permissions:gh-review-*]` rules name
+-- `gh pr review`, `gh pr comment`, `gh issue create` -- as a Bash call of its own,
+exactly as written, from the project directory: no `cd`, no `;`, `&&`, `||` or pipe,
+no redirect, and no `$(…)` in it -- write a value it needs out (the login, a path),
+after reading it with a call of its own. A ruled command run so goes without a prompt;
+one joined with others, or holding a `$(…)`, is matched part by part, so it prompts, or
+goes to auto mode's classifier, which can refuse it.
+
 **A comment's shape**, unless the project's policy or this project's addendum says
 otherwise -- where the two disagree, tell the user and let them decide:
 1. a lead paragraph in the user's voice, first person, unwrapped -- a stand-in for them

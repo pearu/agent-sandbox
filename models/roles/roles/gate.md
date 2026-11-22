@@ -47,12 +47,20 @@ cursor, first append `ack N` to your messages, then handle it, then append `done
   the message alone. Append `back N: mentions @...; the user approves it here` and tell
   S; post it when the user approves it in this terminal.
 - When you stop for the user's word, your last line is the question.
-- Push by URL, so the output is clean from a read-only history:
-  `git push "$(git remote get-url origin)" BRANCH`. A push to an SSH remote needs its
-  host in the project's file: when it fails for lack of SSH, send back exactly
-  `asb --apply '[ssh:{role}]' HOST` (the host of `origin`), then a restart of this role:
-  `asb --role {role} --shutdown claude`, then its launch again (a launch that joins a
-  session of it still running keeps the old policy).
+- **One command per call.** Run each command your `[permissions:{role}]` rules name --
+  the push and the `gh` verbs -- as a Bash call of its own, exactly as written, from
+  the project directory: no `cd`, no `;`, `&&`, `||` or pipe, no redirect, and no
+  `$(…)` in it -- write a value it needs out, after reading it with a call of its own.
+  Write your `ack` and `done` lines with a call or a tool of their own. A ruled command
+  run so goes without a prompt; one joined with others, or holding a `$(…)`, is matched
+  part by part, so it prompts, or goes to auto mode's classifier, which can refuse it.
+- Push by URL, so the output is clean from a read-only history, in two calls: read
+  `origin`'s URL with `git config --get remote.origin.url` (read-only, so it needs no
+  rule), then run `git push URL BRANCH` with that URL written out. A push to an SSH
+  remote needs its host in the project's file: when it fails for lack of SSH, send back
+  exactly `asb --apply '[ssh:{role}]' HOST` (the host of `origin`), then a restart of
+  this role: `asb --role {role} --shutdown claude`, then its launch again (a launch that
+  joins a session of it still running keeps the old policy).
 - A pull request, a comment, an issue: `gh pr create`, `gh pr comment`,
   `gh issue comment`, `gh issue create`, `gh issue close`, with `--body-file` for the
   named file. Mail only where the project's file grants a route (an allow line for the

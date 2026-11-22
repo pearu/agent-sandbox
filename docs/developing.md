@@ -449,13 +449,17 @@ builds `main` ([roles.md](roles.md), section 3). This project gives the Gate mor
   `.asb/roles/gate.addendum.md` with
 
       **Fetching after a merge.** After a merge the Supervisor's message names, you also
-      fetch `origin` into the project's history, when the message says so:
-      `git fetch "$(git remote get-url origin)" main:refs/remotes/origin/main`. This is a read:
-      it publishes nothing and changes no branch. The Supervisor then fast-forwards `main`
-      locally; you never touch the working tree or a local branch.
+      fetch `origin` into the project's history, when the message says so, in two calls:
+      read its URL with `git config --get remote.origin.url`, then run
+      `git fetch URL main:refs/remotes/origin/main` with that URL written out. This is a
+      read: it publishes nothing and changes no branch. The Supervisor then fast-forwards
+      `main` locally; you never touch the working tree or a local branch.
 
   and run `asb --trust`, which approves the edit and the addendum together: a launch
-  is refused while an addendum is unapproved.
+  is refused while an addendum is unapproved. The Gate's purpose file already has it
+  run each command its `[permissions:gate]` rules name as a Bash call of its own
+  (`models/roles/roles/gate.md`, "One command per call"), so the merge and the fetch
+  need nothing beyond the rules above.
 
 Relaunch the Gate after each grant: a role keeps the policy it was launched with.
 

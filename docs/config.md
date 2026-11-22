@@ -73,7 +73,10 @@ Sections:
   with its section and the roles it is for, and `--check` lists the role's. It changes
   nothing the sandbox enforces: a rule lets the agent run a command without asking,
   and the command then meets the same mounts, network and syscall filter. Applied
-  under every preset, `native` included, as `[allow]` is.
+  under every preset, `native` included, as `[allow]` is. A `Bash(...)` rule approves
+  a command run on its own: in a compound line every part must be approved, and a
+  `$(…)` in the arguments defeats the rule, so such a line prompts or goes to auto
+  mode's classifier ([design.md](design.md#residual-risks)).
 - **`[serve]`** — what `asb --role ROLE --serve CMD` (#277) waits on and says, for a
   role with no terminal: `watch = PATH`, the file whose every change is a turn (an
   inbox), and `prompt = PATH`, the file whose text each turn is told; both relative to

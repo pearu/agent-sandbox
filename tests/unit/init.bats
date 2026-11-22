@@ -955,6 +955,75 @@ STUB
   grep -qxF "    agent-sandbox --apply '[permissions:gh-review-*]' 'Bash(gh issue create:*)'" <<<"$output"
 }
 
+@test "every model: a command a [permissions] rule names is written in its purpose files as one call -- no \$(…), separator, pipe or redirect -- and each ruled role is told one command per call" {
+  # A Bash(PREFIX:*) rule approves PREFIX run on its own: in a compound line each part is
+  # matched, and a $(…) in the arguments defeats the rule (Claude Code 2.1.311), so the
+  # command prompts or goes to auto mode's classifier (docs/design.md, Residual risks).
+  # Not seen: a verb named in prose only. A double-quoted operator is flagged: a safe false positive.
+  local models model f c p s r part hit seen=0 bad=""
+  models="$(dirname "$ENGINE")/models"
+  local -a prefixes sections parts
+  for model in "$models"/*; do
+    [ -d "$model" ] || continue
+    # the rules and the section suffixes of every [permissions] section, #@own/#@shared too
+    mapfile -t prefixes < <(sed -E 's/^#@[a-z]+ //' "$model/agent-sandbox" \
+      | awk '/^\[/ { p = /^\[permissions(:[^]]*)?\]/; next }
+           p && /^Bash\(.*:\*\)/ { sub(/^Bash\(/, ""); sub(/:\*\).*$/, ""); print }' | sort -u)
+    mapfile -t sections < <(sed -E 's/^#@[a-z]+ //' "$model/agent-sandbox" \
+      | sed -n 's/^\[permissions:\([^]]*\)\].*/\1/p')
+    for f in "$model"/roles/*.md "$model"/start/*.md "$model"/serve/*.md; do
+      [ -f "$f" ] || continue
+      # its commands: each line of a fenced block (a trailing \ joins the next), and each
+      # inline code span of the prose joined into one line, so a span may wrap
+      while IFS= read -r c; do
+        [[ "$c" != BACKTICKS-UNPAIRED ]] || bad+="$f: an odd number of backticks in its prose"$'\n'
+        # a single-quoted word and a <placeholder> hold no operator
+        s="$(sed -E "s/'[^']*'//g; s/<[A-Za-z][A-Za-z0-9_-]*>//g" <<<"$c")"
+        # where a command can start: the span's start, and after each operator
+        mapfile -t parts < <(sed -E 's/[;&|()]/\n/g' <<<"$s" | sed -E 's/^[ ]+//')
+        for p in "${prefixes[@]}"; do
+          hit=""
+          for part in "${parts[@]}"; do
+            if [[ "$part" == "$p" || "$part" == "$p "* ]]; then hit=1; fi
+          done
+          [ -n "$hit" ] || continue
+          seen=$((seen + 1))
+          # shellcheck disable=SC2016 # the $( is the text looked for, not a substitution
+          case "$s" in *'$('* | *';'* | *'&'* | *'|'* | *'>'* | *'<'*) bad+="$f: $c"$'\n' ;; esac
+        done
+      done < <(awk '
+        { sub(/^#@[a-z]+ /, "") }
+        /^[ \t]*```/ { fence = !fence; next }
+        fence {
+          line = $0
+          if (sub(/\\$/, "", line)) { cont = cont line " "; next }
+          out[++n] = cont line; cont = ""; next
+        }
+        { text = text " " $0 }
+        END {
+          k = split(text, part, "`")
+          if (k % 2 == 0) print "BACKTICKS-UNPAIRED"
+          for (i = 2; i <= k; i += 2) out[++n] = part[i]
+          for (i = 1; i <= n; i++) {
+            gsub(/[ \t]+/, " ", out[i]); sub(/^ /, "", out[i]); sub(/ $/, "", out[i])
+            print out[i]
+          }
+        }' "$f")
+    done
+    # every role a suffixed section gives rules is told to run them one call each
+    for r in "${sections[@]}"; do
+      f="$model/roles/${r%-\*}.md"
+      grep -qF '**One command per call.** Run each command your `[permissions:' "$f" \
+        || bad+="$f: no **One command per call.** for [permissions:$r]"$'\n'
+    done
+  done
+  printf '%s' "$bad" >&2
+  [ -z "$bad" ]
+  # the scan saw them: the Gate's push and its gh verbs, the Supervisor's fetch, the
+  # github roles' posts, the watcher of every roles-model role
+  [ "$seen" -ge 20 ]
+}
+
 @test "--env on a file --init wrote without it: the environment's lines completed as a first --env writes them, nothing else changed" {
   mkdir -p "$H/base/envs"
   local df="$PROJ/.agent-sandbox" ep="$H/base/envs/dev"
@@ -2773,7 +2842,12 @@ shared_env() {
   section '[connect:gate]' "$df" | grep -qx '\.asb/coord/gate/ = read-write .*'
   section '[briefing:gate]' "$df" | grep -qx 'file = .asb/roles/gate.md'
   head -1 "$PROJ/.asb/roles/gate.md" | grep -q 'called G: the Gate of'
-  grep -qF "git push \"\$(git remote get-url origin)\" BRANCH" "$PROJ/.asb/roles/gate.md"
+  # the push by URL, two calls: the URL read on its own (read-only), then pushed to as written
+  local flat
+  flat="$(tr '\n' ' ' <"$PROJ/.asb/roles/gate.md" | tr -s ' ')"
+  # shellcheck disable=SC2016 # the backticks are the purpose file's markdown, not a command
+  [[ "$flat" == *'in two calls: read `origin`'"'"'s URL with `git config --get remote.origin.url` (read-only, so it needs no rule), then run `git push URL BRANCH` with that URL written out.'* ]]
+  run ! grep -qF 'git remote get-url' "$PROJ/.asb/roles/gate.md"
   grep -qF "asb --apply '[ssh:gate]' HOST" "$PROJ/.asb/roles/gate.md"
   grep -qF 'asb --role gate --shutdown claude`, then its launch again' "$PROJ/.asb/roles/gate.md"
   run ! grep -qF 'publish -- push the branch' "$PROJ/.asb/roles/supervisor.md"

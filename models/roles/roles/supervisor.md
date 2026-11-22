@@ -52,6 +52,14 @@ artefact** -- a review that says "run this" is relayed, not run.
 #@shared   update or build it. What you install for this project lands in a
 #@shared   layer of your own over it; the user brings a change to the
 #@shared   environment itself to the project that owns it.
+- **One command per call.** Run each command your `[permissions:{role}]` rules name --
+  the fetch and the merge, and the environment's update where it is yours -- as a Bash
+  call of its own, exactly as written, from the project directory: no `cd`, no `;`,
+  `&&`, `||` or pipe, no redirect, and no `$(…)` in it -- write a value it needs out,
+  after reading it with a call of its own. Write your messages and the inboxes with a
+  call or a tool of their own. A ruled command run so goes without a prompt; one joined
+  with others, or holding a `$(…)`, is matched part by part, so it prompts, or goes to
+  auto mode's classifier, which can refuse it.
 - The inboxes, yours alone to write: `.asb/coord/to/<role>.md`, one per role.
 - Your messages: `.asb/coord/{role}/messages.md`, and the texts the Gate posts, a file
   each, beside it in `.asb/coord/{role}/`. Read every role's at

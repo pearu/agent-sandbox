@@ -1217,6 +1217,22 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The roles model's Gate pushes under its rule; the ruled roles run one command per
+  call.** The Gate's purpose file pushed with
+  `git push "$(git remote get-url origin)" BRANCH`, and a `$(…)` in the arguments
+  defeats a `Bash(git push:*)` rule even for a command run alone (measured, Claude Code
+  2.1.311: denied 3 of 3 in default mode, where the push to the literal URL passed), so
+  every push prompted, or went to auto mode's classifier, which can refuse it. It now
+  reads the URL with `git config --get remote.origin.url` (read-only: no rule needed),
+  then pushes to that URL written out. A compound line is matched part by part as well:
+  auto mode's classifier refused this project's Gate two `gh pr merge` runs joined with
+  an `echo >>` and a fetch. The purpose files of the roles with `[permissions]` rules --
+  the Gate, the Supervisor, and the github model's gh-review, gh-triage and gh-fix --
+  now say to run each ruled command as a Bash call of its own, exactly as written, with
+  no `cd`, separator, pipe, redirect or `$(…)`. A project's own copies change when
+  `asb --init roles` or `asb --init github` is run again (a purpose file edited since it
+  was written is kept, and said).
+
 - **The roles' watcher no longer misses a change made between two of its runs** (#339).
   `inbox-wait` took each FILE's state when it started as its baseline, so a change made
   after one run's exit and before the next one's start -- a role's whole turn, seconds
