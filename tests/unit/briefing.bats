@@ -1505,3 +1505,156 @@ login_file() {
   [ "$status" -eq 0 ]
   grep -qxF -- '- declared paths are fixed for you: a declared path cannot be renamed, removed or' "$_briefing_md"
 }
+
+# ctx_project [LINE...] -- planners with a context file at .asb/coord/{role}/context, and
+# LINEs after it; approved. A [briefing:...] section briefs its roles from their purpose
+# files (#222): planner-1's and planner-2's are there.
+ctx_project() {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Plan.\n' >"$PROJ/.asb/roles/planner-1.md"
+  printf 'Plan.\n' >"$PROJ/.asb/roles/planner-2.md"
+  printf '%s\n' '[briefing:planner-*]' 'context = .asb/coord/{role}/context' "$@" >"$PROJ/.agent-sandbox"
+  approve
+}
+
+# hook_cmd EVENT -- the command of the settings file's EVENT hook that runs state-hook.sh
+hook_cmd() {
+  python3 -I -c 'import json, sys; [print(h["command"]) for g in json.load(open(sys.argv[1]))["hooks"][sys.argv[2]] for h in g["hooks"] if "state-hook.sh" in h["command"]]' "$OUT/settings.json" "$1"
+}
+
+# statusline_cmd -- the settings file's statusLine command
+statusline_cmd() {
+  python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$OUT/settings.json"
+}
+
+# check_role ROLE -- `--check --role ROLE` from the project
+check_role() {
+  engine_cmd
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:5}" --check --role "$4" 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$1" "${ENGINE_CMD[@]}"
+}
+
+@test "[briefing] context (#456): the hooks get the role's file, {role} its name, and its levels; the status line its arguments; context.sh beside them; another role none of it" {
+  ctx_project '[agent]' 'context-rescue = 30000' '[agent:planner-*]' 'context-plan = 70%' '[connect:*]'
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  local c="$PROJ/.asb/coord/planner-1/context"
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$c AGENT_SANDBOX_CONTEXT_PLAN=70 AGENT_SANDBOX_CONTEXT_RESCUE=30000 AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/state-hook.sh Stop off" ]
+  [ "$(hook_cmd UserPromptSubmit)" = "AGENT_SANDBOX_CONTEXT=$c AGENT_SANDBOX_CONTEXT_PLAN=70 AGENT_SANDBOX_CONTEXT_RESCUE=30000 bash $IN/state-hook.sh UserPromptSubmit off" ]
+  [ "$(hook_cmd PostToolUse)" = "bash $IN/state-hook.sh PostToolUse off" ]
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-1 /tmp/agent-sandbox-state $c 70 30000" ]
+  cmp "$OUT/context.sh" "${ENGINE%/*}/profiles/claude/context.sh"
+  # the levels' defaults; the glob's line over the unsuffixed one
+  ctx_project '[agent]' 'context-rescue = 30000' '[agent:planner-*]' 'context-rescue = 40000'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context 60 40000" ]
+  ctx_project '[agent:planner-*]' 'context-plan = -' 'context-rescue = -' '[connect:*]'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context - -" ]
+  # of two lines that match the role, the later wins, suffixed or not (as for start)
+  ctx_project '[briefing]' 'context = .asb/ctx/{role}' '[connect:*]'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/ctx/planner-2 60 25000" ]
+  ctx_project '[connect:*]' # the planners' line only, again
+  # a role the line does not match: no context anywhere
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role other claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF AGENT_SANDBOX_CONTEXT "$OUT/settings.json"
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh other" ]
+  [[ "$output" != *"context file"* ]]
+}
+
+@test "[briefing] context: a print run gets it too, and a turn of --serve is said served" {
+  ctx_project
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 bash $IN/state-hook.sh Stop off" ]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" AGENT_SANDBOX_SERVE_TURN=1 -- asb --role planner-1 claude -p --resume 01234567-89ab-cdef-0123-456789abcdef 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 AGENT_SANDBOX_CONTEXT_SERVED=1 bash $IN/state-hook.sh Stop off" ]
+}
+
+@test "[briefing] context in a directory the role does not write through to the project: said at launch, no file named, the launch goes on" {
+  ctx_project '[connect:planner-*]' 'project = read-only'
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'planner-1': [briefing] context '.asb/coord/planner-1/context' is in .asb/coord/planner-1/, which this role has read-only, not read-write; no context file is written"* ]]
+  run ! grep -qF AGENT_SANDBOX_CONTEXT "$OUT/settings.json"
+  # a read-write declaration at or above it, in the read-only project: named
+  ctx_project '[connect:planner-*]' 'project = read-only' '.asb/coord/ = read-write'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no context file is written"* ]]
+  grep -qF "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context " "$OUT/settings.json"
+  # the innermost declaration decides: the role's own storage under read-write is not the project
+  ctx_project '[connect:planner-*]' '.asb/coord/ = read-write' '.asb/coord/planner-1/ = own'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is in .asb/coord/planner-1/, which this role has own, not read-write; no context file is written"* ]]
+  run ! grep -qF AGENT_SANDBOX_CONTEXT "$OUT/settings.json"
+  # a path out of the project
+  printf '%s\n' '[briefing:planner-*]' 'context = ../ctx' >"$PROJ/.agent-sandbox"
+  approve
+  [[ "$output" == *"[briefing:planner-*] context '../ctx' is not a path in the project (relative to it, no '..'); a launch of the roles planner-* writes no context file"* ]]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'planner-1': [briefing] context '../ctx' is not a path in the project (relative to it, no '..'); no context file is written"* ]]
+  run ! grep -qF AGENT_SANDBOX_CONTEXT "$OUT/settings.json"
+}
+
+@test "[briefing] context: the review and --check name the file and the levels; --check says the briefing off writes none" {
+  ctx_project '[agent:planner-*]' 'context-rescue = 40000'
+  [[ "$output" == *"[briefing:planner-*] context, for the roles planner-*: their agent's profile keeps .asb/coord/{role}/context (and .asb/coord/{role}/context.level) current with how full the role's context is, where it can write. It widens nothing"* ]]
+  [[ "$output" == *"[agent:planner-*] context-rescue = 40000: the context file of the roles planner-* says rescue once 40000 tokens or fewer are left before the stop"* ]]
+  [[ "$output" != *"unknown [briefing] key"* ]]
+  [[ "$output" != *"unknown [agent] key"* ]]
+  check_role planner-1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  context file: .asb/coord/planner-1/context (and .asb/coord/planner-1/context.level); levels: plan at 60% of the stop (the default), rescue at 40000 tokens left (.agent-sandbox [agent:planner-*])"$'\n'* ]]
+  [[ "$output" == *$'\n'"  context: the status line and the Stop hook keep $PROJ/.asb/coord/planner-1/context current, and --serve after each turn"$'\n'* ]]
+  ctx_project '[connect:planner-*]' 'project = read-only'
+  check_role planner-1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  context file: none -- [briefing] context '.asb/coord/planner-1/context' is in .asb/coord/planner-1/, which this role has read-only, not read-write"$'\n'* ]]
+  [[ "$output" != *"  context: the status line"* ]]
+  ctx_project '[briefing]' 'mode = off'
+  check_role planner-1
+  [[ "$output" == *$'\n'"  context file: .asb/coord/planner-1/context -- NOT WRITTEN: its agent's profile writes it from the briefing's hooks, and the briefing is off"$'\n'* ]]
+}
+
+@test "[agent] context-plan and context-rescue: a value that is not one fails the review and --check, and a launch refuses it; - is none" {
+  local v
+  for v in 'context-plan = 60' 'context-plan = 0%' 'context-plan = 101%' 'context-plan = x%' 'context-rescue = 0' 'context-rescue = 25k' 'context-rescue = -5'; do
+    # the unsuffixed [briefing]: no purpose file to approve, which trust below does not
+    printf '%s\n' '[briefing]' 'context = .asb/coord/{role}/context' '[agent:planner-*]' "$v" >"$PROJ/.agent-sandbox"
+    approve
+    [[ "$output" == *"[agent:planner-*] $v: not a value"* ]]
+    trust                # approved anyway, as an older engine's review might have
+    check_role planner-1 # stops before the plan, as for an effort level that is not one
+    [[ "$output" == *"check: a launch refuses this file"* ]]
+    run_engine -- asb --role planner-1 claude --version
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"role 'planner-1': .agent-sandbox [agent:planner-*] ${v%% =*} = ${v#*= } is not a value"*"refusing the launch"* ]]
+    [ ! -s "$H/argv" ]
+  done
+  ctx_project '[agent:planner-*]' 'context-plan = 100%' 'context-rescue = 1'
+  [[ "$output" != *"not a value"* ]]
+  ctx_project '[agent:planner-*]' 'context-plan = -' 'context-rescue = -'
+  [[ "$output" == *"[agent:planner-*] context-plan = -: the roles planner-* never reach the context level plan, whatever a weaker line or the default says"* ]]
+  check_role planner-1
+  [[ "$output" == *"levels: plan never (.agent-sandbox [agent:planner-*]), rescue never (.agent-sandbox [agent:planner-*])"* ]]
+  # with no context file the levels are not looked at
+  printf '%s\n' '[agent:planner-*]' 'context-plan = 60' >"$PROJ/.agent-sandbox"
+  trust
+  run_engine -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+}

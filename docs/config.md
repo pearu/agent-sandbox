@@ -346,6 +346,35 @@ Sections:
   [briefing:planner-*]
   start = .asb/start/{role}.md           # .asb/start/planner-1.md, ...
   ```
+
+  **The context file** (#456): `context = PATH`, in `[briefing]` or `[briefing:<glob>]`,
+  names a file in the project (relative to it, no `..`; `{role}` is the role's name, and
+  the latest line matching the role wins) that the role's agent's profile keeps current
+  with how full the role's context is, with `PATH.level` beside it holding the level
+  alone ([roles.md](roles.md#the-context-file) says what each field means). The engine
+  only names it: it hands the path, and the role's levels (`context-plan`,
+  `context-rescue`, under [`[agent]`](#the-context-levels)), to the profile, which
+  writes it from its session's hooks (claude: the status line, and the `Stop` hook)
+  and, after each turn of `--serve`, from the turn's result (`profile_serve_result`,
+  [profiles.md](profiles.md)). It must be in a directory the role writes through to the
+  project: the innermost path declaration at or above it, or else the project's own
+  mode, `read-write` (under `--preset native`, always). Otherwise the launch says why
+  and goes on, with no file named. With the briefing off nothing is written: the
+  profile's writers are the briefing's hooks. No line, no file: a plain session and the
+  github model are unchanged. Like `start`, it is not part of the approval, and the
+  review and `--check` name it. A `[briefing:<glob>]` section briefs its roles from
+  their purpose files (above), whatever key it holds, `context` alone included.
+
+  `asb --init roles` writes `context = .asb/coord/{role}/context` in each role's
+  `[briefing:...]` section. In a glob section (`[briefing:planner-*]`) `--init` leaves
+  that `{role}` as it is, for the launch to read as each instance's name. That is for
+  the `context` line only: on every other line, and in every other section, `--init`
+  substitutes `{role}` as before.
+
+  ```ini
+  [briefing:planner-*]
+  context = .asb/coord/{role}/context    # .asb/coord/planner-1/context, ...
+  ```
 - **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`, `skills`,
   `agents`, `workflows`, `plugins` for the `claude` profile); a **mode** says how much
@@ -1471,6 +1500,31 @@ refuses it. The review says each line, for which roles; `--check` shows the valu
 force, where it came from, "the default for a role" included, and whether it is given.
 A value takes effect at the role's next launch, not at a `/clear`: Claude Code reads
 the `--settings` file when it starts.
+
+### The context levels
+
+```ini
+[agent:implementer-*]
+context-plan = 60%                # plan from here: of the stop, not of the window
+context-rescue = 25000            # rescue with this many tokens left before the stop
+```
+
+`context-plan = PERCENT%` and `context-rescue = TOKENS` are where the role's context
+file (`[briefing] context`, above) says `plan` and `rescue` (#456):
+`plan` once that share of the **stop** is used, `rescue` once that many tokens or fewer
+are left before it. The stop is where the agent refuses a request (claude, with
+auto-compact off: the window less min(the model's max output tokens, 20000) less 3000,
+977000 of a 1M window, 177000 of 200K: 88.5 %). So a percent means the same on every
+model, and the rescue level stays room for one save whatever the window. A served
+role's rescue level is the larger of `context-rescue` and twice its largest turn: one
+turn of a role with no terminal can cross the margin. **With a context file and no
+line, `60%` and `25000`.** `-` is never: that level is not written. A percent is a
+whole one from 1 to 100 with its `%`, a token count a whole number of at least 1;
+another value is refused at the review and a launch refuses it, as for `effort`.
+`[agent:<glob>]` beats `[agent]`. The levels are the engine's words, agent-neutral;
+the profile computes the level from them. The roles model writes both in each role's
+`[agent:...]` section, beside `auto-compact`. They are first values: the context files
+of real roles say what fits.
 
 ## The config file: the `config` channel
 

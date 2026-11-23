@@ -1223,7 +1223,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   profile_slug() { printf 'slug'; }
   _as_profile_dotfile "$REPO_ROOT/profiles/claude/agent-sandbox"
   [ "$profile_clear" = /clear ]
-  [ "${profile_serve_new[*]}" = "-p --session-id {id} --permission-mode bypassPermissions" ]
+  [ "${profile_serve_new[*]}" = "-p --session-id {id} --permission-mode bypassPermissions --output-format json" ]
   # a suffixed [agent] in a profile's file is not the profile's, and no role section
   local f="$H/prof-agent-sandbox"
   printf '[agent]\ncommand = one\n[agent:r]\ncommand = two\n' >"$f"

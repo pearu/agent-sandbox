@@ -97,6 +97,14 @@
 #                               session's first turn ([briefing] start); the
 #                               engine puts them after the agent's own ARGS.
 #                               Left empty, the first turn is declined.
+#   profile_serve_result FILE [CONTEXT]
+#                               optional (#456). On the host, after a turn of
+#                               --serve (and a failed --summarize turn): prints
+#                               the turn's output from FILE, sets
+#                               profile_serve_end to why it ended when that is
+#                               worth saying, and may update the role's context
+#                               file CONTEXT, given when its directory is the
+#                               project's own. Without it, FILE is printed.
 #   profile_check_notes()       optional. Prints lines --check shows for the
 #                               role, after the engine's own (one per line).
 #   profile_trust_notes CWD KEY=VALUE...
@@ -114,7 +122,10 @@
 # _watch_path: the role's `[serve:ROLE] watch` (the inbox it keeps a watcher on),
 # relative to the project, empty without one and on a turn of --serve, and
 # _summary_line: where the session's summary line is inside (#314), empty when the
-# engine did not bind its directory (the briefing off, a keeper without it). A
+# engine did not bind its directory (the briefing off, a keeper without it), and
+# _context_path, _context_plan, _context_rescue: the role's context file (#456,
+# `[briefing] context`; absolute, empty when it has none or may not write it) and its
+# levels (a percent without its %, tokens; `-` for never). A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
@@ -431,7 +442,7 @@ profile_briefing_args() {
   # that leaves it out.
   local ac_lost=""
   [[ -z "${_claude_auto_compact:-}" ]] || ac_lost=" (and the role's auto-compact $_claude_auto_compact is not applied)"
-  for f in refusal-hook.sh state-hook.sh statusline.sh; do
+  for f in refusal-hook.sh state-hook.sh statusline.sh context.sh; do
     cp -- "$profile_home/$f" "$_brief_out_host/$f" || {
       _as_msg "briefing: cannot copy $f to $_brief_out_host; continuing without the session hooks$ac_lost"
       return 0
@@ -468,15 +479,33 @@ profile_briefing_args() {
     q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
     watch_env+="AGENT_SANDBOX_SUMMARY=$q "
   fi
+  # The context file (#456): its path and the role's levels, for UserPromptSubmit and
+  # Stop (state-hook.sh), a print run too -- a served role's turn is one -- and for the
+  # status line, as its arguments. A turn of --serve is said served: its rescue level
+  # grows with its turns.
+  local ctx_env="" ctx_args=""
+  # shellcheck disable=SC2154 # _context_*: the engine's, by dynamic scope
+  if [[ -n "${_context_path:-}" ]]; then
+    local cq
+    printf -v cq '%q %q %q' "$_context_path" "${_context_plan:--}" "${_context_rescue:--}"
+    ctx_args=" /tmp/agent-sandbox-state ${cq//\\/\\\\}"
+    ctx_args="${ctx_args//\"/\\\"}"
+    printf -v q '%q' "$_context_path"
+    q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
+    ctx_env="AGENT_SANDBOX_CONTEXT=$q AGENT_SANDBOX_CONTEXT_PLAN=${_context_plan:--} AGENT_SANDBOX_CONTEXT_RESCUE=${_context_rescue:--} "
+    [[ -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]] || ctx_env+="AGENT_SANDBOX_CONTEXT_SERVED=1 "
+  fi
   for ev in "${state_events[@]}"; do
     if [[ "$ev" == Stop ]]; then
-      ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$watch_env$state $ev $bg\"}]}]"
+      ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$ctx_env$watch_env$state $ev $bg\"}]}]"
+    elif [[ "$ev" == UserPromptSubmit ]]; then
+      ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$ctx_env$state $ev $bg\"}]}]"
     else
       ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
     fi
   done
   # shellcheck disable=SC2154 # _role: the engine's, by dynamic scope
-  ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}\",\"refreshInterval\":1}"
+  ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}$ctx_args\",\"refreshInterval\":1}"
   # The engine's own two rules first: reading the briefing directory, and writing the
   # summary line where the engine bound it. A leading // is an absolute path in a
   # Read/Edit rule (a single / is relative to the settings file), and Edit covers
@@ -594,6 +623,50 @@ profile_check_notes() {
     || printf 'watcher: a turn does not end while %s has no watcher running (the Stop hook refuses once)\n' "$_watch_path"
   [[ -z "${_summary_line:-}" ]] \
     || printf 'summary: a turn does not end while the session'"'"'s summary line is missing or empty (the Stop hook refuses once)\n'
+  # shellcheck disable=SC2154 # _context_path: the engine's, by dynamic scope
+  [[ -z "${_context_path:-}" ]] \
+    || printf 'context: the status line and the Stop hook keep %s current, and --serve after each turn\n' "$_context_path"
+  return 0
+}
+
+# profile_serve_result FILE [CONTEXT] -- engine hook (#456), on the host after a turn of
+# --serve or --summarize: FILE is what the turn printed, the JSON result its serve words
+# ask for (`-p --output-format json`, the profile's dot-file). Prints the result's text,
+# what a text-format turn would have printed, and sets profile_serve_end to why the turn
+# ended when that is worth saying: "stopped at the context limit (REASON)" for the
+# terminal reasons Claude Code files under its context limit (blocking_limit,
+# prompt_too_long, rapid_refill_breaker; 2.1.311). With CONTEXT, the role's context file
+# on the host, in a directory the engine found to be the project's own: when the file is
+# there (its writers inside made it), it is updated by context.sh with the window and
+# the model's max output from the result -- a turn's Stop hook has neither -- and
+# refused=1 at the context limit: a refused turn runs no Stop hook (measured, 2.1.311).
+# FILE not such a result: printed as it is.
+profile_serve_result() {
+  local file="$1" ctx="${2:-}" out head reason="" w
+  local -a kv=()
+  profile_serve_end=""
+  if ! out="$(_claude_py serve-result "$file" 2>/dev/null)"; then
+    cat -- "$file" 2>/dev/null
+    return 0
+  fi
+  head="${out%%$'\n'*}"
+  [[ "$out" == *$'\n'* ]] && printf '%s\n' "${out#*$'\n'}"
+  for w in $head; do
+    case "$w" in
+      window=* | maxout=*) kv+=("$w") ;;
+      reason=*) reason="${w#reason=}" ;;
+    esac
+  done
+  case "$reason" in
+    blocking_limit | prompt_too_long | rapid_refill_breaker)
+      profile_serve_end="stopped at the context limit ($reason)"
+      kv+=(refused=1)
+      ;;
+  esac
+  # shellcheck disable=SC2154 # _context_plan, _context_rescue: the engine's, by dynamic scope
+  if [[ -n "$ctx" && -f "$ctx" && ! -L "$ctx" ]] && ((${#kv[@]})); then
+    bash "$profile_home/context.sh" "$ctx" "${_context_plan:--}" "${_context_rescue:--}" 1 "${kv[@]}" 2>/dev/null || :
+  fi
   return 0
 }
 

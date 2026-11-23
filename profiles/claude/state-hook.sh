@@ -51,6 +51,18 @@
 # empty. Not when stop_hook_active is true, as above. A Stop that fails both rules is
 # refused once, naming both: one JSON object per hook output.
 #
+# THE CONTEXT FILE (#456). With AGENT_SANDBOX_CONTEXT set -- the profile sets it in the
+# UserPromptSubmit and Stop hooks' commands to the role's `[briefing] context` path, with
+# AGENT_SANDBOX_CONTEXT_PLAN and _RESCUE (the role's levels) and, on a turn of --serve,
+# AGENT_SANDBOX_CONTEXT_SERVED=1 -- UserPromptSubmit records the session and the file's
+# tokens of that session, the turn's start, in STATE.base; Stop writes the file
+# (context.sh, beside this file) with the tokens of the transcript's last assistant
+# record that is not a subagent's (its usage: input, cache-creation and cache-read, the
+# context of that request), the session, and that start, which sets turn and maxturn.
+# The window is the status line's (a role at a terminal) or the serve loop's (a served
+# one, profile_serve_result), kept from the file's line. A print run too: a served
+# role's turns are print runs.
+#
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
 #
@@ -63,6 +75,9 @@
 # Exits 0 always and prints nothing but the refusal above: a hook's stdout can become
 # the session's context.
 set -u
+# This file's directory, where context.sh is.
+here="${BASH_SOURCE[0]%/*}"
+[[ "$here" != "${BASH_SOURCE[0]}" ]] || here=.
 event="${1:-}"
 background="${2:-off}"
 statef="${3:-/tmp/agent-sandbox-state}"
@@ -196,6 +211,88 @@ running() {
   return 1
 }
 
+# jsession -- the session_id of the stdin JSON (in $input), or nothing.
+jsession() {
+  local re='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_-]{1,64})"'
+  [[ "$input" =~ $re ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# ctx_record TRANSCRIPT [PROMPT] -- the transcript's last assistant record that is not a
+# subagent's; with PROMPT (the turn's prompt_id), the last one after a record of that
+# prompt (its user records carry "promptId"), or nothing.
+ctx_record() {
+  tail -c 4194304 -- "$1" 2>/dev/null | awk -v p="${2:+\"promptId\":\"$2\"}" '
+    p != "" && index($0, p) { r = ""; seen = 1; next }
+    (p == "" || seen) && index($0, "\"type\":\"assistant\"") && !index($0, "\"isSidechain\":true") { r = $0 }
+    END { if (r != "") print r }'
+}
+
+# ctx_tokens TRANSCRIPT PROMPT WANT -- the context of the turn's last response: its record's
+# usage (input, cache-creation and cache-read tokens, summed; the three come first in a
+# usage object, before any nested one). At Stop the record may not be written yet
+# (measured, 2.1.311: about 0.1 s after the hook starts, for interactive and -p turns
+# alike; the previous turn's is last until then), so it waits, up to 2 s, for a record
+# after the turn's prompt (PROMPT, its prompt_id) whose text ends as the turn's reply
+# (WANT, its last lines as jlast gives them) -- a reply may repeat the previous turn's --
+# and takes the last record there after that. Either empty: not waited on.
+ctx_tokens() {
+  local r u k re n=0 have=0 i
+  for ((i = 0; i < 20; i++)); do
+    r=""
+    [[ -f "$1" && -r "$1" ]] && r="$(ctx_record "$1" "$2")"
+    [[ -z "$2" || -z "$3" || (-n "$r" && "$(jlast text 3 <<<"$r")" == "$3") ]] && break
+    sleep 0.1
+  done
+  [[ -n "$r" ]] || r="$(ctx_record "$1")"
+  [[ -n "$r" ]] || return 1
+  u="$(grep -o '"usage":{[^{}]*' <<<"$r" | tail -n 1)" || return 1
+  for k in input_tokens cache_creation_input_tokens cache_read_input_tokens; do
+    re="\"$k\"[[:space:]]*:[[:space:]]*([0-9]{1,15})([^0-9]|\$)"
+    if [[ "$u" =~ $re ]]; then
+      n=$((n + 10#${BASH_REMATCH[1]}))
+      [[ "$k" == input_tokens ]] && have=1
+    fi
+  done
+  ((have)) || return 1
+  printf '%s' "$n"
+}
+
+# context EVENT -- the context file's part of UserPromptSubmit and Stop (above). Silent.
+context() {
+  local f="${AGENT_SANDBOX_CONTEXT:-}" sess line kv tp tok bs bt base="" want pid
+  local -a words=()
+  [[ -n "$f" ]] || return 0
+  sess="$(jsession)"
+  if [[ "$1" == UserPromptSubmit ]]; then
+    line="" tok=""
+    if [[ -n "$sess" && -f "$f" && ! -L "$f" ]]; then
+      { IFS= read -r -n 4096 line <"$f"; } 2>/dev/null || :
+      [[ " $line " == *" session=$sess "* ]] || line=""
+      words=()
+      read -r -a words <<<"$line" || :
+      for kv in ${words[@]+"${words[@]}"}; do
+        [[ "$kv" =~ ^tokens=([0-9]{1,15})$ ]] && tok="${BASH_REMATCH[1]}"
+      done
+    fi
+    { printf '%s %s\n' "${sess:-?}" "${tok:-?}" >"$statef.base.$$" && mv -f -- "$statef.base.$$" "$statef.base"; } 2>/dev/null \
+      || rm -f -- "$statef.base.$$" 2>/dev/null
+    return 0
+  fi
+  tp="$(jlast transcript_path <<<"$input")" || return 0
+  want="$(jlast last_assistant_message 3 <<<"$input")" || want=""
+  pid=""
+  [[ "$input" =~ \"prompt_id\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9_-]{1,64})\" ]] && pid="${BASH_REMATCH[1]}"
+  tok="$(ctx_tokens "$tp" "$pid" "$want")" || return 0
+  bs="" bt=""
+  { read -r bs bt <"$statef.base"; } 2>/dev/null || :
+  [[ -n "$sess" && "$bs" == "$sess" && "$bt" =~ ^[0-9]{1,15}$ ]] && base="$bt"
+  # shellcheck source=SCRIPTDIR/context.sh
+  source "$here/context.sh" 2>/dev/null || return 0
+  ctx_update "$f" "${AGENT_SANDBOX_CONTEXT_PLAN:--}" "${AGENT_SANDBOX_CONTEXT_RESCUE:--}" \
+    "${AGENT_SANDBOX_CONTEXT_SERVED:-0}" "tokens=$tok" ${sess:+"session=$sess"} ${base:+"base=$base"} 2>/dev/null
+  return 0
+}
+
 # jstr S -- S as the inside of a JSON string (backslash, quote and control characters).
 jstr() {
   local w="$1"
@@ -231,13 +328,21 @@ case "$event" in
     else
       state=idle
     fi
+    context Stop
     re='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
     if [[ ! "$input" =~ $re ]]; then
       [[ -n "${AGENT_SANDBOX_WATCH:-}" ]] && ((! w)) && block=1
       [[ -n "${AGENT_SANDBOX_SUMMARY:-}" && ! -s "$AGENT_SANDBOX_SUMMARY" ]] && bsum=1
     fi
     ;;
-  UserPromptSubmit | PostToolUse | PostToolUseFailure) state=working ;;
+  UserPromptSubmit)
+    state=working
+    if [[ -n "${AGENT_SANDBOX_CONTEXT:-}" ]]; then
+      input="$(head -c 1048576 2>/dev/null)" || input=""
+      context UserPromptSubmit
+    fi
+    ;;
+  PostToolUse | PostToolUseFailure) state=working ;;
   PermissionRequest) state="needs you" ;;
   Notification)
     input="$(head -c 65536 2>/dev/null)" || input=""

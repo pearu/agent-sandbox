@@ -89,6 +89,11 @@
 # on its own; idle-off, only at its context limit, not while idle. Every role but
 # `default` gets off with no line; `-` is none: the agent's own default. Given in the
 # briefing's settings (claude: autoCompactEnabled / idleCompaction), so not with it off.
+# `context-plan = PERCENT%`, `context-rescue = TOKENS`: where the role's context file
+# ([briefing] context, below) says plan (that share of the stop used: where the agent
+# refuses a request) and rescue (that many tokens or fewer left before it). With a
+# context file and no line, 60% and 25000; `-` is never. A served role's rescue level is
+# at least twice its largest turn.
 #[agent]
 #command = claude
 #account = work
@@ -98,6 +103,8 @@
 #account = -
 #effort = high
 #auto-compact = idle-off
+#context-plan = 60%
+#context-rescue = 25000
 
 
 # --- Memory scoping ------------------------------------------------------
@@ -231,6 +238,12 @@
 #        role's name. Not under --serve, --exec or a verb. A missing file
 #        refuses the launch; it is not part of the approval.
 #start = .asb/start/{role}.md
+#
+# context : a file in the project that the role's agent's profile keeps current with
+#        how full the role's context is, one line, and PATH.level beside it with the
+#        level alone, for a watcher; {role} is the role's name. Only where the role
+#        writes through to the project (read-write); not part of the approval.
+#context = .asb/coord/{role}/context
 
 
 # ---- claude: options for the claude profile -------------------------------
