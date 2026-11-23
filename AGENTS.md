@@ -158,8 +158,8 @@ number.
 - **A test must fail when the bug it guards is re-introduced.** Check that with
   a mutation: copy `agent-sandbox` into a directory that has a `profiles`
   symlink to the repo's and a copy (never a link) of its `models` and `components`
-  (`init.bats` copies the engine's `models` and writes in the copy), re-introduce the
-  bug there, and run the guarding test
+  (the `init-*.bats` suites copy the engine's `models` and write in the copy),
+  re-introduce the bug there, and run the guarding test
   with `AGENT_SANDBOX_TEST_ENGINE=/path/to/copy` (`AGENT_SANDBOX_TEST_ADDON` for
   the addon). Run the unmutated copy first: if that fails, the harness, not the
   test, is what you are measuring. The suites were checked this way against

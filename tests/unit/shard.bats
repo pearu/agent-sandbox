@@ -161,7 +161,7 @@ shards() {
   [ "${#stderr_lines[@]}" -eq 2 ]
 }
 
-@test "shard-times: the table checked in is the one tests/shard.sh reads, every line a file of the tree" {
+@test "shard-times: the table checked in is the one tests/shard.sh reads, every line an existing .bats file of the tree" {
   [ -f "$REPO_ROOT/tests/shard-times.tsv" ]
   cd "$REPO_ROOT" || return
   run awk -F'\t' '!/^#/ && !(NF == 2 && $1 ~ /^[0-9]+(\.[0-9]*)?$/) {print "bad line: " $0}' tests/shard-times.tsv
@@ -175,7 +175,7 @@ shards() {
   run env AGENT_SANDBOX_SHARD_TIMES=none.tsv tests/shard.sh 1/4 "${files[@]}"
   [ "$output" != "$default" ]
   while IFS=$'\t' read -r _ f; do
-    [ -f "$f" ] || echo "not a file: $f (remove its line, or refresh the table: scripts/shard-times.sh)"
+    [[ "$f" == tests/*.bats && -f "$f" ]] || echo "not a .bats file of the tree: $f (refresh the table: scripts/shard-times.sh)"
   done < <(grep -v '^#' tests/shard-times.tsv) >"$BATS_TEST_TMPDIR/missing"
   [ ! -s "$BATS_TEST_TMPDIR/missing" ]
 }

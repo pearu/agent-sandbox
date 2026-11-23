@@ -4380,7 +4380,7 @@ _as_run_scoped_clear() {
 # it, which bwrap reads with it as one: --overlay-src, --perms, --size), `-` (nothing
 # mounted). The one table of the engine's: _as_keeper_binds reads the launch's options
 # by it, and _as_ro_pins (through _as_bwrap_nargs, from the variable without a process);
-# tests/unit/init.bats checks it against `bwrap --help`, names and argument counts, so an
+# tests/unit/init-mounts.bats checks it against `bwrap --help`, names and argument counts, so an
 # option bwrap adds or the table misreads is caught.
 _as_bwrap_table='--help 0 -
 --version 0 -
