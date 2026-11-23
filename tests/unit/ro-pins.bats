@@ -890,7 +890,7 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   [ "${PIN[*]}" = "$P/a $P/a/b" ]
 }
 
-@test "the pins read the engine's one bwrap table (_as_bwrap_options, checked against bwrap --help in tests/unit/init.bats): an option it lacks refuses, its qualify rows are the groups" {
+@test "the pins read the engine's one bwrap table (_as_bwrap_options, checked against bwrap --help in tests/unit/init-mounts.bats): an option it lacks refuses, its qualify rows are the groups" {
   # an option taken out of the table: the pins cannot read the list, and refuse
   # shellcheck disable=SC2016 # code for the computation's shell
   PINS_PRE='_as_bwrap_table="$(grep -v "^--level-prefix " <<<"$_as_bwrap_table")"' \
