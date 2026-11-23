@@ -230,6 +230,9 @@ jobs:
   # packaged), into an environment cached under its own key so that a later run finds it
   # built. The integration stage needs bwrap/pasta. Needs the CODECOV_TOKEN repo secret;
   # forks (no secret) skip the upload, not the run.
+  # engine-unit runs as six shards, where the plain unit job has four: under kcov its
+  # tests take about twice as long, and at four shards its jobs took 7-13.7 minutes
+  # (#462). Each job also pays a fixed ~45 s (setup, the cached kcov, the merge).
   # A test that fails under kcov fails its shard's job (#462), after the shard has merged
   # and uploaded its coverage: the failed tests go in the job's step summary, and each
   # shard's TAP and timing files in its tests-* artifact. Coverage is not in ci-ok's
@@ -240,10 +243,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { stage: engine-unit, k: 1, n: 4 }
-          - { stage: engine-unit, k: 2, n: 4 }
-          - { stage: engine-unit, k: 3, n: 4 }
-          - { stage: engine-unit, k: 4, n: 4 }
+          - { stage: engine-unit, k: 1, n: 6 }
+          - { stage: engine-unit, k: 2, n: 6 }
+          - { stage: engine-unit, k: 3, n: 6 }
+          - { stage: engine-unit, k: 4, n: 6 }
+          - { stage: engine-unit, k: 5, n: 6 }
+          - { stage: engine-unit, k: 6, n: 6 }
           - { stage: engine-integration, k: 1, n: 2 }
           - { stage: engine-integration, k: 2, n: 2 }
     name: coverage (${{ matrix.stage }} ${{ matrix.k }}/${{ matrix.n }})

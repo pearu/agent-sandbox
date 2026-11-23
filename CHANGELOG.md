@@ -1288,6 +1288,15 @@ names are gone; there are no aliases for removed names before 1.0.
   `--overlay` now run on 22.04 and 24.04 too. The `e2e` job checks the dry run of
   `--rebuild-bwrap` on the distribution's bubblewrap (the plan, or apt's package where it
   is new enough) and again after the action (nothing to rebuild).
+- **CI's coverage stage runs the unit tests as six shards, where it ran four (#462).**
+  At four, its jobs took 7 to 13.7 minutes. The plain `unit` job stays at four.
+  - **`tests/shard-times.tsv` is now a fit, not a mean.** `scripts/shard-times.sh` fits
+    log seconds = the job's factor + the file's weight over every run it is given, so
+    a runner's speed no longer carries into the table. On CI, a job's files ran at
+    its own factor, 0.77 to 1.34 of the usual speed, each within about 10%.
+  - **`scripts/shard-times.sh --factors`** prints each job's factor, and its seconds
+    with the factor taken out: a shard's balance, whatever runner it got.
+  - **The table's header names the runs** it was fitted on.
 
 ### Fixed
 

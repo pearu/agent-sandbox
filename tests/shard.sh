@@ -5,12 +5,12 @@
 # together the N parts are all of them. A file is never split: within a shard its tests
 # run in parallel anyway (tests/run.sh).
 #
-# A file weighs its time in tests/shard-times.tsv (`seconds<TAB>file`, the sum of its
-# test times under kcov; refreshed by scripts/shard-times.sh). A file the table does not
-# list weighs its number of tests (an `@test`, or a `bats_test_function` line, which
-# registers one per profile adapter) times the median seconds per test of the FILEs it
-# does list, so the two can be dealt together; when it lists none of them, every file
-# weighs its number of tests. AGENT_SANDBOX_SHARD_TIMES names another table (a test's).
+# A file weighs its time in tests/shard-times.tsv (`seconds<TAB>file`, its test time
+# under kcov in a CI job of the usual speed, fitted by scripts/shard-times.sh). A file
+# the table does not list weighs its number of tests (an `@test`, or a
+# `bats_test_function` line, which registers one per profile adapter) times the median
+# seconds per test of the FILEs it does list, so the two can be dealt together; when it
+# lists none of them, every file weighs its number of tests. AGENT_SANDBOX_SHARD_TIMES names another table (a test's).
 # Files are dealt out heaviest first (ties by name), each to the shard with the least
 # weight so far (ties to the lower shard), so the split is deterministic.
 set -euo pipefail
