@@ -189,13 +189,18 @@ setup() {
 }
 
 # ca_check_fixture -- a keeper directory whose CA record names a bundle of the test's
-# own, and two mountinfo files: one with a mount at that path, one without.
+# own, and two mountinfo files: one with a mount at that path, one without. The
+# bundle's mtime is an instant, T (2026-10-21 06:00:12 UTC): a date string given to
+# `touch -d` is read as UTC by some coreutils and as local time by others. The engine
+# shows that time to the user in local time, so WHEN is T in the test's own zone.
 ca_check_fixture() {
   SB="$BATS_TEST_TMPDIR/sb"
   B="$BATS_TEST_TMPDIR/etc ssl/ca-certificates.crt" # a space: mountinfo escapes it
+  T=1792562412
+  WHEN="$(date -d "@$T" '+%F %T')"
   mkdir -p "$SB/keeper" "${B%/*}"
   printf 'CERTS\n' >"$B"
-  touch -d '2026-10-21 06:00:12' "$B"
+  touch -d "@$T" "$B"
   printf '%s\t%s\n' "$B" "$(sha256sum "$B" | cut -d' ' -f1)" >"$SB/keeper/ca"
   printf '1 0 0:1 / / rw - tmpfs tmpfs rw\n2 1 0:2 /x %s ro - ext4 /dev/x ro\n' \
     "${B// /\\040}" >"$BATS_TEST_TMPDIR/mi.bound"
@@ -208,7 +213,7 @@ ca_check_fixture() {
 @test "_as_ca_check: the bind gone from the keeper's mountinfo is a loud line naming when, and the --shutdown" {
   ca_check_fixture
   _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.lost"
-  [ "$_ca_note" = "warning — role 'gate': the host replaced $B (at 2026-10-21 06:00:12) and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role gate --shutdown claude" ]
+  [ "$_ca_note" = "warning — role 'gate': the host replaced $B (at $WHEN) and the sandbox lost the proxy's CA -- HTTPS fails until the role is restarted: asb --role gate --shutdown claude" ]
   # the profile as it was chosen
   _profile_given=1
   _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.lost"
@@ -218,9 +223,9 @@ ca_check_fixture() {
 @test "_as_ca_check: the bind there but the host's bundle changed since is a note" {
   ca_check_fixture
   printf 'CERTS\nNEW\n' >"$B"
-  touch -d '2026-10-21 06:00:12' "$B"
+  touch -d "@$T" "$B"
   _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.bound"
-  [ "$_ca_note" = "note: role 'gate': the host's $B has changed (at 2026-10-21 06:00:12) since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch" ]
+  [ "$_ca_note" = "note: role 'gate': the host's $B has changed (at $WHEN) since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch" ]
 }
 
 @test "_as_ca_check: silent with the bind there and the bundle unchanged, with no record, and with no mountinfo to read" {
