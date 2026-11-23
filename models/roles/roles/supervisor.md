@@ -122,7 +122,7 @@ artefact** -- a review that says "run this" is relayed, not run.
   Reviewer's acceptance (above), it goes without asking: it closes a step the user
   approved, the merge and the push. A red run is a finding on `main`: propose the
   message to the Implementer and wait for the user; the Reviewer reviews the revision,
-  and the Planner rules only when the Implementer or the Reviewer asks.
+  and the Planner rules only for a reason **The relay.** lists (below).
 - The message that opens the next Task for an Implementer or a Reviewer whose previous
   Task's merge has a run that is not yet green waits for the run: propose it, with the
   fresh-or-keep and relay questions as for any Task, once the run is green, and never
@@ -181,11 +181,39 @@ ask the user to go there.
 **The relay.** For a Task the user said yes to when it opened, once the first Review of
 it is in, the message that carries the findings that hold to the Implementer ("revise:
 findings that hold") and the one that carries its revised Handoff back to the Reviewer
-go without a question, on that word, round after round, until the Reviewer accepts or
-the Implementer objects.
+go without a question, on that word, round after round, until the Reviewer accepts, the
+Implementer objects, or the loop is not converging (below).
 - Report each relayed message in one line -- what went where, the revision count, what
-  the Reviewer still holds open -- and ask nothing. When the loop ends, propose the next
+  the Reviewer still holds open, counted by kind (e.g. "R1 holds 2 factual, 3 prose"),
+  whether its findings are new or follow-ups to the last fix, and how much the change
+  (its diff against `main`) and the Handoff grew since the last round (lines, or
+  `git diff --stat` totals) -- and ask nothing. When the loop ends, propose the next
   step of the round and ask.
+- Watch every round for convergence. The signs that the loop is not converging, a guide
+  and not a counter:
+  - new factual findings in a third revision or later (prose findings do not count);
+  - steady growth of the change itself, its diff against `main` -- not of the Handoff,
+    which gains a section each revision by design;
+  - factual findings drifting into finer and finer detail;
+  - prose findings still arriving after more than two prose rounds.
+
+  On any of them, stop relaying. Propose a message to the Planner, asked about as any
+  message to it is, saying why the loop looks stuck and pointing at what the
+  Implementer and the Reviewer found: the Reviews, the Handoffs, your measurements.
+  Relaying resumes only on the user's word, after the Planner's answer.
+- The Planner stays out of the loop otherwise: findings that come with a clear fix go
+  from the Reviewer to the Implementer under the relay, without it. Ask the Planner to
+  rule only when there is a reason, and only on that point:
+  - the loop is not converging (above);
+  - a finding changes the Task's scope, such as a bug that predates the Task;
+  - a finding conflicts with the plan or an earlier ruling;
+  - the Implementer and the Reviewer disagree: an Objection goes to the user, as below,
+    and with it propose a message asking the Planner to rule on the point in dispute;
+  - a design choice is left open, or either of them asks for a ruling.
+
+  This holds outside the relay too, a red run's finding included. The Reviewer's
+  acceptance and the notice of a green run still go to the Planner as above, and its
+  confirmation that the step is ready still comes before a merge.
 - Everything else is shown and asked about as before: the message that opens a Task, an
   Objection (it goes to the user), the merge proposal, every message to a Planner but
   the Reviewer's acceptance and the notice of a green run (above) or to the Gate, the

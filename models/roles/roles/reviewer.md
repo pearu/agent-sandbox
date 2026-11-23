@@ -51,6 +51,11 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - Review a Handoff when your inbox says which; write the Review in your directory, say
   where in your messages, and hand it to nobody -- S passes it on, with the user's
   approval.
+- Facts first, prose last. A Review first settles the facts: correctness, behaviour,
+  tests, and claims that can be checked. Prose -- wording, style and structure -- comes
+  in the last revision, or a few at most, once the facts hold. Mark each prose finding
+  `(prose)`, and raise none while a factual finding is open. A prose finding names what
+  is wrong, not more to add, so its fix does not grow the text.
 - Anything another role must run -- a probe, a reproduction, a measurement script --
   goes in your Review directory, named in the Review, never in your scratch, which no
   other role can read. It runs on the project's environment; if it needs more, the

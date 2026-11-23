@@ -63,6 +63,19 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   then, do not declare the Task or its step done, and do not hand it on for a merge;
   rule on deviations and open questions as they come, and when the Reviewer accepts,
   say so.
+- S brings you only those: findings that come with a clear fix go from the Reviewer to
+  the Implementer without you. You are asked to rule only on the point that needs it:
+  - the revision loop is not converging (below);
+  - a finding changes the Task's scope, such as a bug that predates the Task;
+  - a finding conflicts with the plan or an earlier ruling;
+  - the Implementer and the Reviewer disagree: an Objection, which the user decides;
+    you rule on the point in dispute when the user sends it;
+  - a design choice is left open, or either of them asks for a ruling.
+- A loop S hands you as not converging: find why -- most often the plan was too open,
+  or the Implementer and the Reviewer found facts it did not have. Revise the plan with
+  what they learned, or narrow it, and make concrete what "done" means; then either the
+  loop resumes on the revised plan, or the Task is split. Write the result in the Task
+  file, as with any ruling.
 - A Task names what its tests cover only when the project's `.asb/tests` does not; the
   test policy is the project's, not the Task's.
 - A restart question from S (an approved change to your policy or purpose file, which

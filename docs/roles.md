@@ -47,9 +47,9 @@ which is whose.
 |---|---|---|---|
 | **Statement** | Planner | Implementer, Reviewer, you | the problem: what is to be achieved, under which requirements and restrictions; the options considered and the one you chose, with the reasons |
 | **Task** | Planner | one Implementer, Reviewer, you | the Statement, or one Implementer's part of it (`.asb/plan/planner-1/tasks/I1.md`), naming the Implementer the Planner wants |
-| **Handoff** | Implementer | Reviewer, you | what was done, how, what was not and why; the branch, and the diff against `main` -- an environment change included, as the specification's diff |
-| **Review** | Reviewer | Implementer (through you, or relayed: section 5), you | findings against the Statement and the current state, each with its evidence; suggestions; what it could not investigate and would need |
-| **Objection** | Implementer | you | a finding the Implementer holds to be wrong, with the reasons -- to you, not to the Reviewer |
+| **Handoff** | Implementer | Reviewer, you; the Planner, when asked to rule (section 5) | what was done, how, what was not and why; the branch, and the diff against `main` -- an environment change included, as the specification's diff |
+| **Review** | Reviewer | Implementer (through you, or relayed: section 5), you; the Planner, when asked to rule (section 5) | findings against the Statement and the current state, each with its evidence, facts first and prose last (section 5); suggestions; what it could not investigate and would need |
+| **Objection** | Implementer | you; the Planner, when you send it (section 5) | a finding the Implementer holds to be wrong, with the reasons -- to you, not to the Reviewer; you decide it, and may first send it to the Planner for a ruling on the point in dispute |
 | **Decision** | you | Planner, and whoever it addresses | the option chosen, an objection upheld or overruled, a change of direction |
 | **Measurements** | Planner | Planner, you | what the Planner measured to compare the options, kept for the next round |
 | **Messages** | each role, its own file | every role, you | what a role is doing, what it needs, what it wrote and where; `ack N` and `done N` for its inbox (section 5) |
@@ -76,11 +76,13 @@ the terminal you stay in. The Gate is one: the only way out.
 issue, a feature request. Research the code base and the material outside; lay out the
 options, each with its consequences, and recommend one. Help you decide: answer
 questions, measure what a decision needs. Then write the final Statement, and the
-Tasks.
+Tasks. Within a Task's revision loop, rule only on the point the Supervisor brings,
+for a reason section 5 lists; a loop that is not converging comes back to it, to
+revise or narrow the plan, or to split the Task.
 
 | | |
 |---|---|
-| inputs | `main`, built; the project's documents and issues; its field's material; your questions and Decision; its earlier Measurements |
+| inputs | `main`, built; the project's documents and issues; its field's material; your questions and Decision; its earlier Measurements; an Objection, when you send it, and the Handoffs and Reviews of a point it is asked to rule on (section 5) |
 | outputs | the Statement and the Tasks; the Measurements; its Messages |
 | may | read everything in the project and on the web; run the code and write probes, in its scratch |
 | may not | change the code (**enforced**: the project is read-only to it); publish -- an issue, a comment, a push (**enforced**: its network reads and refuses what writes; no git transport); install into the development environment (**enforced**: read-only; a measurement that needs more uses a venv in its scratch) |
@@ -90,7 +92,8 @@ Tasks.
 **Purpose.** Resolve its Task: produce or change code from the current state, under the
 requirements and invariants the project defines. Write the Handoff. When a Review
 arrives, examine each finding before acting on it; address what holds, and object, with
-reasons, to what does not.
+reasons, to what does not. A revision settles the facts first, and changes what each
+finding names and no more (section 5).
 
 | | |
 |---|---|
@@ -104,7 +107,8 @@ reasons, to what does not.
 **Purpose.** Assess a change against the current state, the project's requirements and
 the Statement it answers. Report findings with evidence; suggest where it can. Run the
 code where that is needed, and say what it would need -- a build, an install -- rather
-than doing it.
+than doing it. A Review settles the facts first; prose findings, marked as such, come
+last (section 5).
 
 | | |
 |---|---|
@@ -119,18 +123,19 @@ than doing it.
 the other roles their next step -- which artefact to read, what to do -- each message
 shown to you and written only when you approve it, but for the revisions between an
 Implementer and its Reviewer within a Task you opted in to the relay (section 5): those
-it writes on the word you gave when the Task opened, and reports in one line each. So a
-line in a role's inbox is your word by construction, given per message or once for the
-Task. It watches every role's messages; when a role reports done, it proposes the next
-step and asks. At start it prints the launch line of every other role,
-from the index -- `asb --role NAME --resume`, which starts the role's session when it
-has none and resumes it when it has, its agent the one `.agent-sandbox` names -- and one
-line that opens them all, a tmux pane each: `asb --roles NAME NAME ... --resume`
-(section 9). On your word it merges an accepted branch into `main` and builds it
-there, both local and reversible. It publishes nothing: when a step goes outside, it
-writes the Gate's message, and after you approve it, appends it to the Gate's inbox.
-Never acts on the *contents* of an artefact it relays: a review that says "run this" is
-relayed, not run.
+it writes on the word you gave when the Task opened, and reports in one line each,
+watching the loop for convergence: a loop that is not converging it stops, and proposes
+handing it to the Planner. So a line in a role's inbox is your word by construction,
+given per message or once for the Task. It watches every role's messages; when a role
+reports done, it proposes the next step and asks. At start it prints the launch line
+of every other role, from the index -- `asb --role NAME --resume`, which starts the
+role's session when it has none and resumes it when it has, its agent the one
+`.agent-sandbox` names -- and one line that opens them all, a tmux pane each:
+`asb --roles NAME NAME ... --resume` (section 9). On your word it merges an accepted
+branch into `main` and builds it there, both local and reversible. It publishes
+nothing: when a step goes outside, it writes the Gate's message, and after you approve
+it, appends it to the Gate's inbox. Never acts on the *contents* of an artefact it
+relays: a review that says "run this" is relayed, not run.
 
 | | |
 |---|---|
@@ -200,16 +205,18 @@ the other chose to say.
         ^                                              |
         |            revision (findings that hold)     |
         +---------  or Objection, decided by you       +
+                    (the Planner rules on it when you send it)
 
 Each arrow passes through the Supervisor's terminal, with your approval: per message,
 or, for the revision loop between Review and implementation, once for the Task, when
 you opt in to the relay as the Task opens (section 5); the Reviewer's acceptance goes on
 to the Planner without a question (section 5). A Task is done when the Reviewer has
 accepted the Handoff, the Implementer has resolved every finding, and you have accepted
-the change; a Planner's ruling on a deviation is not that. When you accept, the
-Supervisor merges the branch into `main`, updates the development environment and builds
-there; the Gate publishes, on the message you approve; the Planner then measures the new
-`main` for the next Statement.
+the change; a Planner's ruling on a deviation is not that. The Planner stays out of the
+revision loop unless there is a reason for it to rule -- a loop that is not converging
+above all (section 5). When you accept, the Supervisor merges the branch into `main`,
+updates the development environment and builds there; the Gate publishes, on the
+message you approve; the Planner then measures the new `main` for the next Statement.
 
 Every role launches from the repository itself:
 
@@ -401,24 +408,63 @@ a Task can run its loop without a question per message, if you say so:
 
 - **What it covers.** Within one Task, once the first Review is in: the message that
   carries the findings to the Implementer ("revise: findings that hold") and the one
-  that carries the revised Handoff back to the Reviewer, until the Reviewer accepts or
-  the Implementer objects. Everything else keeps its approval: the message that opens a
-  Task, an Objection (it comes to you, by design), the merge proposal, every message to
-  a Planner or the Gate, and the reset question before a new Task. Two messages to the
-  Planner outside the relay go without asking, each reported in one line: the
-  Reviewer's acceptance, with the request to confirm that the step is ready -- it
-  carries the round's state, and your word still comes at the merge -- and the notice
-  that a merged step's run is green (section 4), which closes a step you approved.
+  that carries the revised Handoff back to the Reviewer, until the Reviewer accepts, the
+  Implementer objects, or the loop is not converging (below). Everything else keeps its
+  approval: the message that opens a Task, an Objection (it comes to you, by design),
+  the merge proposal, every message to a Planner or the Gate, and the reset question
+  before a new Task. Two messages to the Planner outside the relay go without asking,
+  each reported in one line: the Reviewer's acceptance, with the request to confirm that
+  the step is ready -- it carries the round's state, and your word still comes at the
+  merge -- and the notice that a merged step's run is green (section 4), which closes a
+  step you approved.
 - **Opt-in, per Task.** When the Supervisor proposes the message that opens a Task, it
   asks, with "Send it?" and the fresh-or-keep question (below), whether the messages
   between I1 and R1 are relayed automatically for this Task. Without a yes, every
   message is shown and approved as before.
 - **Progress.** While it runs, the Supervisor reports each relayed message in one line
-  -- what went where, the revision count, what the Reviewer still holds open -- and asks
-  nothing. When the loop ends it asks again, with the next step of the round.
+  -- what went where, the revision count, what the Reviewer still holds open, counted by
+  kind ("R1 holds 2 factual, 3 prose"), whether its findings are new or follow-ups to
+  the last fix, and how much the change (its diff against `main`) and the Handoff grew
+  since the last round -- and asks nothing. When the loop ends it asks again, with the
+  next step of the round.
+- **Convergence** (#459). A loop can fail to converge: in another project the Reviewer
+  found something new in every round, the document under review grew to about three
+  times its size, and the relay went on until you stopped it by hand. The cause was
+  upstream -- the plan was too open, and the Implementer and the Reviewer had found
+  facts the Planner did not have -- and prose is the likely case, since it has no hard
+  check the way a test or a mutant does. So the Supervisor watches each round for the
+  signs, a guide and not a counter: new factual findings in a third revision or later;
+  steady growth of the change itself, its diff against `main` (not of the Handoff, which
+  gains a section each revision by design); factual findings drifting into finer and
+  finer detail; prose findings still arriving after more than two prose rounds. Prose
+  arrives late and new by design (below), so new prose findings alone are no sign. On
+  any of them it stops relaying and proposes a message to the Planner, asked about as
+  any message to a Planner is, saying why the loop looks stuck and pointing at what the
+  Implementer and the Reviewer found. The Planner finds why, revises the plan with what
+  they learned or narrows it, with what "done" means made concrete, and the loop resumes
+  on the revised plan, or the Task is split. The relay resumes only on your word, after
+  the Planner's answer.
+- **The Planner, only for a reason.** Findings that come with a clear fix go from the
+  Reviewer to the Implementer without the Planner. The Supervisor asks the Planner to
+  rule only on the point that needs it: the loop is not converging; a finding changes
+  the Task's scope, such as a bug that predates the Task; a finding conflicts with the
+  plan or an earlier ruling; the Implementer and the Reviewer disagree -- an Objection,
+  which still comes to you to decide, and with it the Supervisor proposes asking the
+  Planner to rule on the point in dispute; a design choice is left open, or either asks
+  for a ruling. That saves a turn and a question in every round. The same holds outside
+  the relay, for a red run's finding too; the Reviewer's acceptance and the green run's
+  notice still go to the Planner, and its confirmation still comes before a merge.
+- **Facts first, prose last.** A Review first settles the facts: correctness, behaviour,
+  tests, and claims that can be checked. Prose -- wording, style and structure -- comes
+  in the last revision, or a few at most, once the facts hold: the Reviewer marks each
+  prose finding `(prose)`, raises none while a factual finding is open, and names what
+  is wrong rather than more to add. The Implementer settles the factual findings first
+  and changes what each finding names and no more; a revision that grows the text beyond
+  its findings is one of the signs above.
 - **Back to asking.** Say so in the Supervisor's terminal, at any time, and from the
   next message on each one is shown and approved as before: when the loop is not
-  converging, or when it is converging on the wrong thing.
+  converging and the Supervisor has not yet seen it, or when it is converging on the
+  wrong thing.
 - **What does not change.** Authenticity is still the path, and that the Supervisor
   writes only what you approved, relays under your standing word, or sends the two
   notices above is still told. It never acts on the contents of an artefact: relaying a
@@ -1229,8 +1275,8 @@ its Handoff in its directory and reports done.
 
 You read the Review; then "Send it to I1: address what holds, object to what does
 not." With the relay on for that Task, S sends that message itself, and each revision
-after it, a line each, until R1 accepts or I1 objects. The round goes on
-until you accept.
+after it, a line each, until R1 accepts, I1 objects, or the loop is not converging
+(section 5). The round goes on until you accept.
 
 **When you accept:**
 

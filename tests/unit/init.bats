@@ -3390,7 +3390,7 @@ effort_of() {
   [[ "$flat" == *'The step is done when the run is green, not at the push.'* ]]
   [[ "$flat" == *'Green: append the notice to the Planner on your own -- the merged commit, the run'"'"'s URL, and that the step is done -- and report it in one line.'* ]]
   [[ "$flat" == *'Like the Reviewer'"'"'s acceptance (above), it goes without asking: it closes a step the user approved, the merge and the push.'* ]]
-  [[ "$flat" == *'A red run is a finding on `main`: propose the message to the Implementer and wait for the user; the Reviewer reviews the revision, and the Planner rules only when the Implementer or the Reviewer asks.'* ]]
+  [[ "$flat" == *'A red run is a finding on `main`: propose the message to the Implementer and wait for the user; the Reviewer reviews the revision, and the Planner rules only for a reason **The relay.** lists (below).'* ]]
   run ! grep -qF 'say so to the Planner then, not at the push' "$sup"
   # the next bullet: the next Task waits for the run
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- The message that opens the next Task for an Implementer or a Reviewer whose previous')" -eq 1 ]
@@ -3400,6 +3400,121 @@ effort_of() {
   [[ "$flat" == *'the merge proposal, every message to a Planner but the Reviewer'"'"'s acceptance and the notice of a green run (above) or to the Gate, the fresh-or-keep question before a new Task.'* ]]
   [[ "$flat" == *'write an instruction the user has not approved here, unless the relay covers it or it is the Reviewer'"'"'s acceptance or the notice of a green run to the Planner;'* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the Supervisor watches the relay for convergence and hands a stuck loop to the Planner, who rules only for a reason; a Review settles facts before prose, and a revision changes no more than its findings name (#459)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" pl="$PROJ/.asb/roles/planner-1.md"
+  local rev="$PROJ/.asb/roles/reviewer-1.md" imp="$PROJ/.asb/roles/implementer-1.md"
+  local relay p r
+  # the Supervisor, in **The relay.**: the loop also ends when it is not converging
+  relay="$(sed -n '/^\*\*The relay\.\*\*/,/^\*\*What you never/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$relay" == *'go without a question, on that word, round after round, until the Reviewer accepts, the Implementer objects, or the loop is not converging (below).'* ]]
+  # the one-line report's two new items
+  [[ "$relay" == *'what the Reviewer still holds open, counted by kind (e.g. "R1 holds 2 factual, 3 prose"),'* ]]
+  [[ "$relay" == *'whether its findings are new or follow-ups to the last fix,'* ]]
+  [[ "$relay" == *'and how much the change (its diff against `main`) and the Handoff grew since the last round (lines, or `git diff --stat` totals) -- and ask nothing.'* ]]
+  # the signs, a guide and not a counter
+  [[ "$relay" == *'- Watch every round for convergence. The signs that the loop is not converging, a guide and not a counter:'* ]]
+  [[ "$relay" == *'- new factual findings in a third revision or later (prose findings do not count);'* ]]
+  [[ "$relay" == *'- steady growth of the change itself, its diff against `main` -- not of the Handoff, which gains a section each revision by design;'* ]]
+  [[ "$relay" == *'- factual findings drifting into finer and finer detail;'* ]]
+  [[ "$relay" == *'- prose findings still arriving after more than two prose rounds.'* ]]
+  # stops relaying, and the message to the Planner
+  [[ "$relay" == *'On any of them, stop relaying.'* ]]
+  [[ "$relay" == *'Propose a message to the Planner, asked about as any message to it is, saying why the loop looks stuck and pointing at what the Implementer and the Reviewer found: the Reviews, the Handoffs, your measurements.'* ]]
+  [[ "$relay" == *"Relaying resumes only on the user's word, after the Planner's answer."* ]]
+  # the Planner stays out otherwise: the reasons list
+  [[ "$relay" == *'- The Planner stays out of the loop otherwise: findings that come with a clear fix go from the Reviewer to the Implementer under the relay, without it.'* ]]
+  [[ "$relay" == *'Ask the Planner to rule only when there is a reason, and only on that point:'* ]]
+  [[ "$relay" == *'- the loop is not converging (above);'* ]]
+  [[ "$relay" == *"- a finding changes the Task's scope, such as a bug that predates the Task;"* ]]
+  [[ "$relay" == *'- a finding conflicts with the plan or an earlier ruling;'* ]]
+  [[ "$relay" == *'- the Implementer and the Reviewer disagree: an Objection goes to the user, as below, and with it propose a message asking the Planner to rule on the point in dispute;'* ]]
+  [[ "$relay" == *'- a design choice is left open, or either of them asks for a ruling.'* ]]
+  [[ "$relay" == *'an Objection (it goes to the user),'* ]]
+  [[ "$relay" == *"This holds outside the relay too, a red run's finding included."* ]]
+  [[ "$relay" == *"The Reviewer's acceptance and the notice of a green run still go to the Planner as above, and its confirmation that the step is ready still comes before a merge."* ]]
+  # one rule, stated once: the red run refers to it
+  [[ "$(tr '\n' ' ' <"$sup" | tr -s ' ')" == *'the Reviewer reviews the revision, and the Planner rules only for a reason **The relay.** lists (below).'* ]]
+  run ! grep -qF 'the Planner rules only when the Implementer' "$sup"
+  # the Planner, in **Protocol.**: asked only for those reasons, and a stuck loop
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$pl" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'rule on deviations and open questions as they come, and when the Reviewer accepts, say so.'* ]]
+  [[ "$p" == *'- S brings you only those: findings that come with a clear fix go from the Reviewer to the Implementer without you.'* ]]
+  [[ "$p" == *'You are asked to rule only on the point that needs it:'* ]]
+  [[ "$p" == *'- the revision loop is not converging (below);'* ]]
+  [[ "$p" == *"- a finding changes the Task's scope, such as a bug that predates the Task;"* ]]
+  [[ "$p" == *'- a finding conflicts with the plan or an earlier ruling;'* ]]
+  [[ "$p" == *'- the Implementer and the Reviewer disagree: an Objection, which the user decides; you rule on the point in dispute when the user sends it;'* ]]
+  [[ "$p" == *'- a design choice is left open, or either of them asks for a ruling.'* ]]
+  [[ "$p" == *'- A loop S hands you as not converging: find why -- most often the plan was too open, or the Implementer and the Reviewer found facts it did not have.'* ]]
+  [[ "$p" == *'Revise the plan with what they learned, or narrow it, and make concrete what "done" means;'* ]]
+  [[ "$p" == *'then either the loop resumes on the revised plan, or the Task is split.'* ]]
+  [[ "$p" == *'Write the result in the Task file, as with any ruling.'* ]]
+  # the Reviewer, in **Protocol.**: facts first, prose last, marked
+  r="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$rev" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$r" == *'- Facts first, prose last. A Review first settles the facts: correctness, behaviour, tests, and claims that can be checked.'* ]]
+  [[ "$r" == *'Prose -- wording, style and structure -- comes in the last revision, or a few at most, once the facts hold.'* ]]
+  [[ "$r" == *'Mark each prose finding `(prose)`, and raise none while a factual finding is open.'* ]]
+  run ! grep -qi 'severity' "$rev" # no severity is defined to put the mark beside
+  [[ "$r" == *'A prose finding names what is wrong, not more to add, so its fix does not grow the text.'* ]]
+  # the Implementer, in **Protocol.**: facts first, and no more than the findings name
+  r="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$imp" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$r" == *'- In a revision, settle the factual findings first, and answer prose findings, marked `(prose)`, in the last revision, or a few at most.'* ]]
+  [[ "$r" == *'Change what each finding names and no more:'* ]]
+  [[ "$r" == *'a revision that grows the text beyond its findings is a sign S watches for, of a loop that is not converging.'* ]]
+  for r in supervisor planner implementer reviewer; do
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
+  done
+}
+
+# shellcheck disable=SC2016 # backquotes are the doc's text, not ours
+@test "docs/roles.md: the Supervisor watches the relay for convergence and hands a stuck loop to the Planner, who rules only for a reason; facts first, prose last (#459)" {
+  local docs
+  docs="$(tr '\n' ' ' <"$(dirname "$ENGINE")/docs/roles.md" | tr -s ' ')"
+  # section 2's table and section 3, the roles
+  [[ "$docs" == *'each with its evidence, facts first and prose last (section 5);'* ]]
+  grep -qF '| **Handoff** | Implementer | Reviewer, you; the Planner, when asked to rule (section 5) |' "$(dirname "$ENGINE")/docs/roles.md"
+  grep -qF '| **Review** | Reviewer | Implementer (through you, or relayed: section 5), you; the Planner, when asked to rule (section 5) |' "$(dirname "$ENGINE")/docs/roles.md"
+  grep -qF '| **Objection** | Implementer | you; the Planner, when you send it (section 5) |' "$(dirname "$ENGINE")/docs/roles.md"
+  [[ "$docs" == *'you decide it, and may first send it to the Planner for a ruling on the point in dispute |'* ]]
+  [[ "$docs" == *'its earlier Measurements; an Objection, when you send it, and the Handoffs and Reviews of a point it is asked to rule on (section 5) |'* ]]
+  grep -qxF '                    (the Planner rules on it when you send it)' "$(dirname "$ENGINE")/docs/roles.md"
+  [[ "$docs" == *"Within a Task's revision loop, rule only on the point the Supervisor brings, for a reason section 5 lists;"* ]]
+  [[ "$docs" == *'A revision settles the facts first, and changes what each finding names and no more (section 5).'* ]]
+  [[ "$docs" == *'A Review settles the facts first; prose findings, marked as such, come last (section 5).'* ]]
+  [[ "$docs" == *'watching the loop for convergence: a loop that is not converging it stops, and proposes handing it to the Planner.'* ]]
+  # section 4, the round
+  [[ "$docs" == *'The Planner stays out of the revision loop unless there is a reason for it to rule -- a loop that is not converging above all (section 5).'* ]]
+  # section 5, the relay: the report, the signs, the stop
+  [[ "$docs" == *'until the Reviewer accepts, the Implementer objects, or the loop is not converging (below).'* ]]
+  [[ "$docs" == *'what the Reviewer still holds open, counted by kind ("R1 holds 2 factual, 3 prose"),'* ]]
+  [[ "$docs" == *'whether its findings are new or follow-ups to the last fix, and how much the change (its diff against `main`) and the Handoff grew since the last round -- and asks nothing.'* ]]
+  [[ "$docs" == *'So the Supervisor watches each round for the signs, a guide and not a counter: new factual findings in a third revision or later;'* ]]
+  [[ "$docs" == *'steady growth of the change itself, its diff against `main` (not of the Handoff, which gains a section each revision by design);'* ]]
+  [[ "$docs" == *'factual findings drifting into finer and finer detail; prose findings still arriving after more than two prose rounds.'* ]]
+  [[ "$docs" == *'Prose arrives late and new by design (below), so new prose findings alone are no sign.'* ]]
+  [[ "$docs" == *'On any of them it stops relaying and proposes a message to the Planner, asked about as any message to a Planner is,'* ]]
+  [[ "$docs" == *'The Planner finds why, revises the plan with what they learned or narrows it, with what "done" means made concrete, and the loop resumes on the revised plan, or the Task is split.'* ]]
+  [[ "$docs" == *"The relay resumes only on your word, after the Planner's answer."* ]]
+  # the Planner, only for a reason
+  [[ "$docs" == *'- **The Planner, only for a reason.** Findings that come with a clear fix go from the Reviewer to the Implementer without the Planner.'* ]]
+  [[ "$docs" == *"The Supervisor asks the Planner to rule only on the point that needs it: the loop is not converging; a finding changes the Task's scope, such as a bug that predates the Task; a finding conflicts with the plan or an earlier ruling;"* ]]
+  [[ "$docs" == *'the Implementer and the Reviewer disagree -- an Objection, which still comes to you to decide, and with it the Supervisor proposes asking the Planner to rule on the point in dispute;'* ]]
+  [[ "$docs" == *'a design choice is left open, or either asks for a ruling.'* ]]
+  [[ "$docs" == *"The same holds outside the relay, for a red run's finding too;"* ]]
+  # facts first, prose last
+  [[ "$docs" == *'- **Facts first, prose last.** A Review first settles the facts: correctness, behaviour, tests, and claims that can be checked.'* ]]
+  [[ "$docs" == *'Prose -- wording, style and structure -- comes in the last revision, or a few at most, once the facts hold:'* ]]
+  [[ "$docs" == *'the Reviewer marks each prose finding `(prose)`, raises none while a factual finding is open, and names what is wrong rather than more to add.'* ]]
+  [[ "$docs" != *'severity'* ]]
+  # section 9's walk-through: the relay's three ends
+  [[ "$docs" == *'until R1 accepts, I1 objects, or the loop is not converging (section 5).'* ]]
+  [[ "$docs" != *'until R1 accepts or I1 objects'* ]]
+  [[ "$docs" == *'The Implementer settles the factual findings first and changes what each finding names and no more;'* ]]
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
