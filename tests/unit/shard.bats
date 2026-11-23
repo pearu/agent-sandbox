@@ -106,11 +106,11 @@ shards() {
   [ "${lines[1]}" = "2: d.bats a.bats " ]
 }
 
-@test "shard: the suites' shards are disjoint and complete, for N = 1..4" {
+@test "shard: the suites' shards are disjoint and complete, for N = 1..6" {
   cd "$REPO_ROOT" || return
   files=(tests/unit/*.bats tests/unit/profile-*/*.bats)
   [ "${#files[@]}" -gt 20 ]
-  for n in 1 2 3 4; do
+  for n in 1 2 3 4 5 6; do
     for ((k = 1; k <= n; k++)); do tests/shard.sh "$k/$n" "${files[@]}"; done >"$BATS_TEST_TMPDIR/all"
     echo "N=$n: $(wc -l <"$BATS_TEST_TMPDIR/all") of ${#files[@]}"
     [ "$(sort "$BATS_TEST_TMPDIR/all" | uniq -d)" = "" ]
@@ -144,18 +144,76 @@ shards() {
   [ "${lines[1]}" = "2: a.bats " ]
 }
 
-@test "shard-times: the table from the stages' timing files: a mean where a file is twice, sorted by file, a name not of the tree (or a file removed) left out" {
+@test "shard-times: the table is a fit, each job's speed out: three jobs of known factors and three files of known weights are recovered (#462)" {
+  # weights argv 10, docs 20, shard 40 (and install 5, in one job only); jobs at 0.5, 1
+  # and 2 times the usual speed, each with two of the three, so every job shares a file
+  # with another. A mean would say 12.5, 15 and 60, and install 2.5. A fourth job, alone, shares no file: its factor is 1, and it moves
+  # no other job's.
+  mkdir -p run/1 run/2 run/3 run/4
+  printf '5.0\ttests/unit/argv.bats\n10.0\ttests/unit/docs.bats\n2.5\ttests/unit/install.bats\n' >run/1/timing-engine-unit.tsv
+  printf '20.0\ttests/unit/docs.bats\n40.0\ttests/unit/shard.bats\n' >run/2/timing-engine-unit.tsv
+  printf '20.0\ttests/unit/argv.bats\n80.0\ttests/unit/shard.bats\n' >run/3/timing-engine-unit.tsv
+  printf '7.0\ttests/unit/helpers.bats\n' >run/4/timing-engine-unit.tsv
+  run --separate-stderr "$REPO_ROOT/scripts/shard-times.sh" run
+  [ "$status" -eq 0 ]
+  echo "$output"
+  [ "$(grep -vc '^#' <<<"$output")" -eq 5 ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 1p)" = $'10.0\ttests/unit/argv.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 2p)" = $'20.0\ttests/unit/docs.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 3p)" = $'7.0\ttests/unit/helpers.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 4p)" = $'5.0\ttests/unit/install.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 5p)" = $'40.0\ttests/unit/shard.bats' ]
+  [ "$(grep '^#' <<<"$output" | tail -1)" = '#   run' ]
+  [ "${#stderr_lines[@]}" -eq 0 ]
+  # --factors: each job's factor, its seconds, and its seconds at the usual speed
+  run --separate-stderr "$REPO_ROOT/scripts/shard-times.sh" --factors run
+  [ "$status" -eq 0 ]
+  echo "$output"
+  [ "${#lines[@]}" -eq 4 ]
+  [ "${lines[0]}" = "0.50"$'\t'"17.5"$'\t'"35.0"$'\t'"$(realpath run/1/timing-engine-unit.tsv)" ]
+  [ "${lines[1]}" = "1.00"$'\t'"60.0"$'\t'"60.0"$'\t'"$(realpath run/2/timing-engine-unit.tsv)" ]
+  [ "${lines[2]}" = "2.00"$'\t'"100.0"$'\t'"50.0"$'\t'"$(realpath run/3/timing-engine-unit.tsv)" ]
+  [ "${lines[3]}" = "1.00"$'\t'"7.0"$'\t'"7.0"$'\t'"$(realpath run/4/timing-engine-unit.tsv)" ]
+}
+
+@test "shard-times: runs of one deal tie no shard to another, and say so on stderr; a run of another deal ties them (#462)" {
+  # every file weighs 10 at the usual speed; run 1's shard 1 ran at half the speed
+  mkdir -p r1/s1 r1/s2 r2/s1 r2/s2 r0/s1 r0/s2
+  printf '20.0\ttests/unit/argv.bats\n20.0\ttests/unit/docs.bats\n' >r1/s1/timing-engine-unit.tsv
+  printf '10.0\ttests/unit/install.bats\n10.0\ttests/unit/shard.bats\n' >r1/s2/timing-engine-unit.tsv
+  printf '10.0\ttests/unit/argv.bats\n10.0\ttests/unit/docs.bats\n' >r2/s1/timing-engine-unit.tsv
+  printf '10.0\ttests/unit/install.bats\n10.0\ttests/unit/shard.bats\n' >r2/s2/timing-engine-unit.tsv
+  run --separate-stderr "$REPO_ROOT/scripts/shard-times.sh" r1 r2
+  [ "$status" -eq 0 ]
+  echo "$output"
+  echo "$stderr"
+  [ "${#stderr_lines[@]}" -eq 1 ]
+  [[ "${stderr_lines[0]}" == "shard-times: the jobs form 2 groups of several that share no file (runs of one deal): "* ]]
+  # a run dealt otherwise ties the shards: the four files weigh alike
+  printf '10.0\ttests/unit/argv.bats\n10.0\ttests/unit/shard.bats\n' >r0/s1/timing-engine-unit.tsv
+  printf '10.0\ttests/unit/docs.bats\n10.0\ttests/unit/install.bats\n' >r0/s2/timing-engine-unit.tsv
+  run --separate-stderr "$REPO_ROOT/scripts/shard-times.sh" r0 r1 r2
+  [ "$status" -eq 0 ]
+  echo "$output"
+  [ "${#stderr_lines[@]}" -eq 0 ]
+  [ "$(grep -v '^#' <<<"$output" | cut -f1 | sort -u)" = 11.2 ]
+}
+
+@test "shard-times: a job that shares no file with another keeps its seconds, a time under 0.05 s as 0.05; sorted by file; a name not of the tree (or a file removed) left out, and the header names the inputs" {
   mkdir -p run/a run/b
-  printf '10.0\ttests/unit/shard.bats\n4.5\ttests/unit/argv.bats\n' >run/a/timing-engine-unit.tsv
-  printf '20.0\ttests/unit/shard.bats\n3.0\tinit.bats\n1.0\ttests/unit/gone.bats\n' >run/b/timing-engine-unit.tsv
+  printf '10.0\ttests/unit/shard.bats\n4.5\ttests/unit/argv.bats\n0.0\ttests/unit/install.bats\n' >run/a/timing-engine-unit.tsv
+  printf '3.0\tinit.bats\n1.0\ttests/unit/gone.bats\n' >run/b/timing-engine-unit.tsv
   printf '7\ttests/unit/docs.bats\n' >other.tsv
   run --separate-stderr "$REPO_ROOT/scripts/shard-times.sh" run other.tsv
   [ "$status" -eq 0 ]
   echo "$output"
-  [ "$(grep -vc '^#' <<<"$output")" -eq 3 ]
+  [ "$(grep -vc '^#' <<<"$output")" -eq 4 ]
   [ "$(grep -v '^#' <<<"$output" | sed -n 1p)" = $'4.5\ttests/unit/argv.bats' ]
   [ "$(grep -v '^#' <<<"$output" | sed -n 2p)" = $'7.0\ttests/unit/docs.bats' ]
-  [ "$(grep -v '^#' <<<"$output" | sed -n 3p)" = $'15.0\ttests/unit/shard.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 3p)" = $'0.1\ttests/unit/install.bats' ]
+  [ "$(grep -v '^#' <<<"$output" | sed -n 4p)" = $'10.0\ttests/unit/shard.bats' ]
+  [ "$(grep '^#' <<<"$output" | tail -2 | head -1)" = '#   run' ]
+  [ "$(grep '^#' <<<"$output" | tail -1)" = '#   other.tsv' ]
   [ "${stderr_lines[0]}" = "shard-times: init.bats: not a .bats file of this tree; left out" ]
   [ "${stderr_lines[1]}" = "shard-times: tests/unit/gone.bats: not a .bats file of this tree; left out" ]
   [ "${#stderr_lines[@]}" -eq 2 ]

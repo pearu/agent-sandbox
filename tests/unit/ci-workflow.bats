@@ -68,6 +68,10 @@ elif field == "tests-artifact":
         w = s.get("with", {})
         if str(s.get("uses", "")).startswith("actions/upload-artifact@") and str(w.get("name", "")).startswith("tests-"):
             print(" ".join(sorted(w["path"].split())))
+elif field == "matrix":
+    # stage k/n, one line per entry of the coverage matrix
+    for e in jobs["coverage"]["strategy"]["matrix"]["include"]:
+        print(f"{e['stage']} {e['k']}/{e['n']}")
 elif field == "merge-if":
     print(jobs["coverage-merge"].get("if", ""))
     print(jobs["coverage-merge"].get("needs", ""))
@@ -98,4 +102,18 @@ PY
   # shellcheck disable=SC2016 # the workflow's text
   [ "${lines[0]}" = '${{ !cancelled() }}' ]
   [ "${lines[1]}" = coverage ]
+}
+
+@test "coverage (#462): engine-unit runs as six shards, k = 1..6 of n = 6, and engine-integration as two" {
+  run cov matrix
+  echo "$output"
+  [ "${#lines[@]}" -eq 8 ]
+  [ "${lines[0]}" = "engine-unit 1/6" ]
+  [ "${lines[1]}" = "engine-unit 2/6" ]
+  [ "${lines[2]}" = "engine-unit 3/6" ]
+  [ "${lines[3]}" = "engine-unit 4/6" ]
+  [ "${lines[4]}" = "engine-unit 5/6" ]
+  [ "${lines[5]}" = "engine-unit 6/6" ]
+  [ "${lines[6]}" = "engine-integration 1/2" ]
+  [ "${lines[7]}" = "engine-integration 2/2" ]
 }
