@@ -19,14 +19,18 @@ export REPO_ROOT ENGINE
 #   env -i HOME="$H/home" PATH="..." "${ENGINE_CMD[@]}" --init roles
 #
 # Normally that is just CMD. Under coverage (AGENT_SANDBOX_KCOV, set by
-# scripts/coverage.sh) it is kcov wrapping CMD, preceded by LD_LIBRARY_PATH=... so that
-# a conda-built kcov finds its libraries: kcov must be the engine's DIRECT parent, INSIDE
+# scripts/coverage.sh) it is kcov wrapping CMD, with AGENT_SANDBOX_KCOV_LIBS as kcov's own
+# LD_LIBRARY_PATH so that a conda-built kcov finds its libraries (the engine does not get
+# it: kcov-exec.sh): kcov must be the engine's DIRECT parent, INSIDE
 # env -i -- env -i severs kcov's collection when kcov is outside it, but it works when
 # kcov is the innermost wrapper. So the words go where the engine's path went, after
 # env's NAME=value list (they start with one); a launch that execs them from a shell
 # execs `env "${ENGINE_CMD[@]}"`. Each call names a fresh kcov dir under
 # $AGENT_SANDBOX_KCOV_DIR, one per launch; coverage.sh merges them. Call it once per
-# launch. A launch that does not go through it is not measured.
+# launch. A launch that does not go through it is not measured. kcov runs inside
+# tests/helpers/kcov-exec.sh, which keeps kcov's own stdout and stderr (its relay, which
+# can hang, and its trace leaks) from the test: the engine writes to the test's
+# descriptors, and kcov's stderr goes to $AGENT_SANDBOX_KCOV_DIR/kcov.log (#462).
 #
 # The engine's Python components (join.py, connect-sync.py) are measured the same way:
 # when AGENT_SANDBOX_TEST_PYTHON is set (coverage_run.py, by scripts/coverage.sh), it
@@ -38,8 +42,11 @@ engine_cmd() {
   [[ -n "${AGENT_SANDBOX_TEST_PYTHON:-}" ]] && pyenv=(AGENT_SANDBOX_TEST_PYTHON="$AGENT_SANDBOX_TEST_PYTHON")
   ENGINE_CMD=(${pyenv[@]+"${pyenv[@]}"} "$cmd")
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || return 0
-  ENGINE_CMD=(${pyenv[@]+"${pyenv[@]}"} ${LD_LIBRARY_PATH:+LD_LIBRARY_PATH="$LD_LIBRARY_PATH"}
-    "$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" --bash-dont-parse-binary-dir "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM" "$cmd")
+  local kx="$REPO_ROOT/tests/helpers/kcov-exec.sh"
+  ENGINE_CMD=(${pyenv[@]+"${pyenv[@]}"}
+    "$kx" "$AGENT_SANDBOX_KCOV_DIR/kcov.log" "${AGENT_SANDBOX_KCOV_LIBS:-}"
+    "$AGENT_SANDBOX_KCOV" --include-path="$ENGINE" --bash-dont-parse-binary-dir "$AGENT_SANDBOX_KCOV_DIR/r.$$.$RANDOM"
+    "$kx" --inner "$cmd")
 }
 
 # python_cmd -- set PYTHON_CMD to the words that run one of the engine's Python

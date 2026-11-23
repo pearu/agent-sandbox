@@ -12,10 +12,12 @@ setup() {
 }
 
 # in_pidns WORDS... -- the engine with WORDS, under a bwrap that is pid 1, the marker unset.
+# bwrap execs its command as a program, so ENGINE_CMD goes through env: under coverage its
+# words start with NAME=value (engine_cmd).
 in_pidns() {
   engine_cmd
   run env -i HOME="$T/home" PATH=/usr/bin:/bin bwrap --dev-bind / / --unshare-user --unshare-pid \
-    --proc /proc --unsetenv AGENT_SANDBOX -- "${ENGINE_CMD[@]}" "$@"
+    --proc /proc --unsetenv AGENT_SANDBOX -- env "${ENGINE_CMD[@]}" "$@"
 }
 
 @test "pid 1 bubblewrap, AGENT_SANDBOX unset: --install, --login and --setup-remote are refused (2)" {

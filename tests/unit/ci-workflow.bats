@@ -43,3 +43,59 @@ PY
   echo "needs:    $needs"
   [ "$needs" = "$expected" ]
 }
+
+# cov FIELD -- a field of the coverage job, as python3 + PyYAML read it
+cov() {
+  python3 - "$WORKFLOW" "$1" <<'PY'
+import sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+steps = jobs["coverage"]["steps"]
+field = sys.argv[2]
+ids = [i for i, s in enumerate(steps) if s.get("id") == "tests"]
+t = ids[0] if len(ids) == 1 else 10**6
+after = steps[t + 1:]
+if field == "tests-run":
+    print(steps[t]["run"] if t < len(steps) else "")
+elif field == "tests-shell":
+    print(steps[t].get("shell", "") if t < len(steps) else "")
+elif field == "after-ifs":
+    # every step after the tests runs when they failed, and not when they were skipped
+    print("\n".join(str(s.get("if", "")) for s in after))
+elif field == "summary":
+    print("\n".join(s["run"] for s in after if "GITHUB_STEP_SUMMARY" in s.get("run", "")))
+elif field == "tests-artifact":
+    for s in after:
+        w = s.get("with", {})
+        if str(s.get("uses", "")).startswith("actions/upload-artifact@") and str(w.get("name", "")).startswith("tests-"):
+            print(" ".join(sorted(w["path"].split())))
+elif field == "merge-if":
+    print(jobs["coverage-merge"].get("if", ""))
+    print(jobs["coverage-merge"].get("needs", ""))
+PY
+}
+
+@test "coverage (#462): a test that fails fails its step; the steps after it still run, the failed tests go in the summary" {
+  run cov tests-run
+  [[ "$output" == *"scripts/coverage.sh \${{ matrix.stage }}"* ]]
+  [[ "$output" != *"|| true"* ]]
+  # it pipes into tee: only `shell: bash` (bash -eo pipefail) fails the step when the
+  # tests fail; with no shell, GitHub runs `bash -e {0}`, and the step takes tee's status
+  run cov tests-shell
+  [ "$output" = bash ]
+  run cov after-ifs
+  echo "$output"
+  [ "${#lines[@]}" -ge 4 ]
+  [ "$(grep -cvxF "\${{ !cancelled() && steps.tests.outcome != 'skipped' }}" <<<"$output")" -eq 0 ]
+  run cov summary
+  # shellcheck disable=SC2016 # the workflow's text
+  [ "$output" = 'micromamba run -n agent-sandbox scripts/coverage.sh failures >>"$GITHUB_STEP_SUMMARY"' ]
+}
+
+@test "coverage (#462): each shard uploads its TAP and timing files, and coverage-merge runs whatever the shards' results" {
+  run cov tests-artifact
+  [ "$output" = "coverage-out/*.tap coverage-out/engine-runs/*/kcov.log coverage-out/timing-*.tsv" ]
+  run cov merge-if
+  # shellcheck disable=SC2016 # the workflow's text
+  [ "${lines[0]}" = '${{ !cancelled() }}' ]
+  [ "${lines[1]}" = coverage ]
+}
