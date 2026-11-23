@@ -77,8 +77,9 @@ serve_start() {
   read -r ME _ <"$SB/serve"
 }
 
-# turn N -- write the inbox, and wait until the loop has run N turns and is waiting again
-# (its output's waiting line, or the result's text, after the turn's record)
+# turn N TEXT -- write the inbox, and wait until the loop has run N turns and its output
+# holds TEXT: its waiting line, which comes once the turn is over, or the result's text,
+# which comes before the context file's update (settled waits for that)
 turn() {
   local i
   echo "message $1" >>"$PROJ/inbox.md"
@@ -88,6 +89,37 @@ turn() {
   done
   cat "$H/out"
   return 1
+}
+
+# settled -- wait (up to 20 s) until the role's session file holds the first turn's
+# session, the id of its --session-id. The loop prints the turn's text from inside
+# profile_serve_result, before that hook updates the context file, so the text alone is
+# no sign that the update is over; the loop writes the session file after the hook has
+# returned (a new session whose turn ended with 0). From here the context file is as the
+# turn left it: updated, or left alone for good.
+settled() {
+  local i id s=""
+  id="$(sed -n '1s/.* --session-id \([^ ]*\) .*/\1/p' "$H/turns")"
+  if [[ -z "$id" ]]; then
+    cat "$H/turns"
+    return 1
+  fi
+  for ((i = 0; i < 400; i++)); do
+    { IFS= read -r s <"$PROJ/.asb/coord/worker/session"; } 2>/dev/null || :
+    [[ "$s" == "$id" ]] && return 0
+    sleep 0.05
+  done
+  cat "$H/out"
+  return 1
+}
+
+# ended -- TERM the loop, as teardown does, and wait for the launch to end: the loop
+# notes a TERM and ends between turns, so the turn's iteration has run to its end, the
+# role's messages included
+ended() {
+  kill -TERM "$ME"
+  wait "$SERVE_PID"
+  ME=""
 }
 
 # messages ERE -- wait (up to 20 s) for a line of the role's messages that matches ERE:
@@ -115,12 +147,14 @@ result() {
   echo 0 >"$H/rc"
   serve_start
   turn 1 "Done: the Handoff is written."
+  settled
   [[ "$(sed -n 1p "$H/turns")" == *" -p --session-id "*" --permission-mode bypassPermissions --output-format json Read your inbox." ]]
   run ! grep -qF '"result"' "$H/out" # the text, not the JSON
   local l
   IFS= read -r l <"$C"
   [ "${l% at=*}" = "level=ok tokens=50000 window=1000000 stop=985000 left=935000 used=5% turn=? maxturn=? session=s1" ]
   [ "$(cat "$C.level")" = ok ]
+  ended
   [ ! -e "$PROJ/.asb/coord/worker/messages.md" ]
 }
 
@@ -134,6 +168,7 @@ result() {
   echo 0 >"$H/rc"
   serve_start
   turn 1 "Done."
+  settled
   [ "$(cat "$C.level")" = plan ] # 500000 of the stop 985000, 50.7 %: plan at 50 %, ok at the default 60 %
 }
 
@@ -161,6 +196,7 @@ result() {
   echo 0 >"$H/rc"
   serve_start
   turn 1 "Done."
+  settled
   [ ! -e "$C" ]
   [ ! -e "$C.level" ]
 }
@@ -178,6 +214,7 @@ result() {
   echo 0 >"$H/rc"
   serve_start
   turn 1 "Done."
+  settled
   [ "$(cat "$H/elsewhere/context")" = "level=? tokens=50000 window=? stop=? left=? used=? turn=? maxturn=? session=s1 at=x" ]
   [ ! -e "$H/elsewhere/context.level" ]
 }
