@@ -107,6 +107,16 @@ stopped() {
   wait "$1" || STOPPED=$?
 }
 
+# ended -- TERM the loop (the pid its record names) and wait for --serve to end. The loop
+# notes a TERM and ends between turns, so the iteration of a turn that has returned has
+# run to its end, the line it adds to the role's messages included.
+ended() {
+  local me
+  read -r me _ <"$SB/serve"
+  kill -TERM "$me"
+  stopped "$SERVE_PID"
+}
+
 status_of() { # --status of the role, in $output
   engine_cmd
   run bash -c 'cd "$1" && shift && exec "$@"' _ "$W" env -i HOME="$IHOME" PATH="$I/bin:/usr/bin:/bin" \
@@ -219,6 +229,11 @@ status_of() { # --status of the role, in $output
   printf '## 2\nagain\n' >>"$W/inbox.md"
   turns 2
   [[ "$(sed -n 2p "$W/turns")" == "-p --session-id "* ]]
+  # the second turn has returned (it made the session) and its iteration has ended: only
+  # then is a missing second line not one still to come
+  recorded
+  ended
+  [ "$STOPPED" -eq 0 ]
   [ "$(grep -c '^turn failed' "$W/.asb/coord/worker/messages.md")" -eq 1 ]
 }
 

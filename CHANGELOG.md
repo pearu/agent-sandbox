@@ -1291,6 +1291,63 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **CI's coverage shards hid their failed tests, and could hang (#462).** The coverage
+  jobs passed whatever their tests did: on c30147f shard 1 printed `FAILED: 12` and
+  shard 2 `FAILED: 8`, both green, and nobody could see which tests they were. One
+  run hung until it was cancelled. Three causes, all in the test harness, none in the
+  engine:
+  - kcov v43 relays the traced engine's stdout through a pipe of its own, and drains it
+    only between trace lines. One write bigger than the pipe (`--help`, `--status`)
+    blocked the test for good: 11 tests here, where pipes are 8 KiB.
+  - kcov writes the continuation lines of a multi-line trace record to its own stderr,
+    which was the test's output: 23 tests saw `]* ]]` lines.
+  - Under `--preset native` the argv carries kcov's per-launch `BASH_ENV`.
+
+  Now kcov runs inside `tests/helpers/kcov-exec.sh`, which gives the engine the test's
+  stdout and stderr and keeps kcov's own from the test. One test compares argvs under
+  `--preset native`, and skips that comparison under kcov, saying why.
+  - A test that fails under kcov fails its coverage job. That job is not in `ci-ok`'s
+    needs, so it shows red without blocking a merge.
+  - The `not ok` lines go in the job's step summary (`scripts/coverage.sh failures`),
+    and each shard uploads its `.tap`, its timing file and kcov's stderr log.
+  - A test now fails after 600 s instead of hanging (`COVERAGE_TEST_TIMEOUT`).
+  - `coverage-merge` runs whatever the shards' results were.
+  - Measured on 16 cores: the unit stage under kcov took 4478 s with 37 failures, and
+    now takes 376 s with none of kcov's. Engine coverage is 70.74% (70.17% before).
+  - A failed test's `.tap` has the output of its last `run`
+    (`--print-output-on-failure`).
+
+  Once seen, the runner's coverage jobs showed four more failures, all in the harness:
+  - `scripts/coverage.sh` set `LD_LIBRARY_PATH` to the conda environment's libraries,
+    so that kcov finds them, and the engine and its tools got it too. The system `curl`
+    then loaded conda's libcurl and said `no version information available` in the
+    output of four `--install` and `--login` tests. Now only kcov gets it
+    (`AGENT_SANDBOX_KCOV_LIBS`), and the engine gets the caller's `LD_LIBRARY_PATH`
+    back.
+  - `tests/integration/host-only.bats` gave `bwrap` the engine's command words, which
+    under coverage start with a `NAME=value`. `bwrap` can't exec that, so they now go
+    through `env`.
+  - `tests/unit/coverage.bats` inherited CI's `COVERAGE_SHARD`, and its setup now
+    unsets it.
+  - `tests/integration/roles-restart.bats` skips under kcov, saying why.
+    `asb --roles` leaves a tmux server and a watcher running, and both hold kcov's
+    trace pipe, so kcov returns only once they end. The old wrapper hung there too.
+
+- **`tests/shard.sh` weighs a test file by its time, not its number of tests (#462).**
+  - The times are in `tests/shard-times.tsv`, measured under kcov and refreshed by
+    `scripts/shard-times.sh`.
+  - A file the table doesn't list weighs its tests times the table's median rate.
+  - Ties go by name under `LC_ALL=C`, the same in every locale.
+  - `init.bats` alone is 37% of the unit tests' time under kcov, so its shard stays
+    the slowest until it is split (#462's second part). The predicted slowest shard
+    drops 18% (coverage) and 21% (unit).
+  - **Two bugs this found in `scripts/coverage.sh`:**
+    - Its `timing-<stage>.tsv` named each file as bats' JUnit report does: relative to
+      the first file's directory, or absolute. So no table could have matched the
+      paths `tests/shard.sh` is given.
+    - Its "slowest tests" list was always empty under bats 1.14, which writes
+      `# in N ms`.
+
 - **`--serve` wrote its files in the role's directory through a second open of a temp
   name (#456).** The loop writes the role's session id, its `alive` file and the
   `turn failed` lines of its `messages.md` in `.asb/coord/ROLE/`, which the role's

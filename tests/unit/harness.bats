@@ -20,7 +20,9 @@ setup() { load "$BATS_TEST_DIRNAME/../helpers/common"; }
 @test "negative assertion that should fail" { run ! true; }
 @test "negative assertion that should pass" { run ! false; }
 BATS
-  run bats "$t"
+  # without scripts/coverage.sh's per-test timeout: bats 1.14 waits out a failed test's
+  # countdown when it runs one test at a time, 600 s here under kcov (#462)
+  run env -u BATS_TEST_TIMEOUT bats "$t"
   [ "$status" -ne 0 ]
   [[ "$output" == *"not ok 1 negative assertion that should fail"* ]]
   [[ "$output" == *"ok 2 negative assertion that should pass"* ]]

@@ -14,6 +14,13 @@
 # the final merge takes every directory under engine-parts/ as well. Merging merges
 # gives the same coverage as one merge (measured: 77.41% either way).
 #   scripts/coverage.sh addon               just the addon
+#   scripts/coverage.sh failures            the tests that failed in the stages run, as
+#                                           Markdown (CI's step summary)
+#
+# A test that fails under kcov fails its stage (#462), once the stage has collected its
+# coverage: CI's coverage jobs are informational (not in ci-ok's needs), so it shows
+# red without blocking a merge. A test that only tracing breaks (timing) skips under
+# kcov (AGENT_SANDBOX_KCOV), saying why.
 #
 # Each stage is its own command so that CI can time it as a step. The suites run as one
 # pool of tests (see timed_bats) with `bats --timing`: every stage writes each file's
@@ -99,19 +106,41 @@ timed_bats() {
   rm -rf "$rep"
   mkdir -p "$rep"
   local t_all=$SECONDS rc=0
-  bats --timing ${pool[@]+"${pool[@]}"} --report-formatter junit --output "$rep" "$@" >"$OUT/$stage.tap" 2>&1 || rc=1
-  python3 - "$rep/report.xml" >"$OUT/timing-$stage.tsv" <<'PY' || : >"$OUT/timing-$stage.tsv"
-import sys, xml.etree.ElementTree as ET
+  # A test that hangs fails after COVERAGE_TEST_TIMEOUT seconds (empty: no limit) instead
+  # of holding the job for hours (#462: kcov's stdout relay hung tests until
+  # tests/helpers/kcov-exec.sh). 600 s is far above the slowest test under kcov (77 s on
+  # 16 cores, ~2x that expected on a 4-vCPU runner) and far below a runner's job limit
+  # (6 h). bats 1.14 leaves a failed test's countdown running to its end: harmless under
+  # --jobs, but a one-at-a-time run waits it out after each failure -- so a test that
+  # runs a bats of its own runs it with `env -u BATS_TEST_TIMEOUT` (harness.bats).
+  BATS_TEST_TIMEOUT="${COVERAGE_TEST_TIMEOUT-600}" bats --timing --print-output-on-failure ${pool[@]+"${pool[@]}"} --report-formatter junit --output "$rep" "$@" >"$OUT/$stage.tap" 2>&1 || rc=1
+  # The report names a file relative to the first file's directory (profile-claude/x.bats
+  # for tests/unit/profile-claude/x.bats); the .tsv names it as it was given, the path
+  # tests/shard.sh is given, so scripts/shard-times.sh can make its table from it.
+  python3 - "$rep/report.xml" "$@" >"$OUT/timing-$stage.tsv" <<'PY' || : >"$OUT/timing-$stage.tsv"
+import os, sys, xml.etree.ElementTree as ET
+given = sys.argv[2:]
+base = os.path.dirname(given[0]) if given else ""
 for s in ET.parse(sys.argv[1]).getroot().iter("testsuite"):
-    print(f"{float(s.get('time', 0)):.1f}\t{s.get('name')}")
+    name = s.get("name")
+    # relative to the first file's directory, or (a file elsewhere) as bats was given it
+    cands = [os.path.normpath(os.path.join(base, name)), os.path.relpath(name)]
+    path = next((c for c in cands if c in given), name)
+    print(f"{float(s.get('time', 0)):.1f}\t{path}")
 PY
   echo "== $stage: $((SECONDS - t_all)) s wall, $(awk -F'\t' '{s += $1} END {printf "%.0f", s}' "$OUT/timing-$stage.tsv") s of tests, $# files, $jobs tests at a time =="
   echo "   slowest files:"
   sort -rn "$OUT/timing-$stage.tsv" | head -8 | awk -F'\t' '{printf "   %8.1f s  %s\n", $1, $2}'
   echo "   slowest tests:"
-  sed -n 's/^\(not \)\{0,1\}ok [0-9]* \(.*\) in \([0-9]*\)ms$/\3\t\2/p' "$OUT/$stage.tap" \
+  # `# in N ms` from bats 1.10 (environment.yml's), `in Nms` before it
+  sed -nE 's/^(not )?ok [0-9]+ (.*) (# in ([0-9]+) ms|in ([0-9]+)ms)$/\4\5\t\2/p' "$OUT/$stage.tap" \
     | sort -rn | head -8 | awk -F'\t' '{printf "   %8.1f s  %s\n", $1 / 1000, substr($2, 1, 90)}'
-  grep -c '^not ok' "$OUT/$stage.tap" | awk '$1 > 0 {print "   FAILED: " $1 " test(s); see the .tap file"}'
+  local failed
+  failed="$(grep -c '^not ok' "$OUT/$stage.tap" || true)"
+  if ((failed > 0)); then
+    echo "   FAILED: $failed test(s); the .tap file has their output:"
+    grep '^not ok' "$OUT/$stage.tap" | sed 's/^/   /'
+  fi
   return "$rc"
 }
 
@@ -140,8 +169,10 @@ EOF
 }
 
 # run_engine_suite STAGE DIR -- one suite directory under kcov, into its own run dir.
+# Returns 1 if a test failed (#462: CI's coverage job then fails, with the failed tests
+# in its step summary), 2 if a tool is missing.
 run_engine_suite() {
-  local stage="$1" dir="$2"
+  local stage="$1" dir="$2" rc=0
   need_kcov || return 2
   local covdir="$OUT/engine-runs/$stage" k
   # the layer's shared suites and each profile's own, tests/<layer>/profile-<name>/
@@ -162,8 +193,11 @@ run_engine_suite() {
   # env -i in the test harness severs kcov's collection when kcov is outside it, so
   # each engine launch wraps itself with kcov as its INNERMOST parent (see run_engine
   # in tests/helpers/common.bash) and writes a per-launch data dir here; the merge
-  # stage combines them. LD_LIBRARY_PATH lets a conda-built kcov resolve its libraries
-  # under env -i.
+  # stage combines them. AGENT_SANDBOX_KCOV_LIBS is kcov's own LD_LIBRARY_PATH, so that a
+  # conda-built kcov resolves its libraries under env -i; only kcov gets it
+  # (tests/helpers/kcov-exec.sh), not the tests nor the engine: the system's tools they run
+  # would load the conda environment's libraries (curl: "no version information
+  # available", #469's CI run).
   local kcov_bin
   kcov_bin="$(command -v kcov)"
   # The Python components run through coverage.py wherever they run (the engine's
@@ -175,13 +209,14 @@ run_engine_suite() {
   mkdir -p "$covdir/py"
   AGENT_SANDBOX_KCOV="$kcov_bin" AGENT_SANDBOX_KCOV_DIR="$covdir" \
     AGENT_SANDBOX_TEST_PYTHON="$(command -v python3) $PWD/tests/helpers/coverage_run.py $covdir/py $OUT/coveragerc" \
-    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-${CONDA_PREFIX:+$CONDA_PREFIX/lib}}" \
-    timed_bats "$stage" "${files[@]}" || true
+    AGENT_SANDBOX_KCOV_LIBS="${LD_LIBRARY_PATH:-${CONDA_PREFIX:+$CONDA_PREFIX/lib}}" \
+    timed_bats "$stage" "${files[@]}" || rc=$?
   shopt -s nullglob
   local runs=("$covdir"/r.*) pys=("$covdir"/py/.coverage.*.dump)
   shopt -u nullglob
   echo "   kcov runs collected: ${#runs[@]}"
   echo "   coverage.py data files collected: ${#pys[@]}"
+  return "$rc"
 }
 
 run_engine_merge() {
@@ -261,25 +296,62 @@ PY
     && echo "   xml:  $OUT/components-coverage.xml"
 }
 
+# run_engine -- both stages and the merge; a failed test fails it, once all three ran
 run_engine() {
+  local rc=0 r s
   rm -rf "$OUT/engine-runs"
-  run_engine_suite engine-unit tests/unit || return $?
-  run_engine_suite engine-integration tests/integration || return $?
-  run_engine_merge
+  for s in unit integration; do
+    run_engine_suite "engine-$s" "tests/$s" || {
+      r=$?
+      ((r == 1)) || return "$r"
+      rc=1
+    }
+  done
+  run_engine_merge || return $?
+  return "$rc"
 }
 
+# run_failures -- the tests that failed in the stages run here ($OUT/*.tap), as Markdown
+# for CI's step summary; nothing when none did.
+run_failures() {
+  local t n
+  shopt -s nullglob
+  for t in "$OUT"/*.tap; do
+    n="$(grep -c '^not ok' "$t" || true)"
+    ((n > 0)) || continue
+    printf '### %s: %s test(s) failed\n\n```\n' "$(basename -- "$t" .tap)" "$n"
+    grep '^not ok' "$t"
+    printf '```\n\n'
+  done
+  shopt -u nullglob
+}
+
+# run_all -- the engine, then the addon. The addon's coverage is measured whatever the
+# engine's did; a failed test, or a failed addon, fails the run, and an engine that
+# can't run here (no kcov: 2) doesn't.
+run_all() {
+  local rc=0 r
+  run_engine || {
+    r=$?
+    ((r == 2)) || rc=$r
+  }
+  run_addon || rc=$?
+  return "$rc"
+}
+
+# Sourced (tests/unit/coverage.bats), it only defines the functions.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 case "$which" in
-  all)
-    run_engine || true
-    run_addon
-    ;;
+  all) run_all ;;
   engine) run_engine ;;
   engine-unit) run_engine_suite engine-unit tests/unit ;;
   engine-integration) run_engine_suite engine-integration tests/integration ;;
   engine-merge) run_engine_merge ;;
   addon) run_addon ;;
+  failures) run_failures ;;
   *)
-    echo "usage: scripts/coverage.sh [all|engine|engine-unit|engine-integration|engine-merge|addon]" >&2
+    echo "usage: scripts/coverage.sh [all|engine|engine-unit|engine-integration|engine-merge|addon|failures]" >&2
     exit 2
     ;;
 esac

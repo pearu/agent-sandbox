@@ -83,6 +83,10 @@ lines() {
 }
 
 @test "a restart marker relaunches a role of asb --roles under the policy approved since it started, resumed, and goes (#416)" {
+  # kcov reads its trace pipe until every process holding it has ended, and the tmux server
+  # and the __roles-resets watcher that `asb --roles` leaves running hold it: under kcov
+  # `asb --roles` returns only once they end, which this test waits for it to do first
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || skip "under kcov, asb --roles returns only once the tmux server and the watcher it starts have ended: they hold kcov's trace pipe (#469)"
   approve '[agent]' 'command = probe' '[env]' 'SHARED'
   run asb --roles a
   [ "$status" -eq 0 ]

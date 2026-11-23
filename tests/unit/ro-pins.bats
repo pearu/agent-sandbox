@@ -946,6 +946,7 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   [ "$A" = "$B" ]
   both --connect './b/ = own' --connect './d/ = read-write' claude --version # own in the root: nothing above
   [ "$A" = "$B" ]
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || skip "under kcov, preset native passes the launch's environment into the sandbox, and kcov's BASH_ENV names a directory of each launch's own: the two argvs differ there (#462)"
   TEST_PRESET='' both --preset native --connect './a/b/f.md = read-only' claude --version
   [ "$A" = "$B" ]
 }

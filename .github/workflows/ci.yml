@@ -36,8 +36,8 @@ jobs:
           AGENT_SANDBOX_CHECK_TESTS: 0
         run: micromamba run -n agent-sandbox scripts/check.sh
 
-  # The unit suites, as shards of about a minute each (tests/shard.sh deals the files out
-  # by their number of tests; within a shard they run in parallel).
+  # The unit suites, as shards (tests/shard.sh deals the files out by their time under
+  # kcov, tests/shard-times.tsv; within a shard they run in parallel).
   unit:
     strategy:
       fail-fast: false
@@ -230,6 +230,11 @@ jobs:
   # packaged), into an environment cached under its own key so that a later run finds it
   # built. The integration stage needs bwrap/pasta. Needs the CODECOV_TOKEN repo secret;
   # forks (no secret) skip the upload, not the run.
+  # A test that fails under kcov fails its shard's job (#462), after the shard has merged
+  # and uploaded its coverage: the failed tests go in the job's step summary, and each
+  # shard's TAP and timing files in its tests-* artifact. Coverage is not in ci-ok's
+  # needs, so a red shard blocks no merge, and coverage-merge runs whatever the shards'
+  # results were.
   coverage:
     strategy:
       fail-fast: false
@@ -261,20 +266,43 @@ jobs:
       - name: Build kcov (already there when the environment came from the cache)
         run: micromamba run -n agent-sandbox scripts/install-kcov.sh
       - name: "Coverage: ${{ matrix.stage }}, shard ${{ matrix.k }}/${{ matrix.n }}"
+        id: tests
+        # `shell: bash` runs it under `set -o pipefail` too, so a failed test fails the step
+        # through the tee; a step with no shell runs `bash -e {0}`, which takes tee's status
+        shell: bash
         env:
           COVERAGE_SHARD: ${{ matrix.k }}/${{ matrix.n }}
         run: micromamba run -n agent-sandbox scripts/coverage.sh ${{ matrix.stage }} | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The tests that failed under kcov, in the step summary
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        run: micromamba run -n agent-sandbox scripts/coverage.sh failures >>"$GITHUB_STEP_SUMMARY"
       - name: Merge this shard's runs
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         run: micromamba run -n agent-sandbox scripts/coverage.sh engine-merge
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         with:
           name: cov-${{ matrix.stage }}-${{ matrix.k }}
           path: coverage-out/engine
           retention-days: 1
           if-no-files-found: ignore
+      # each test's TAP line (its time, and a failure's output), each file's time
+      # (scripts/shard-times.sh makes tests/shard-times.tsv from these) and kcov's own
+      # stderr (tests/helpers/kcov-exec.sh)
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        with:
+          name: tests-${{ matrix.stage }}-${{ matrix.k }}
+          path: |
+            coverage-out/*.tap
+            coverage-out/timing-*.tsv
+            coverage-out/engine-runs/*/kcov.log
+          retention-days: 14
+          if-no-files-found: ignore
 
   coverage-merge:
     needs: coverage
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
