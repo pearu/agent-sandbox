@@ -960,11 +960,11 @@ STUB
   local id="" i
   for ((i = 0; i < ${#JOINV[@]}; i++)); do [[ "${JOINV[i]}" == --session-id ]] && id="${JOINV[i + 1]}"; done
   [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
-  [[ " ${JOINV[*]} " == *"/claude -p --session-id $id --permission-mode bypassPermissions You are asked "* ]]
+  [[ " ${JOINV[*]} " == *"/claude -p --session-id $id --permission-mode bypassPermissions --output-format json You are asked "* ]]
   # (the dump is one argument per line, and the prompt has several)
   local j
   j="$(cat "$H/join")"
-  [[ "$j" == *$'\n'"bypassPermissions"$'\n'"You are asked to summarize the work of this role"* ]]
+  [[ "$j" == *$'\n'"bypassPermissions"$'\n'"--output-format"$'\n'"json"$'\n'"You are asked to summarize the work of this role"* ]]
   [[ "$j" == *"the .jsonl files under "*"$H/home/.claude/projects/"*"This session is $id; its own $id.jsonl is not one of them"* ]]
   [[ "$j" == *"/run/agent-sandbox/summary/line: one line"*"/run/agent-sandbox/summary/description.md: "*"Reply with the line only." ]]
   # its transcript, its directory and its history record are gone; the role's own stay
@@ -1014,6 +1014,26 @@ STUB
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'fresh' has no conversation to summarize"* ]]
   [ -z "$(auto_compact_calls)" ]
+}
+
+@test "--summarize's turn, a session of its own, is handed no context file: the role's stays as its own sessions left it (#456)" {
+  summ_setup
+  mkdir -p "$PROJ/.asb/coord/default"
+  printf '[briefing]\ncontext = .asb/coord/{role}/context\n' >"$PROJ/.agent-sandbox"
+  engine_cmd
+  (cd "$PROJ" && printf 'y\n' | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  # the turn's join: its briefing settings copied out first, then the summarizing turn
+  cat >"$H/bin/summ-join-copy" <<'STUB'
+import glob, os, runpy, shutil, sys
+for f in glob.glob(os.path.join(os.environ["AGENT_SANDBOX_SESSION_BASE"], "*", "briefing", "settings.json")):
+    shutil.copy(f, os.environ["JOIN_COPY"])
+runpy.run_path(os.environ["SUMM_JOIN"], run_name="__main__")
+STUB
+  run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join-copy" SUMM_JOIN="$H/bin/summ-join" JOIN_COPY="$H/settings.json" SUMM_LINE=line -- asb --summarize claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'default' summarized:"* ]]
+  grep -qF 'state-hook.sh Stop' "$H/settings.json" # (the turn's settings, copied)
+  run ! grep -qF AGENT_SANDBOX_CONTEXT "$H/settings.json"
 }
 
 @test "--summarize's clean-up never writes the prompt history through a link a sandbox left beside it: the old fixed temp name history.jsonl.asb-summarize pointing outside is left as it is, its target unchanged (#314)" {

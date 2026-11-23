@@ -883,9 +883,12 @@ watch = .asb/coord/to/planner-2.md
 prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-1]
@@ -912,9 +915,12 @@ watch = .asb/coord/to/implementer-2.md
 prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-1]
@@ -925,9 +931,12 @@ watch = .asb/coord/to/reviewer-1.md
 prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -946,9 +955,12 @@ Bash(conda env update:*)
 Bash(micromamba env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
+context = .asb/coord/supervisor/context # how full its context is: S reads it, and watches .level
 [agent:supervisor]
 effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -977,9 +989,12 @@ watch = .asb/coord/to/gate.md
 [briefing:gate]
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
+context = .asb/coord/gate/context # how full its context is: S reads it, and watches .level
 [agent:gate]
 effort = low                      # executes an approved message as written
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- setup: builds the environment, once per project, again after main moves ----
 #   asb --role setup claude
@@ -1028,10 +1043,66 @@ has read with a summary nobody chose, sometimes mid-Task. With it off, a role wh
 context fills stops at its next request ("Context limit reached"), and you type
 `/compact` or `/clear` at its terminal. A served role's turn there ends with "Prompt is
 too long" on the loop's output and exit status 1, which the loop appends to the role's
-messages as `turn failed (exit 1)`, the reason not said; every turn after it ends the
-same, until a reset marker gives the role a new session. `auto-compact = idle-off` keeps
-compaction at the limit and drops only the idle one; it takes effect at the role's next
-launch.
+messages as `turn stopped at the context limit (blocking_limit)` (the claude profile
+reads the reason from the turn's result; #456); every turn after it ends the same, until
+a reset marker gives the role a new session. `auto-compact = idle-off` keeps compaction
+at the limit and drops only the idle one; it takes effect at the role's next launch.
+
+### The context file
+
+Each role's `[briefing:...]` section also names its context file,
+`context = .asb/coord/{role}/context` ([config.md](config.md#the-file), `[briefing]`;
+#456), and its `[agent:...]` section the two levels, `context-plan = 60%` and
+`context-rescue = 25000` ([config.md](config.md#the-context-levels)). The claude
+profile keeps the file current, one line, rewritten (by a rename) only when a value
+changes:
+
+```
+level=plan tokens=612000 window=1000000 stop=977000 left=365000 used=62% turn=+18000 maxturn=41000 session=ID at=2026-11-23T10:00:00Z
+```
+
+- `tokens`: the context, the last response's input, cache-creation and cache-read
+  tokens, what Claude Code counts against its limit.
+- `window`: the model's context window.
+- `stop`: where Claude Code refuses a request with auto-compact off, the window less
+  min(the model's max output tokens, 20000) less 3000 (Claude Code 2.1.311; 977000 of
+  1M, 177000 of 200K). `left` is `stop - tokens`, and `used` is `tokens` as a percent of
+  the stop, not of the window, so the same number means the same room on every model.
+- `turn`: the growth over the last turn, from its prompt to its end; `maxturn`: the
+  largest of this session. A session's first turn has no start: `turn=?`.
+- `session`: the session the numbers are of, `.asb/coord/<role>/session` for a served
+  role; a new one resets `turn` and `maxturn`.
+- `level`: `ok`; `plan` once `used` reaches `context-plan`; `rescue` once `left` is at
+  or below `context-rescue` -- for a served role, or twice its `maxturn` when that is
+  larger, since one turn can cross the margin; `stopped` at the stop. `?` until the
+  window is known.
+- A field whose value is not known is `?`.
+
+`.asb/coord/<role>/context.level` beside it holds the level alone, rewritten only when
+the level changes, so a watcher on it wakes a few times per Task, not at every turn
+(`inbox-wait` takes a file that does not exist yet: a role before its first response).
+
+Who writes it:
+- **At a terminal**, the status line, every second, from what Claude Code gives it; the
+  `Stop` hook adds `turn` and `maxturn` at the end of each turn. It reads the turn's
+  last response from the transcript, which Claude Code writes about 0.1 s after the hook
+  starts (2.1.311), so the hook waits for it, at most 2 s.
+- **A served role** has no status line: its `Stop` hook writes the line, and after each
+  turn the `--serve` loop, on the host, adds the window and the model's max output from
+  the turn's JSON result (`profile_serve_result`). Its turns are joins of one keeper and
+  share its `/tmp`, where the hook keeps the tokens at each turn's prompt.
+- **A `--summarize` turn writes none:** it is a session of its own, not the role's.
+- **A turn refused at the stop runs no hook** (neither `Stop` nor `StopFailure`; 2.1.311).
+  A served role's loop reads the refusal from the turn's result and writes
+  `level=stopped`. **At a terminal the file then still shows `rescue`, with `left` near
+  0**, and the refusal is Claude Code's own "Context limit reached" in the role's pane.
+
+The file goes only where the role writes through to the project (`read-write`): the
+launch says so otherwise, and names none. In a glob section (`[briefing:planner-*]`)
+`--init` leaves the `{role}` of the `context` line for the launch, which reads it as
+each instance's name; every other line has it substituted as before. A
+`[briefing:<glob>]` section briefs its roles from their purpose files, whatever keys it
+holds. The setup role has no context file: it has no coord directory.
 
 Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
 change.

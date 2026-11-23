@@ -43,9 +43,12 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- implementers: a clone each --------------------------------------------------
 [connect:implementer-{n}]
@@ -64,9 +67,12 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- reviewers: the common block already hides every history -----------------------
 [connect:reviewer-{n}]
@@ -78,9 +84,12 @@ watch = .asb/coord/to/{role}.md
 prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
 [connect:supervisor]
@@ -100,9 +109,12 @@ Bash(git merge:*)
 #@own Bash(micromamba env update:*)
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:supervisor]
 effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
 #   its terminal stays open: it wakes on its inbox, as every role does
@@ -132,9 +144,12 @@ watch = .asb/coord/to/{role}.md
 [briefing:gate]
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
+context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:gate]
 effort = low                      # executes an approved message as written
 auto-compact = off                # at its context limit a turn stops: /compact or /clear
+context-plan = 60%                # the context file says plan from here: of the stop, not the window
+context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 #@own # ---- setup: builds the environment, once per project, again after main moves ----
 #@own #   asb --role setup claude

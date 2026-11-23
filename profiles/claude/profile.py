@@ -7,6 +7,7 @@ Code's own JSON, one subcommand each.
     profile.py mark-trust FILE --project DIR
     profile.py merge-settings --ours JSON --user VALUE --out FILE
     profile.py forget-profile FILE
+    profile.py serve-result FILE
 
 Beside profile.sh, which keeps the hooks. Each subcommand does one thing and exits
 nonzero, saying why on stderr, when it cannot; what a launch then does -- refuse, or
@@ -225,6 +226,50 @@ def merge_settings(ours, user, out):
     return 0
 
 
+def serve_result(path):
+    """A turn of --serve, from its output FILE (`-p --output-format json`, #456): a
+    first line of what the result says of the context -- `window=N` (the main model's
+    contextWindow: of the models in modelUsage, the one with the most input), `maxout=N`
+    (its maxOutputTokens) and `reason=WORD` (terminal_reason), each only when the result
+    has it -- then the result's text, what a text-format turn would have printed. Exits
+    1 when FILE is not such a result, which the hook then prints as it is."""
+    with open(path, "rb") as fh:
+        raw = fh.read(16 * 1024 * 1024)
+    try:
+        res = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        print("serve-result: not a JSON result", file=sys.stderr)
+        return 1
+    if not isinstance(res, dict) or "result" not in res and "terminal_reason" not in res:
+        print("serve-result: not a JSON result", file=sys.stderr)
+        return 1
+
+    def num(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10**15 else None
+
+    words, best, most = [], None, -1
+    usage = res.get("modelUsage")
+    if isinstance(usage, dict):
+        for model in usage.values():
+            if not isinstance(model, dict):
+                continue
+            n = sum(num(model.get(k)) or 0 for k in ("inputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"))
+            if num(model.get("contextWindow")) and n > most:
+                best, most = model, n
+    if best is not None:
+        words.append(f"window={best['contextWindow']}")
+        if num(best.get("maxOutputTokens")):
+            words.append(f"maxout={best['maxOutputTokens']}")
+    reason = res.get("terminal_reason")
+    if isinstance(reason, str) and reason.replace("_", "").isalnum() and len(reason) <= 64:
+        words.append(f"reason={reason}")
+    text = res.get("result")
+    print(" ".join(words))
+    if isinstance(text, str) and text:
+        print(text)
+    return 0
+
+
 def _opts(argv, names):
     """`--name VALUE` pairs among ARGV, and the positional rest."""
     opts, rest, i = {}, [], 0
@@ -255,6 +300,8 @@ def main(argv):
         if cmd in ("trust-recorded", "mark-trust") and len(rest) == 1 and "project" in opts:
             fn = trust_recorded if cmd == "trust-recorded" else mark_trust
             return fn(rest[0], opts["project"])
+        if cmd == "serve-result" and len(rest) == 1 and not opts:
+            return serve_result(rest[0])
         if cmd == "forget-profile" and len(rest) == 1 and not opts:
             return forget_profile(rest[0])
         if cmd == "merge-settings" and not rest and {"ours", "user", "out"} <= opts.keys():

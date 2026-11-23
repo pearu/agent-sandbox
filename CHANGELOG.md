@@ -153,6 +153,28 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **A role's context size, where the Supervisor reads it (#456).** S handed a role Task
+  after Task with nothing telling it how full the role's context was, and with
+  `auto-compact = off` the first sign was a stopped role. Now `[briefing] context = PATH`
+  (`{role}` its name) names a file the role's agent's profile keeps current, one line:
+  `level=plan tokens=612000 window=1000000 stop=977000 left=365000 used=62% turn=+18000
+  maxturn=41000 session=ID at=...`, rewritten only when a value changes, and `PATH.level`
+  beside it, the level alone, for a watcher. `used` is a percent of the stop, where the
+  agent refuses a request (claude: the window less min(max output, 20000) less 3000;
+  88.5 % of a 200K window), not of the window. The levels are per role:
+  `[agent] context-plan = 60%` and `context-rescue = 25000` (tokens left), the
+  defaults; a served role's rescue level is at least twice its largest turn. The claude
+  profile writes the file from its status line and its `Stop` hook (which waits for the
+  turn's own record: Claude Code writes it to the transcript after the hook starts),
+  and the `--serve` loop, through a new optional profile hook `profile_serve_result`,
+  adds the window from the turn's JSON result, and writes "turn stopped at the context
+  limit (blocking_limit)" to the role's messages instead of `turn failed (exit 1)`. A
+  file the role cannot write through to the project is said at launch, and not named.
+  `asb --init roles` writes `context = .asb/coord/{role}/context` and the two levels for
+  each role but setup; a file from before gets them as `--apply` lines. In a glob
+  section `--init` now leaves the `context` line's `{role}` for the launch
+  ([config.md](docs/config.md#the-context-levels), [roles.md](docs/roles.md#the-context-file)).
+
 - **The host restarts a role in an `asb --roles` pane after a policy change you
   approved, once the role says it is ready (#416).** A role's policy and purpose file
   are fixed when its keeper starts: after an `asb --apply` (or a hand edit and
@@ -1238,6 +1260,16 @@ names are gone; there are no aliases for removed names before 1.0.
   is new enough) and again after the action (nothing to rebuild).
 
 ### Fixed
+
+- **`--serve` wrote its files in the role's directory through a second open of a temp
+  name (#456).** The loop writes the role's session id, its `alive` file and the
+  `turn failed` lines of its `messages.md` in `.asb/coord/ROLE/`, which the role's
+  sandbox writes, by `mktemp` then `>"$tmp"`, on the host. A process left running in
+  that sandbox could put a link at the temp file's name the moment it appeared and have
+  the host write through it, to any file of yours: 40 of 40 in a probe. It is now one
+  `O_EXCL` open under a name no one knows before it exists (noclobber, `mktemp -u`):
+  0 of 40. Pre-existing since `--serve` first wrote its session id (#277); the new
+  context file's host-side write (#456) had the same pattern, and is fixed the same way.
 
 - **The keeper's supervisor keeps a wake that comes outside its wait** (#441). A join's
   exit, `--shutdown` and a reset wake it with one USR1, and its handler was `:`, which

@@ -110,7 +110,9 @@ sbx_launch_has() {
     '[connect:implementer-2]' '[connect:reviewer-1]' '[connect:supervisor]' '[net:supervisor]' '[briefing:supervisor]'; do
     has_section "$s" "$df"
   done
-  run ! grep -qF '{' "$df"                     # every placeholder substituted
+  # every placeholder substituted, but a glob section's {role}, the launch's (#456)
+  run grep -F '{' "$df"
+  [ "$output" = "$(printf 'context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level\n%.0s' 1 2 3)" ]
   grep -qx '# \[conda:implementer-1\].*' "$df" # no --env: the conda sections commented out
   grep -qx '\.asb/impl/2/ = read-write.*' "$df"
   # purpose files, one per instance, named and handled
@@ -3178,12 +3180,59 @@ effort_of() {
   done
 }
 
+@test "the roles model: each role's [briefing:...] section names its context file, .asb/coord/{role}/context, and its [agent:...] section the two levels after auto-compact (#456); a file from before gets them per role as --apply lines" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" h
+  for h in '[briefing:planner-*]' '[briefing:implementer-*]' '[briefing:reviewer-*]'; do
+    sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" | grep -q '^context = \.asb/coord/{role}/context  *# '
+  done
+  sed -n '/^\[briefing:supervisor\]/,/^\[/p' "$df" | grep -q '^context = \.asb/coord/supervisor/context  *# '
+  sed -n '/^\[briefing:gate\]/,/^\[/p' "$df" | grep -q '^context = \.asb/coord/gate/context  *# '
+  [ "$(grep -c '^context = ' "$df")" -eq 5 ] # once per role pattern; not the setup role's, which has no coord directory
+  for h in '[agent:planner-*]' '[agent:implementer-*]' '[agent:reviewer-*]' '[agent:supervisor]' '[agent:gate]'; do
+    sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" | grep -A2 '^auto-compact = ' >"$H/lv"
+    sed -n 2p "$H/lv" | grep -q '^context-plan = 60%  *# '
+    sed -n 3p "$H/lv" | grep -q '^context-rescue = 25000  *# '
+  done
+  [ "$(grep -c '^context-plan = ' "$df")" -eq 5 ]
+  [ "$(grep -c '^context-rescue = ' "$df")" -eq 5 ]
+  run_review
+  [[ "$output" == *"[briefing:planner-*] context, for the roles planner-*: their agent's profile keeps .asb/coord/{role}/context"* ]]
+  [[ "$output" != *"not a value"* ]]
+  # a file from before #456: the lines, per role, as --apply lines; the file unchanged
+  sed -i '/^context = /d; /^context-plan = /d; /^context-rescue = /d' "$df"
+  cp "$df" "$H/before"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  for h in planner-\* implementer-\* reviewer-\*; do
+    grep -qxF "    agent-sandbox --apply '[briefing:$h]' 'context = .asb/coord/{role}/context'" <<<"$output"
+  done
+  grep -qxF "    agent-sandbox --apply '[briefing:supervisor]' 'context = .asb/coord/supervisor/context'" <<<"$output"
+  grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'context = .asb/coord/gate/context'" <<<"$output"
+  for h in planner-\* implementer-\* reviewer-\* supervisor gate; do
+    grep -qxF "    agent-sandbox --apply '[agent:$h]' 'context-plan = 60%' 'context-rescue = 25000'" <<<"$output"
+  done
+}
+
+@test "--init keeps {role} for the launch in a glob section's context line only: another key's {role} there is substituted as before (#456)" {
+  cp -rL "$(dirname "$ENGINE")/models" "$H/models"
+  sed -i 's|^start = \.asb/start/planner\.md |start = .asb/start/{role}.md |' "$H/models/roles/agent-sandbox"
+  grep -q '^start = \.asb/start/{role}\.md ' "$H/models/roles/agent-sandbox"
+  init AGENT_SANDBOX_MODELS_DIR="$H/models" -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  sed -n '/^\[briefing:planner-\*\]/,/^\[/p' "$PROJ/.agent-sandbox" >"$H/sec"
+  grep -q '^start = \.asb/start/planner\.md ' "$H/sec"
+  grep -q '^context = \.asb/coord/{role}/context ' "$H/sec"
+}
+
 @test "the roles model on a file written before the effort levels: --init adds the [agent:...] sections it lacks, and an existing [agent:ROLE] section without effort gets its --apply line" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox"
   # a file from before: no [agent:...] section; the gate's agent named by the user
-  sed -i '/^\[agent:/,/^auto-compact = /d' "$df"
+  sed -i '/^\[agent:/,/^auto-compact = /d; /^context-plan = /d; /^context-rescue = /d' "$df"
   run ! grep -q '^effort = ' "$df"
   printf '[agent:gate]\ncommand = claude --model x\n' >>"$df"
   cp "$df" "$H/before"
@@ -3192,7 +3241,7 @@ effort_of() {
   [[ "$output" == *"added to .agent-sandbox: [agent:planner-*] [agent:implementer-*] [agent:reviewer-*] [agent:supervisor] [agent:setup]"* ]]
   cmp <(head -n "$(wc -l <"$H/before")" "$df") "$H/before" # nothing before it changed
   [ "$(effort_of '[agent:supervisor]' "$df")" = medium ]
-  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low' 'auto-compact = off'" <<<"$output"
+  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low' 'auto-compact = off' 'context-plan = 60%' 'context-rescue = 25000'" <<<"$output"
 }
 
 @test "the roles model with a role's effort = - (no level, the agent's own): a second --init leaves the file byte-identical, the section being there, and offers no --apply line for it" {

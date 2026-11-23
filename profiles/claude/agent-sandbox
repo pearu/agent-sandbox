@@ -43,8 +43,11 @@ status = agents
 # Write tool to a role whose [permissions] allow only its watcher (measured, 2.1.300).
 # Claude Code refuses it as uid 0, in a user namespace too (measured, 2.1.300: the
 # sandbox runs as your uid), and under --restricted (its --help).
-serve-new = -p --session-id {id} --permission-mode bypassPermissions
-serve-resume = -p --resume {id} --permission-mode bypassPermissions
+# The result as JSON (#456): the engine hands it to profile_serve_result (profile.sh),
+# which prints its text, as the text format would, and takes from it the model's context
+# window and why the turn ended -- a -p turn's hooks have neither.
+serve-new = -p --session-id {id} --permission-mode bypassPermissions --output-format json
+serve-resume = -p --resume {id} --permission-mode bypassPermissions --output-format json
 # What `asb --roles` types into the pane of a role whose agent is claude, then Enter, when
 # the Supervisor writes the role's reset marker (#329): a fresh start; a role of another
 # agent gets its own profile's (#355). /clear gives a new session id and keeps the

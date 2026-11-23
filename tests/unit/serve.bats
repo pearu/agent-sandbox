@@ -261,8 +261,8 @@ CHECK
   local -a profile_channel_create=() profile_channel_login=()
   profile_slug() { printf 'slug'; }
   _as_profile_dotfile "$REPO_ROOT/profiles/claude/agent-sandbox"
-  [ "${profile_serve_new[*]}" = "-p --session-id {id} --permission-mode bypassPermissions" ]
-  [ "${profile_serve_resume[*]}" = "-p --resume {id} --permission-mode bypassPermissions" ]
+  [ "${profile_serve_new[*]}" = "-p --session-id {id} --permission-mode bypassPermissions --output-format json" ]
+  [ "${profile_serve_resume[*]}" = "-p --resume {id} --permission-mode bypassPermissions --output-format json" ]
 }
 
 # a join stub that also copies this join's briefing settings out, before the engine
@@ -336,6 +336,29 @@ CHECK
   _as_serve_put "$PROJ/.asb/coord/r" session "01234567-89ab-cdef-0123-456789abcdef"$'\n'
   [ "$(cat "$H/victim")" = keep ]
   [ ! -L "$PROJ/.asb/coord/r/session" ]
+  [ "$(cat "$PROJ/.asb/coord/r/session")" = 01234567-89ab-cdef-0123-456789abcdef ]
+}
+
+@test "the loop never writes through a link put at its temp file's name once that name exists: the role's directory is its sandbox's to write (#456, R1's N1)" {
+  source_engine
+  mkdir -p "$PROJ/.asb/coord/r" "$H/stub"
+  printf 'keep\n' >"$H/victim"
+  # a mktemp that puts a link to the victim at the name it gives, as a process watching
+  # the directory (inotify) can the moment a file of that name appears
+  cat >"$H/stub/mktemp" <<STUB
+#!/bin/bash
+t="\$($(command -v mktemp) "\$@")" || exit
+ln -sfn "$H/victim" "\$t.l" && mv -fT "\$t.l" "\$t"
+printf '%s\n' "\$t"
+STUB
+  chmod +x "$H/stub/mktemp"
+  local w
+  for w in session alive messages.md; do
+    PATH="$H/stub:$PATH" _as_serve_put "$PROJ/.asb/coord/r" "$w" "turn failed"$'\n' || :
+    [ "$(cat "$H/victim")" = keep ]
+  done
+  # and it still writes when nothing interferes
+  _as_serve_put "$PROJ/.asb/coord/r" session "01234567-89ab-cdef-0123-456789abcdef"$'\n'
   [ "$(cat "$PROJ/.asb/coord/r/session")" = 01234567-89ab-cdef-0123-456789abcdef ]
 }
 

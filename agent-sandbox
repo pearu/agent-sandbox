@@ -5511,7 +5511,7 @@ PY
 # _as_role_summarize [AGENT ARGS...] -- `asb --role R --summarize CMD` (#314): one
 # headless turn of a new session in R's sandbox, under R's policy, the way a turn of
 # --serve runs -- the engine again with AGENT_SANDBOX_SERVE_TURN set (no [briefing]
-# start, no watcher), the profile's serve-new arguments with a fresh id, and the
+# start, no watcher; set to `summarize`, no context file either), the profile's serve-new arguments with a fresh id, and the
 # engine's prompt (_as_summarize_prompt). The turn writes R's summary line and
 # <store>/summary/description.md; then the engine deletes the turn's own transcript
 # (_as_summarize_forget), whatever the turn did. For a stopped role only: a running one
@@ -5558,7 +5558,7 @@ _as_role_summarize() {
   # In the foreground, so a ^C reaches the turn too; the trap only defers this shell's
   # own end until the turn's transcript is gone.
   trap 'sig=1' INT TERM HUP
-  AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_summ_flags[@]}" --role "$role" "${_cmd_word:-$profile_command}" \
+  AGENT_SANDBOX_SERVE_TURN=summarize "$engine" "${_summ_flags[@]}" --role "$role" "${_cmd_word:-$profile_command}" \
     "$@" "${targ[@]}" "$prompt" </dev/null >"$out" || rc=$?
   _as_summarize_forget "$sb" "$id" || _as_msg "role '$role': could not delete the summarizing turn's transcript ($id.jsonl)"
   trap - INT TERM HUP
@@ -5569,7 +5569,14 @@ _as_role_summarize() {
   fi
   res="$(_as_summary_line_since "$sb/summary/line" "$start")" || res=""
   if ((rc)); then
-    _as_msg "role '$role': the summarizing turn ended with status $rc"
+    # What it printed: through the profile's profile_serve_result when it has one (#456),
+    # its result's text and why it ended; else as it is.
+    local profile_serve_end=""
+    if declare -F profile_serve_result >/dev/null; then
+      profile_serve_result "$out" >"$out.text" || :
+      mv -f -- "$out.text" "$out"
+    fi
+    _as_msg "role '$role': the summarizing turn ended with status $rc${profile_serve_end:+, $profile_serve_end}"
     sed 's/^/  /' -- "$out" >&2
     rm -f -- "$out"
     return 1
@@ -5751,10 +5758,16 @@ _as_serve_foreign() {
 }
 
 # _as_serve_put DIR NAME TEXT -- write TEXT to DIR/NAME by a rename from a new file in
-# DIR: whatever is at DIR/NAME, a link included, is replaced, never written through.
+# DIR: whatever is at DIR/NAME, a link included, is replaced, never written through. The
+# new file is made and written in one open, O_EXCL (noclobber, under a name no one knows
+# before it exists), never opened again by its name (#456, R1's N1): DIR is the role's
+# coord directory, which its sandbox writes, and a process left running there could put
+# a link at a temp file's name the moment it appears (inotify), before a second open --
+# `mktemp`, then `>"$tmp"` -- wrote through it, from the host, to any file of yours.
 _as_serve_put() {
-  local tmp
-  tmp="$(mktemp -- "$1/.$2.XXXXXX")" || return 1
+  local - tmp
+  set -C
+  tmp="$(mktemp -u -- "$1/.$2.XXXXXXXXXX")" || return 1
   if ! { printf '%s' "$3" >"$tmp" && mv -f -- "$tmp" "$1/$2"; }; then
     rm -f -- "$tmp"
     return 1
@@ -5788,6 +5801,20 @@ _as_serve_reset() {
       exit 1
     }
   )
+}
+
+# _as_serve_context PROJECT -- may the loop hand the role's context file (_context_path,
+# #456) to profile_serve_result, which writes it on the host? When there is one, and its
+# directory, resolved, is where it is named: inside PROJECT, with no link on the way (a
+# sandbox with the project read-write could have planted one, to have the host write
+# elsewhere). The profile writes it by a rename in that directory, never through a link.
+_as_serve_context() {
+  local proj dir
+  [[ -n "${_context_path:-}" ]] || return 1
+  proj="$(realpath -e -- "$1")" || return 1
+  dir="${_context_path%/*}"
+  # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
+  [[ "$dir" == "$proj"/* && ! -L "$dir" ]] && ([[ "$(realpath -e -- "$dir" 2>/dev/null)" == "$dir" ]])
 }
 
 # _as_serve_failed DIR LINE -- append LINE to the role's DIR/messages.md, where the
@@ -5891,9 +5918,10 @@ _as_serve_check() {
 _as_serve() {
   local sb proj="$_proj" role="$_role" rdir sessf alivef seenf watch prompt
   local id="" sig last seen="" text hpid tpid rc i new pending=0 said="" fpid me mestart fresh=0
-  local _serve_stop=0 why="" parent _pp_parent
+  local _serve_stop=0 why="" parent _pp_parent outf profile_serve_end ctxh
   local -a cmdw=("$_cmd_word" "$@") targ=() turnw=()
   sb="$(_as_sandbox_dir)"
+  outf="$sb/serve.out"
   watch="$proj/$_serve_watch" prompt="$proj/$_serve_prompt"
   rdir="$proj/.asb/coord/$role" sessf="$rdir/session" alivef="$rdir/alive" seenf="$sb/serve.seen"
   mkdir -p -- "$sb" "$rdir" || return 1
@@ -5960,6 +5988,20 @@ _as_serve() {
     fi
     return 0
   }
+  # _sv_output -- the turn's output, printed: through the profile's profile_serve_result
+  # when it has one (#456), which sets profile_serve_end and, given the role's context
+  # file (_as_serve_context), updates it from the turn's result; else as it is.
+  _sv_output() {
+    profile_serve_end="" ctxh=""
+    if declare -F profile_serve_result >/dev/null; then
+      _as_serve_context "$proj" && ctxh="$_context_path"
+      profile_serve_result "$outf" "$ctxh" || :
+    else
+      cat -- "$outf" 2>/dev/null || :
+    fi
+    rm -f -- "$outf"
+    return 0
+  }
   for ((i = 0; i < 1200; i++)); do
     _as_keeper_live "$sb" && break
     _sv_live || break
@@ -6021,7 +6063,8 @@ _as_serve() {
     fi
     for i in "${turnw[@]}"; do targ+=("${i//\{id\}/$id}"); done
     # A turn has its own prompt, so no [briefing] start (AGENT_SANDBOX_SERVE_TURN).
-    (AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_serve_flags[@]}" "${cmdw[@]}" "${targ[@]}" "$text") </dev/null &
+    # Its output to a file of the loop's own, read once it ends (_sv_output).
+    (AGENT_SANDBOX_SERVE_TURN=1 "$engine" "${_serve_flags[@]}" "${cmdw[@]}" "${targ[@]}" "$text") </dev/null >"$outf" &
     tpid=$!
     while kill -0 "$tpid" 2>/dev/null && _sv_live; do
       _sv_alive
@@ -6031,6 +6074,7 @@ _as_serve() {
     [[ -z "$why" ]] || break
     rc=0
     wait "$tpid" || rc=$?
+    _sv_output
     # A turn killed because the launch is ending is not a failed turn: --shutdown marks
     # the keeper before it kills anything, and a launch that ended otherwise is not live.
     if ((rc != 0)) && { [[ -e "$sb/keeper/force" || -e "$sb/keeper/stop" ]] || ! _as_keeper_live "$sb"; }; then
@@ -6043,8 +6087,8 @@ _as_serve() {
       id="" # no session to resume: the next turn starts one
     fi
     if ((rc != 0)); then
-      _as_msg "role '$role': the turn ended with status $rc; waiting for the next change"
-      _as_serve_failed "$rdir" "turn failed (exit $rc) for a change to $_serve_watch at $(date -Iseconds); the loop waits for the next message"
+      _as_msg "role '$role': the turn ended with status $rc${profile_serve_end:+, $profile_serve_end}; waiting for the next change"
+      _as_serve_failed "$rdir" "turn ${profile_serve_end:-failed (exit $rc)} for a change to $_serve_watch at $(date -Iseconds); the loop waits for the next message"
     fi
     # Written to during the turn: that is the next turn.
     sig="$(stat -c '%y %i %s' -- "$watch" 2>/dev/null || true)"
@@ -6070,7 +6114,7 @@ _as_serve() {
   [[ -z "${tpid:-}" ]] || wait "$tpid" 2>/dev/null || true
   wait "$hpid" 2>/dev/null || true
   rm -f -- "$sb/serve"
-  unset -f _sv_live _sv_alive _sv_reset
+  unset -f _sv_live _sv_alive _sv_reset _sv_output
   [[ "$why" == start ]] && return 1
   return 0
 }
@@ -7582,6 +7626,141 @@ _as_briefing_start_notes() {
   return 0
 }
 
+# ----- the context file (`[briefing] context = PATH`, #456) -------------------------
+# How full a role's context is, where the Supervisor reads it: `context = PATH` in
+# `[briefing]` or `[briefing:<glob>]` names a file in the project (relative to it, no
+# `..`; `{role}` is the role's name), which the role's agent's profile keeps current --
+# the claude profile from its status line and its Stop hook, and after each turn of
+# --serve from the turn's result (profile_serve_result) -- with PATH.level beside it,
+# the level alone. The engine only names it: the path, inside (the project's own), is
+# handed to the profile as _context_path, by dynamic scope, with the role's levels
+# (`[agent] context-plan` and `context-rescue`: _context_plan, _context_rescue). It must
+# be in a directory the role writes through to the project (read-write); else the
+# launch says so and no file is named. No line, no file. Information, as `start` is: the
+# review says it, and a file the agent may write widens nothing it could not already.
+
+# _as_briefing_context_resolve ROLE -- set _context_as to the context file for ROLE, as
+# written with `{role}` substituted, or empty: the latest `context` line whose section
+# matches.
+_as_briefing_context_resolve() {
+  local e g
+  _context_as=""
+  for e in ${_df_briefing_context[@]+"${_df_briefing_context[@]}"}; do
+    g="${e%%$'\t'*}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$g" == "*" || "$1" == $g ]] && _context_as="${e#*$'\t'}"
+  done
+  _context_as="${_context_as//\{role\}/$1}"
+  return 0
+}
+
+# _as_briefing_context_notes -- the review's lines for the `context` keys
+# (_as_trust_notes): information; a path outside the project is said, and a launch names
+# no file for it.
+_as_briefing_context_notes() {
+  local e g v sec n
+  for e in ${_df_briefing_context[@]+"${_df_briefing_context[@]}"}; do
+    g="${e%%$'\t'*}" v="${e#*$'\t'}"
+    if [[ "$g" == "*" ]]; then sec="[briefing]" n="every role"; else sec="[briefing:$g]" n="the roles $g"; fi
+    if _as_serve_path_ok "$v"; then
+      _as_msg ".agent-sandbox: $sec context, for $n: their agent's profile keeps $v (and $v.level) current with how full the role's context is, where it can write. It widens nothing"
+    else
+      _as_msg ".agent-sandbox: $sec context '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no context file"
+    fi
+  done
+  return 0
+}
+
+# _as_context_mode PATH -- print the mode the sandbox has PATH (absolute) in: that of the
+# innermost path declaration at or above it, else the project's own; read-write
+# everywhere under native.
+_as_context_mode() {
+  local p best="" mode
+  if _as_preset_is_native; then
+    printf 'read-write'
+    return 0
+  fi
+  mode="${_connect_project_mode:-read-write}"
+  for p in ${_connect_paths[@]+"${_connect_paths[@]}"}; do
+    [[ "$1" == "$p" || "$1" == "$p"/* ]] || continue
+    if [[ -z "$best" || "$p" == "$best"/* ]]; then
+      best="$p" mode="${_connect_mode[$p]:-$mode}"
+    fi
+  done
+  printf '%s' "$mode"
+}
+
+# _as_context_plan_ok VALUE -- a context-plan: a whole percent, 1 to 100, written with %.
+_as_context_plan_ok() { [[ "$1" =~ ^[1-9][0-9]?%$|^100%$ ]]; }
+
+# _as_context_rescue_ok VALUE -- a context-rescue: a number of tokens, 1 to 15 digits.
+_as_context_rescue_ok() { [[ "$1" =~ ^[1-9][0-9]{0,14}$ ]]; }
+
+# The levels a role gets with no line (#456): plan at 60% of the stop, rescue at 25000
+# tokens left. First values: the context files of real roles say what fits.
+_as_context_plan_default() { printf '60%%'; }
+_as_context_rescue_default() { printf '25000'; }
+
+# _as_context_levels_resolve ROLE [LINE...] -- the levels of ROLE: sets _context_plan
+# and _context_rescue (as written, `-` for none, the default with no line) and
+# _context_plan_from, _context_rescue_from (`dotfile:[agent:<glob>]`, `dotfile:[agent]`,
+# or `default`), from an approved dot-file's [agent] lines by _as_dotfile_pick,
+# [agent:<glob>] over [agent], as for effort.
+_as_context_levels_resolve() {
+  local role="$1" _dp_val _dp_from
+  shift
+  _as_dotfile_pick "$role" context-plan "$@"
+  _context_plan="$_dp_val" _context_plan_from="$_dp_from"
+  [[ -n "$_context_plan" ]] || _context_plan="$(_as_context_plan_default)" _context_plan_from=default
+  _as_dotfile_pick "$role" context-rescue "$@"
+  _context_rescue="$_dp_val" _context_rescue_from="$_dp_from"
+  [[ -n "$_context_rescue" ]] || _context_rescue="$(_as_context_rescue_default)" _context_rescue_from=default
+  return 0
+}
+
+# _as_context_where FROM -- where a level came from, for a message.
+_as_context_where() {
+  case "$1" in
+    default) printf 'the default' ;;
+    *) printf '.agent-sandbox %s' "${1#dotfile:}" ;;
+  esac
+}
+
+# _as_context_resolve ROLE -- for a launch of ROLE: set _context_as (the `context` line's
+# path, as resolved), _context_path (the file, absolute, where the role may write it;
+# empty when it may not or there is none), _context_why (why not, for a message), and
+# the levels (_as_context_levels_resolve). Status 2 for a level that is not a value: a
+# launch refuses it, as the review does.
+_as_context_resolve() {
+  local _context_plan_from="" _context_rescue_from="" dir mode
+  _context_path="" _context_why="" _context_plan="" _context_rescue=""
+  _as_briefing_context_resolve "$1"
+  [[ -n "$_context_as" ]] || return 0
+  _as_context_levels_resolve "$1" ${_df_agent[@]+"${_df_agent[@]}"}
+  if [[ "$_context_plan" != - ]] && ! _as_context_plan_ok "$_context_plan"; then
+    _as_msg "role '$1': $(_as_context_where "$_context_plan_from") context-plan = $_context_plan is not a value (a percent of the stop, 1% to 100%, or -); refusing the launch"
+    return 2
+  fi
+  if [[ "$_context_rescue" != - ]] && ! _as_context_rescue_ok "$_context_rescue"; then
+    _as_msg "role '$1': $(_as_context_where "$_context_rescue_from") context-rescue = $_context_rescue is not a value (tokens left before the stop, a number, or -); refusing the launch"
+    return 2
+  fi
+  _context_plan="${_context_plan%\%}"
+  if ! _as_serve_path_ok "$_context_as"; then
+    _context_why="[briefing] context '$_context_as' is not a path in the project (relative to it, no '..')"
+    return 0
+  fi
+  dir="$(realpath -m -s -- "$_proj/$_context_as")"
+  dir="${dir%/*}"
+  mode="$(_as_context_mode "$dir")"
+  if [[ "$mode" != read-write ]]; then
+    _context_why="[briefing] context '$_context_as' is in ${dir#"$_proj"/}/, which this role has $mode, not read-write"
+    return 0
+  fi
+  _context_path="$(realpath -m -s -- "$_proj/$_context_as")"
+  return 0
+}
+
 # _as_briefing_files PROJECT [unread] -- every purpose file the parsed dot-file can
 # name, for any role: each pattern with `{role}` read as the section's glob, expanded
 # against the files there now; and every addendum a role can read (#353) beside them:
@@ -7637,7 +7816,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8112,7 +8291,7 @@ _as_links_ask() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8187,7 +8366,7 @@ _as_profile_dotfile() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -8655,7 +8834,7 @@ _as_agent_flag_split() {
 _as_dotfile_agent() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8671,7 +8850,7 @@ _as_dotfile_agent() {
 _as_dotfile_role_globs() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8687,7 +8866,7 @@ _as_dotfile_role_globs() {
 _as_dotfile_role_envpath() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -9949,7 +10128,8 @@ _as_base_entry_binds() {
 # said in its own sentence: it turns off the agent's own prompts, so the sandbox's
 # policy is all that is left. An effort level, for which roles, or `-`, none; one that is
 # not a level (_as_effort_ok) fails it, as a launch refuses the file. The same for an
-# auto-compact value (_as_auto_compact_ok).
+# auto-compact value (_as_auto_compact_ok), and the context levels (#456,
+# _as_context_plan_ok, _as_context_rescue_ok).
 _as_agent_notes() {
   local e g k v n sect b i what flag bad=0
   local -a w=()
@@ -9989,6 +10169,22 @@ _as_agent_notes() {
       fi
       continue
     fi
+    if [[ "$k" == context-plan || "$k" == context-rescue ]]; then
+      if [[ "$v" == - ]]; then
+        _as_msg ".agent-sandbox: $sect $k = -: $n never reach the context level ${k#context-}, whatever a weaker line or the default says"
+      elif [[ "$k" == context-plan ]] && _as_context_plan_ok "$v"; then
+        _as_msg ".agent-sandbox: $sect context-plan = $v: the context file of $n says plan once $v of the stop is used"
+      elif [[ "$k" == context-rescue ]] && _as_context_rescue_ok "$v"; then
+        _as_msg ".agent-sandbox: $sect context-rescue = $v: the context file of $n says rescue once $v tokens or fewer are left before the stop"
+      elif [[ "$k" == context-plan ]]; then
+        _as_msg ".agent-sandbox: $sect context-plan = $v: not a value -- a percent of the stop, 1% to 100%; a launch refuses it"
+        bad=1
+      else
+        _as_msg ".agent-sandbox: $sect context-rescue = $v: not a value -- tokens left before the stop, a number; a launch refuses it"
+        bad=1
+      fi
+      continue
+    fi
     [[ "$k" == command ]] || continue
     read -r -a w <<<"$v"
     b="${w[0]##*/}"
@@ -10018,11 +10214,11 @@ _as_agent_notes() {
   done
   # Among suffixed sections the later line wins (_as_dotfile_pick), so a role a section
   # names exactly takes a later glob's line when that glob matches it too: said, per key
-  # (command, account, effort, auto-compact), since the exact name reads as the stronger
+  # (command, account, effort, auto-compact, the context levels), since the exact name reads as the stronger
   # one.
   local -a sfx=()
   local j eg ev lg lv key
-  for key in command account effort auto-compact; do
+  for key in command account effort auto-compact context-plan context-rescue; do
     sfx=()
     for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'"$key"$'\t'* ]] || sfx+=("$e")
@@ -10056,9 +10252,11 @@ _as_agent_notes() {
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
 #   - each [remote:ALIAS] in full (_as_remote_notes, #344);
 #   - each [agent] line: the roles, the agent, its fixed arguments, the account, the
-#     effort level, the auto-compact value (_as_agent_notes, #355).
+#     effort level, the auto-compact value, the context levels (_as_agent_notes, #355);
+#   - each [briefing] start and context line (_as_briefing_start_notes,
+#     _as_briefing_context_notes).
 # Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice,
-# an [agent] effort or auto-compact that is not a value.
+# an [agent] effort, auto-compact or context level that is not a value.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
 # serves them all. What depends on the host or the moment -- a path that does not
 # exist yet, the overlay this bubblewrap offers, a conflict -- is the launch's to say.
@@ -10072,7 +10270,7 @@ _as_trust_notes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     [[ "$f" != */agent/profile.sh ]] || continue # reserved (#355): [agent] is the project's
@@ -10136,6 +10334,7 @@ _as_trust_notes() {
   done
   _as_serve_notes
   _as_briefing_start_notes
+  _as_briefing_context_notes
   _as_agent_notes || remote_rc=1
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
@@ -10742,6 +10941,9 @@ _as_dotfile_line() {
           # The first turn at an interactive start: a file in the project, `{role}` the
           # role's name; the latest line matching the role wins (_as_briefing_start_resolve).
           start) _df_briefing_start+=("$sglob"$'\t'"$cv") ;;
+          # The context file (#456): a file in the project, `{role}` the role's name; the
+          # latest line matching the role wins (_as_briefing_context_resolve).
+          context) _df_briefing_context+=("$sglob"$'\t'"$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
         esac
       fi
@@ -10816,6 +11018,16 @@ _as_dotfile_line() {
               _as_msg ".agent-sandbox: [agent] auto-compact names no value (auto-compact = $(_as_auto_compact_values), or - for none); ignoring"
             else
               _df_agent+=("$sglob"$'\t'auto-compact$'\t'"$cv")
+            fi
+            ;;
+          context-plan | context-rescue)
+            # The role's context levels (#456), agent-neutral: where its agent's profile
+            # writes `plan` and `rescue` in the context file ([briefing] context,
+            # _as_context_resolve); `-`, never. Kept as written, as effort is.
+            if [[ -z "$cv" ]]; then
+              _as_msg ".agent-sandbox: [agent] $ck names no value ($ck = $([[ "$ck" == context-plan ]] && printf 'PERCENT%%' || printf 'TOKENS'), or - for none); ignoring"
+            else
+              _df_agent+=("$sglob"$'\t'"$ck"$'\t'"$cv")
             fi
             ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
@@ -11089,7 +11301,7 @@ _as_check_remotes() {
   [[ -f "$1" ]] || return 0
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -11372,7 +11584,7 @@ _as_setup_remote() {
   fi
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -11486,7 +11698,7 @@ _as_setup_remote_alias() {
   local p="remote $alias:"
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -12964,6 +13176,34 @@ _as_check_plan() {
           "$([[ -f "$_proj/$_start_as" ]] || printf ' -- MISSING: a launch refuses')"
       fi
     fi
+    # The context file (#456): where, the role's levels, and whether it is written.
+    if [[ -n "$_context_as" ]]; then
+      local _context_plan_from="" _context_rescue_from="" _cx_lv
+      _as_context_levels_resolve "${_role:-default}" ${_df_agent[@]+"${_df_agent[@]}"}
+      if [[ "$_context_plan" == - ]]; then
+        _cx_lv="plan never"
+      elif _as_context_plan_ok "$_context_plan"; then
+        _cx_lv="plan at $_context_plan of the stop"
+      else
+        _cx_lv="plan $_context_plan, NOT A VALUE (a percent, 1% to 100%), so a launch refuses"
+      fi
+      _cx_lv+=" ($(_as_context_where "$_context_plan_from")), "
+      if [[ "$_context_rescue" == - ]]; then
+        _cx_lv+="rescue never"
+      elif _as_context_rescue_ok "$_context_rescue"; then
+        _cx_lv+="rescue at $_context_rescue tokens left"
+      else
+        _cx_lv+="rescue $_context_rescue, NOT A VALUE (tokens, a number), so a launch refuses"
+      fi
+      _cx_lv+=" ($(_as_context_where "$_context_rescue_from"))"
+      if [[ -z "$_context_path" ]]; then
+        printf '  context file: none -- %s\n' "$_context_why"
+      elif [[ "${_knob_briefing:-on}" =~ ^(off|0)$ ]]; then
+        printf "  context file: %s -- NOT WRITTEN: its agent's profile writes it from the briefing's hooks, and the briefing is off\n" "$_context_as"
+      else
+        printf '  context file: %s (and %s.level); levels: %s\n' "$_context_as" "$_context_as" "$_cx_lv"
+      fi
+    fi
     if ((${#_perm_df[@]})); then
       local _pe _pl=""
       for _pe in "${_perm_df[@]}"; do
@@ -13726,7 +13966,7 @@ _as_init_conda_base() {
   _icb_base=""
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -14134,7 +14374,22 @@ _as_init() {
   # _init_render HEADER BODY INSTANCE N HANDLE -- the section for one instance.
   _init_render() {
     local txt="$1"$'\n'"$2" h="${1%%]*}" lead="${6:-}"
-    txt="${txt//\{role\}/$3}"
+    # A glob section's `context = ...{role}...` ([briefing:planner-*], #456) keeps its
+    # {role} for the launch, which reads it as each role's own name: no one instance's
+    # name fits the section. Every other line has it substituted, as before.
+    if [[ "$h" == \[*:*[*?]* && "$txt" == *'{role}'* ]]; then
+      local _rl _rt=""
+      while IFS= read -r _rl; do
+        if [[ "$_rl" =~ ^[[:space:]]*context[[:space:]]*= ]]; then
+          _rt+="$_rl"$'\n'
+        else
+          _rt+="${_rl//\{role\}/$3}"$'\n'
+        fi
+      done <<<"$txt"
+      txt="${_rt%$'\n'}"
+    else
+      txt="${txt//\{role\}/$3}"
+    fi
     txt="${txt//\{n\}/$4}"
     txt="${txt//\{handle\}/$5}"
     txt="${txt//\{project\}/$project}"
@@ -19944,7 +20199,7 @@ agent_sandbox() (
   local -a _df_gpu_devices=() # [gpu] devices (#335): one `glob<TAB>entries` per line, in the order applied
   local -a _df_remote=()      # [remote:ALIAS] (#344): `ALIAS<TAB>` per header, `ALIAS<TAB>line` per line
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
@@ -20532,6 +20787,23 @@ agent_sandbox() (
   # The first turn (`[briefing] start`): which file, for --check; read at the launch.
   local _start_as="" _start_text=""
   _as_briefing_start_resolve "${_role:-default}"
+  # The context file (#456) and the role's levels, handed to the profile by dynamic scope
+  # (profile_briefing_args, profile_check_notes, profile_serve_result): _context_path is
+  # empty when the role has none, or may not write it (_context_why, said below).
+  local _context_as="" _context_path="" _context_why="" _context_plan="" _context_rescue=""
+  if ((_check_plan)); then
+    _as_context_resolve "${_role:-default}" 2>/dev/null || :
+  else
+    _as_context_resolve "${_role:-default}" || return $?
+  fi
+  # A --summarize turn is a session of its own, not the role's (#456): no context file, or
+  # its Stop hook would put that session's numbers, a level of ok among them, in the role's.
+  [[ "${AGENT_SANDBOX_SERVE_TURN:-}" != summarize ]] || _context_path=""
+  # Said once, by the launch of a session (or --serve's loop), not by each of its turns.
+  if [[ -n "$_context_why" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]] \
+    && ((! _check_plan && ! _do_exec && ! _do_verb && ! _do_status && ! _do_shutdown && ! _do_delete && ! _do_summarize && ! _do_trust)); then
+    _as_msg "role '${_role:-default}': $_context_why; no context file is written"
+  fi
   # The role's inbox ([serve] watch), handed to the profile by dynamic scope as
   # _watch_path (profile_briefing_args, profile_check_notes). Not on a turn of --serve:
   # there the loop is what watches.
