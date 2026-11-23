@@ -1036,6 +1036,36 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The Supervisor hands a revision loop that is not converging to the Planner, and a
+  Review settles facts before prose** (#459). Under the relay, findings and revisions
+  went back and forth "until the Reviewer accepts or the Implementer objects", and
+  nothing said what to do when neither happened: in another project the Reviewer found
+  something new in every round, the document under review grew to about three times
+  its size, and the user stopped the loop by hand. The roles model's purpose files now
+  say:
+  - **The Supervisor** reports, with each relayed message, the Reviewer's open findings
+    by kind (factual and prose), whether they are new or follow-ups to the last fix,
+    and how much the change (its diff against `main`) and the Handoff grew. On a sign
+    that the loop is not converging -- new factual findings in a third revision or
+    later, steady growth of the change, factual findings drifting into finer detail,
+    prose findings still arriving after more than two prose rounds; a guide, not a
+    counter -- it stops relaying and proposes a message to the Planner, asked about as
+    any is. It asks the Planner to rule only for a reason: that, a change of the Task's
+    scope, a conflict with the plan or a ruling, a disagreement, an open choice, or a
+    request for a ruling. That one rule replaces the red run's "the Planner rules only
+    when the Implementer or the Reviewer asks". An Objection still goes to the user,
+    who decides it; with it the Supervisor proposes asking the Planner to rule on the
+    point in dispute.
+  - **The Planner** finds why a loop handed to it is stuck, revises or narrows the plan
+    with what "done" means made concrete, and the loop resumes or the Task is split.
+  - **The Reviewer** settles the facts first; prose findings, marked `(prose)`, come in
+    the last revision or a few at most, none while a factual one is open, and name what
+    is wrong, not more to add. **The Implementer** settles the facts first and changes
+    what each finding names and no more.
+
+  docs/roles.md (sections 2 to 5, and section 9's walk-through) says the same. A
+  project's own copies change when `asb --init roles` is run again (a purpose file
+  edited since it was written is kept, and said).
 - **The Markdown prose is re-flowed to 88 columns**, with no wording change. The github
   model's purpose files (gh-setup, gh-review, gh-fix) change in layout only, so a
   project's next `asb --init github` rewrites its copies and asks for `--trust` once

@@ -61,6 +61,10 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - Read your Task when your inbox says where; when you write a Handoff or an Objection,
   say where, in your messages, and hand it to nobody -- S passes it on, with the
   user's approval.
+- In a revision, settle the factual findings first, and answer prose findings, marked
+  `(prose)`, in the last revision, or a few at most. Change what each finding names and
+  no more: a revision that grows the text beyond its findings is a sign S watches for,
+  of a loop that is not converging.
 - A probe the Reviewer names in its Review is in `.asb/review/<reviewer>/`: run it from
   there, and do not rewrite it from its description.
 - Tests, while iterating: run the `iterate` command of `.asb/tests` (the tests your
