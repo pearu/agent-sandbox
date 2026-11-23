@@ -612,7 +612,11 @@ the file lacks is reported the same way (`asb --apply '[agent]' 'command = claud
 a file from before #355). A role relaunched after its purpose file changed is told so at
 session start: a resumed conversation would otherwise keep to the rules its earlier
 turns followed, so the briefing says the current text replaces them (the hash is kept in
-the role's state, not the project).
+the role's state, not the project). A `/clear` does not hand a running role the new text:
+its session start reads what its launch wrote (`hook-SessionStart.json`, written once,
+with the purpose file read then), so a changed purpose file, like a changed policy,
+takes a relaunch -- for a role in a pane of `asb --roles`, the Supervisor's restart
+(section 9), not its reset.
 
 **Re-running `--init` while roles run (#389).** A running role has `.agent-sandbox` and
 its purpose file bound read-only as single files. `--init` and `--apply` write
@@ -644,6 +648,16 @@ replace that would take a role's own copy over a file from it (a `copy` declarat
 over a purpose file, a `read-write` one in a read-only project) or would leave its writes
 not reaching the file (a `read-write` one over the file in a copy-on-write project), and it looks at every
 running sandbox of yours, another project's too when it has this one's files mounted.
+
+**The restart and `--init` (#416).** The Supervisor's restart marker (section 9)
+relaunches the other roles after an `--init` that changed their sections of
+`.agent-sandbox` or their purpose files, once you have approved it (`asb --trust`), as
+after an `--apply`: `--init` does not refuse for them (their project is read-only), and
+only a relaunch applies the change. It does not cover the Supervisor's own: a restart is
+an end and a launch at once, with no room for the `--init` you run on the host in
+between, and the Supervisor is the one that writes the markers and waits for them, in a
+turn its own restart would end. So the Supervisor's relaunch stays yours, as above: shut
+it down, run `--init`, launch it again.
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:
@@ -1061,18 +1075,47 @@ name already open is refused, naming `tmux attach -t NAME` to return to it and
 `tmux kill-session -t NAME` to end it; ending it hangs up every launch in it, and each
 role's sandbox then ends after the keeper's grace, as when you close its terminal.
 Beside the session it starts one process on the host that takes the Supervisor's reset
-markers for those roles (section 5): each second it looks for
-`.asb/coord/to/ROLE.reset`, and for one it types the role's fresh start -- its agent's
-profile's `[agent] clear`, claude's `/clear` -- and Enter in that role's pane -- the
-pane whose tmux option `@role` is the role -- and removes the marker. A role whose
-agent's profile has no `clear` is not watched, and `--roles` says which. It types
-nothing else, outlives the terminal you ran `--roles` in, ends when the session does,
-and logs to `~/.local/state/agent-sandbox/.roles-resets/<project slug>.log`; the line
-`--roles` prints names it. It is not started for served roles, whose loop takes its own
-marker, nor in a project without `.asb/coord/to/`. tmux is the host's, else the tools
-env's, where `install.sh` installs it by default ([config.md](config.md)). `--resume` is
-claude's `--continue`, which in a directory with no conversation starts a new one
-(measured with Claude Code 2.1.311), so the one line both starts a round and resumes it.
+and restart markers for those roles: each second it looks for `.asb/coord/to/ROLE.reset`
+and `ROLE.restart`, and acts in that role's pane -- the pane whose tmux option `@role` is
+the role. A reset (section 5) types the role's fresh start -- its agent's profile's
+`[agent] clear`, claude's `/clear` -- and Enter, and removes the marker. A role whose
+agent's profile has no `clear` gets no reset, and `--roles` says which; served roles get
+none from it, as their loop takes its own. A restart (#416), for every role, relaunches
+it under the policy and purpose files you approved since it was launched, which a
+`/clear` does not hand it (section 6). In order, and the first step that fails stops it:
+
+- it checks that `.agent-sandbox` is approved as it is now, and that the role can resume
+  (its agent's profile has `[agent] resume`; a served pane resumes its own session), so
+  a role is never ended for a launch that would not run;
+- it runs `asb --profile PROFILE --role ROLE --shutdown`, PROFILE being the role's when
+  the session opened, which ends the role's launch and everything joined into it;
+- once the pane's old launch has finished, it saves the pane's last screen in its log,
+  under a line naming the role, the pane and the time -- the respawn clears the screen,
+  while what had scrolled above it stays in the pane's history -- and respawns the pane
+  with the line it was opened with, `--resume` added for a role at a terminal;
+- it waits up to 30 s for the role's keeper to be live, then removes the marker.
+
+On a failure it writes the reason into the marker, one line, and takes it no more while
+it is not empty; the Supervisor tells you the reason and removes it. It takes one marker
+at a time, a restart before a reset of the same role (the reset at its next look),
+though the Supervisor never writes both for a role at once: a restart applies a policy
+change, a reset starts the next Task, and the restart's marker is gone before a reset is
+written. (A `/clear` typed into a relaunched claude lands from 0.2 s after its start on,
+measured with Claude Code 2.1.311; the next look comes a second after.) The Supervisor
+writes one `.restart` at a time and waits up to 60 s for it: more than
+the 15 s an end may take, the 30 s of the relaunch and the second between looks; a
+restart measured with stub sandboxes takes 1-2 s from marker to gone. A marker still
+there and empty after the wait was taken by nobody -- a role in a terminal of its own,
+or a session opened before #416, whose host process takes no restarts -- and the
+Supervisor removes it, as the next `asb --roles` with that role would take it, and gives
+you the relaunch line instead. The process types nothing but the
+resets, outlives the terminal you ran `--roles` in, ends when the session does, and logs
+to `~/.local/state/agent-sandbox/.roles-resets/<project slug>.log`; the line `--roles`
+prints names it. It is not started in a project without `.asb/coord/to/`. tmux is the
+host's, else the tools env's, where `install.sh` installs it by default
+([config.md](config.md)). `--resume` is claude's `--continue`, which in a directory with
+no conversation starts a new one (measured with Claude Code 2.1.311), so the one line
+both starts a round and resumes it.
 
 The Supervisor's line leaves itself out, as it is already running in a terminal of its
 own. A round with the Supervisor on top is started from a plain terminal instead, not

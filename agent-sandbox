@@ -221,6 +221,9 @@
 #   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long a role's keeper waits once
 #                                       nothing is joined before it ends
 #                                       (default: 2; the test suites use 0)
+#   AGENT_SANDBOX_RESTART_WAIT=SECONDS  how long the host side of --roles waits
+#                                       for a restarted role's keeper (default:
+#                                       30; the test suites use less)
 #   AGENT_SANDBOX_INSTALL_BASE=URL|DIR  for tests: --install gives it to the
 #                                       profile's resolve.sh as its BASE, the
 #                                       source read in place of the vendor's;
@@ -764,6 +767,8 @@ Environment knobs:
   AGENT_SANDBOX_JOIN            the join helper (default: components/join.py)
   AGENT_SANDBOX_KEEPER_GRACE=SECONDS  how long an idle role's keeper waits
                                 before it ends (default: 2)
+  AGENT_SANDBOX_RESTART_WAIT=SECONDS  how long the host side of --roles waits for a
+                                restarted role's keeper (default: 30)
   AGENT_SANDBOX_INSTALL_BASE=URL|DIR  for tests: the source --install's resolver reads
                                 in place of the vendor's (the SHA-256 still enforced)
 USAGE
@@ -5756,24 +5761,30 @@ _as_serve_put() {
   fi
 }
 
-# _as_serve_reset PROJECT ROLE -- is there a reset marker for ROLE, PROJECT/.asb/coord/to/
-# ROLE.reset? Then remove it and succeed. Checked and removed from inside the directory,
-# entered once (cd -P) and found to be the project's own, so a link in its path cannot
-# send the removal elsewhere; the marker itself, a link included, is removed, never
-# followed. Its content is not read.
+# _as_serve_reset PROJECT ROLE [WHO [KIND]] -- is there a reset marker for ROLE,
+# PROJECT/.asb/coord/to/ROLE.reset? Then remove it and succeed. Checked and removed from
+# inside the directory, entered once (cd -P) and found to be the project's own, so a link
+# in its path cannot send the removal elsewhere; the marker itself, a link included, is
+# removed, never followed. Its content is not read. WHO names the caller in a message
+# (default --serve); KIND is the marker's kind, ROLE.KIND (default reset; restart: the
+# host side of --roles, once the role runs again, _as_roles_restart).
 _as_serve_reset() {
-  local proj who="${3:---serve}"
+  local proj who="${3:---serve}" kind="${4:-reset}"
   proj="$(realpath -e -- "$1")" || return 1
-  [[ -e "$proj/.asb/coord/to/$2.reset" || -L "$proj/.asb/coord/to/$2.reset" ]] || return 1
+  [[ -e "$proj/.asb/coord/to/$2.$kind" || -L "$proj/.asb/coord/to/$2.$kind" ]] || return 1
   (
     cd -P -- "$proj/.asb/coord/to" 2>/dev/null || exit 1
     if [[ "$PWD" != "$proj/.asb/coord/to" ]]; then
-      _as_msg "$who: $1/.asb/coord/to is not a directory of the project; not reading a reset marker there"
+      _as_msg "$who: $1/.asb/coord/to is not a directory of the project; not reading a $kind marker there"
       exit 1
     fi
-    [[ -e "$2.reset" || -L "$2.reset" ]] || exit 1
-    rm -f -- "$2.reset" || {
-      _as_msg "$who: could not remove $1/.asb/coord/to/$2.reset; no reset"
+    [[ -e "$2.$kind" || -L "$2.$kind" ]] || exit 1
+    rm -f -- "$2.$kind" || {
+      if [[ "$kind" == reset ]]; then
+        _as_msg "$who: could not remove $1/.asb/coord/to/$2.reset; no reset"
+      else
+        _as_msg "$who: could not remove $1/.asb/coord/to/$2.$kind; it is not taken again until it has gone"
+      fi
       exit 1
     }
   )
@@ -18084,11 +18095,12 @@ _as_launch_pasta() {
 #
 # Once the session is made, and before attaching to it (a tmux of its own, so that the
 # watcher starts only once there is a session to watch), the host side that takes the
-# Supervisor's reset markers is started (#329, _as_roles_resets): one process for the
-# session, typing a role's fresh start -- its agent's profile's [agent] clear -- into
-# that role's pane and nothing else. A role whose profile has no clear is not watched,
-# and said. Not for served roles (--serve among the words), whose loop takes its own
-# marker, nor for a project without .asb/coord/to/.
+# Supervisor's reset and restart markers is started (#329, #416, _as_roles_resets): one
+# process for the session, for every role, and not for a project without .asb/coord/to/.
+# A reset types a role's fresh start -- its agent's profile's [agent] clear -- into that
+# role's pane and nothing else: not for a role whose profile has no clear, which is said,
+# nor for served roles (--serve among the words), whose loop takes its own reset. A
+# restart ends the role (--shutdown) and runs its pane's line again, resumed.
 # Each role's account (#355) is resolved and checked the same way, up front: the pane
 # gets `--account NAME` (or `-`) only when the line named that role's.
 # Reads the engine's _roles, _roles_flags, _agent_flag, _account_flag, _preset_flag,
@@ -18320,12 +18332,22 @@ _as_roles_open() {
   # This same engine, by the name it was run as (asb, agent-sandbox), from any directory.
   self="$(_as_one "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")")"
   local -a args=() aw=()
-  local i=0
+  local -A relaunch_of=()
+  local i=0 served=0
+  _as_roles_served && served=1
   for r in "${_roles[@]}"; do
     aw=()
     [[ -n "${agent_word[$r]:-}" ]] && aw=(--agent "${agent_word[$r]}")
     [[ -n "${acct_word[$r]:-}" ]] && aw+=(--account "${acct_word[$r]}")
     printf -v line '%q ' "$self" --role "$r" ${aw[@]+"${aw[@]}"} ${_roles_flags[@]+"${_roles_flags[@]}"}
+    # Its relaunch after a restart (#416): the same line, resuming the role's session --
+    # a served pane's loop resumes its own, and a line with --resume has it already; none
+    # when the role's profile cannot resume (the host side then says so, ends nothing).
+    relaunch_of[$r]="${line% }; exec \"\${SHELL:-bash}\""
+    if ((! served && ! ${_do_resume:-0})); then
+      relaunch_of[$r]=""
+      [[ -z "${resume_of[${agent_prof[$r]}]}" ]] || relaunch_of[$r]="${line}--resume; exec \"\${SHELL:-bash}\""
+    fi
     line="${line% }; exec \"\${SHELL:-bash}\""
     if ((i % 5)); then
       args+=(";" split-window -c "$dir" bash -c "$line" ";" select-layout main-horizontal)
@@ -18344,40 +18366,46 @@ _as_roles_open() {
   done
   args+=(";" select-window -t "=$name:^" ";" select-pane -t "=$name:^.{top}")
   "$tmux" "${args[@]}" || return
-  # The host takes resets (#329), for a project with the roles model's inboxes and roles
-  # at a terminal (a served role's loop takes its own marker): one watcher for the
-  # session, out of this terminal's session, so closing this terminal leaves it running
-  # (_as_roles_resets). Each role's keys are its agent's profile's [agent] clear; a role
-  # whose profile has none is not watched, and said.
-  local log p
+  # The host takes resets (#329) and restarts (#416), for a project with the roles model's
+  # inboxes: one watcher for the session, out of this terminal's session, so closing this
+  # terminal leaves it running (_as_roles_resets). It gets ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>
+  # RELAUNCH for every role: KEYS, its agent's profile's [agent] clear, for a role at a
+  # terminal (a served role's loop takes its own reset), empty for one whose profile has
+  # none, which is said; SHUTDOWN, the --shutdown that ends its launch, by its profile, so
+  # an [agent] line changed since does not point it at another role's keeper; RELAUNCH,
+  # its pane's line again, resuming (above).
+  local log p sd
   local -a watch=() none=()
   local -A said=()
-  if [[ -d "$dir/.asb/coord/to" ]] && ! _as_roles_served; then
+  if [[ -d "$dir/.asb/coord/to" ]]; then
     for r in "${_roles[@]}"; do
       p="${agent_prof[$r]}"
-      if [[ -n "${clear_of[$p]}" ]]; then
-        watch+=("$r"$'\t'"${clear_of[$p]}")
-      else
-        none+=("$r")
+      k=""
+      if ((! served)); then
+        k="${clear_of[$p]}"
+        [[ -n "$k" ]] || none+=("$r")
       fi
+      printf -v sd '%q ' "$self" --profile "$p" --role "$r" --shutdown
+      watch+=("$r"$'\t'"$k"$'\t'"${sd% }"$'\t'"${relaunch_of[$r]}")
     done
     ((${#none[@]} == 0)) \
       || _as_msg "no reset taken for ${none[*]}: their agent's profile says nothing of a fresh start ([agent] clear); a fresh start there is yours to give"
-    if ((${#watch[@]})); then
-      local how=""
-      for e in "${watch[@]}"; do
-        k="${e#*$'\t'}"
-        [[ -n "${said[$k]:-}" ]] && continue
-        said[$k]=1
-        how+="${how:+, }$k"
-      done
-      log="$(_as_one "$(_as_state_dir)/.roles-resets/$(_as_path_slug "$dir").log")"
-      if mkdir -p -- "${log%/*}" \
-        && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "${watch[@]}" </dev/null >>"$log" 2>&1; then
-        _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start ($how) in that role's pane, then goes (log: $log)"
-      else
-        _as_msg "could not start the watcher that takes resets; a fresh start is the role's ($how) typed in its pane by you"
-      fi
+    local how=""
+    for e in "${watch[@]}"; do
+      e="${e#*$'\t'}" k="${e%%$'\t'*}"
+      [[ -n "$k" && -z "${said[$k]:-}" ]] || continue
+      said[$k]=1
+      how+="${how:+, }$k"
+    done
+    log="$(_as_one "$(_as_state_dir)/.roles-resets/$(_as_path_slug "$dir").log")"
+    if mkdir -p -- "${log%/*}" \
+      && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "${watch[@]}" </dev/null >>"$log" 2>&1; then
+      [[ -z "$how" ]] \
+        || _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start ($how) in that role's pane, then goes (log: $log)"
+      _as_msg "the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; on a failure its reason is written into it (log: $log)"
+    else
+      [[ -z "$how" ]] || _as_msg "could not start the watcher that takes resets; a fresh start is the role's ($how) typed in its pane by you"
+      _as_msg "could not start the watcher that takes restarts; a restart is yours: end the role and launch it again in its pane"
     fi
   fi
   if [[ -t 0 && -t 1 ]]; then
@@ -18399,39 +18427,70 @@ _as_roles_served() {
   return 1
 }
 
-# _as_roles_resets TMUX NAME PROJECT ROLE<TAB>KEYS... -- the host side of `asb --roles`
-# (#329), run as `ENGINE __roles-resets ...`, an internal word no user types: started by
-# _as_roles_open with setsid, stdin from /dev/null and its output to
-# <state>/.roles-resets/<project slug>.log, so it outlives the terminal that ran
-# --roles. Every second, for each ROLE: an empty PROJECT/.asb/coord/to/ROLE.reset --
-# the Supervisor's marker for a fresh start, the same one a served role's loop takes --
-# makes it type the role's KEYS (its agent's profile's [agent] clear; claude: /clear),
-# then Enter, into the pane of tmux session NAME whose @role is ROLE, and remove the
-# marker from inside the directory, a link removed, never followed (_as_serve_reset). The marker is removed
-# after the keys are sent, so the Supervisor, which appends its message once the marker
-# is gone, never has it arrive before them. A marker with no pane of that role stays,
-# and so the Supervisor sees nobody took it. One that cannot be removed is typed for
-# once, not again until it has gone. It types nothing else, ever, and ends when the
-# session NAME is gone.
+# _as_roles_resets TMUX NAME PROJECT ROLE<TAB>KEYS[<TAB>SHUTDOWN<TAB>RELAUNCH]... -- the
+# host side of `asb --roles` (#329, #416), run as `ENGINE __roles-resets ...`, an internal
+# word no user types: started by _as_roles_open with setsid, stdin from /dev/null and its
+# output to <state>/.roles-resets/<project slug>.log, so it outlives the terminal that
+# ran --roles. Every second, for each ROLE, it looks for the Supervisor's two markers in
+# PROJECT/.asb/coord/to/, which only the Supervisor writes, and acts in the pane of tmux
+# session NAME whose @role is ROLE. A marker with no pane of that role stays as it is,
+# and so the Supervisor sees nobody took it.
+#
+# ROLE.restart (#416), when the role has a SHUTDOWN, taken first: _as_roles_restart ends
+# the role and runs RELAUNCH in its pane, and removes the marker once the new launch's
+# keeper is live, or writes the reason it did not into the marker, one line. An empty
+# file is the request (a link too, never followed, its target never read), and a
+# non-empty one the host's answer, which is not taken again; it is the Supervisor's to
+# read and remove. Once it is answered (removed, or its reason written), an empty marker
+# is a new request, even one written again before the next look; one that could be
+# neither removed nor written is not taken again until it has gone or been answered. A
+# ROLE.reset beside it waits for the next look: the relaunch resumes the old session,
+# and the reset then starts a new one.
+#
+# ROLE.reset (#329), when the role has KEYS -- the Supervisor's marker for a fresh start,
+# the same one a served role's loop takes -- makes it type the role's KEYS (its agent's
+# profile's [agent] clear; claude: /clear), then Enter, and remove the marker from
+# inside the directory, a link removed, never followed (_as_serve_reset). The marker is
+# removed after the keys are sent, so the Supervisor, which appends its message once the
+# marker is gone, never has it arrive before them. One that cannot be removed is typed
+# for once, not again until it has gone. It types nothing else, ever.
+#
+# It ends when the session NAME is gone.
 _as_roles_resets() {
-  local tmux="$1" name="$2" proj="$3" r keys rk pane p pr
+  local tmux="$1" name="$2" proj="$3" r keys rk pane rest sd rl f
   shift 3
-  local -A stuck=()
+  local -A stuck=() rstuck=()
   while "$tmux" has-session -t "=$name" 2>/dev/null; do
     for rk in "$@"; do
-      r="${rk%%$'\t'*}" keys="${rk#*$'\t'}"
+      r="${rk%%$'\t'*}" rest="${rk#*$'\t'}"
+      keys="${rest%%$'\t'*}" sd="" rl=""
+      if [[ "$rest" == *$'\t'* ]]; then
+        rest="${rest#*$'\t'}"
+        sd="${rest%%$'\t'*}" rl="${rest#*$'\t'}"
+      fi
+      f="$proj/.asb/coord/to/$r.restart"
+      if [[ -n "$sd" ]]; then
+        # gone, or answered (a file with the reason, by the Supervisor's hand too)
+        if [[ ! -L "$f" ]] && [[ ! -e "$f" || (-f "$f" && -s "$f") ]]; then
+          unset 'rstuck[$r]'
+        elif [[ -z "${rstuck[$r]:-}" ]] && [[ -L "$f" || -f "$f" ]]; then
+          pane="$(_as_roles_pane "$tmux" "$name" "$r")"
+          if [[ -n "$pane" ]]; then
+            rstuck[$r]=1
+            if _as_roles_restart "$tmux" "$pane" "$proj" "$r" "$sd" "$rl"; then
+              unset 'rstuck[$r]'
+            fi
+            continue
+          fi
+        fi
+      fi
+      [[ -n "$keys" ]] || continue
       if [[ ! -e "$proj/.asb/coord/to/$r.reset" && ! -L "$proj/.asb/coord/to/$r.reset" ]]; then
         unset 'stuck[$r]'
         continue
       fi
       [[ -z "${stuck[$r]:-}" ]] || continue
-      pane=""
-      while read -r p pr; do
-        if [[ "$pr" == "$r" ]]; then
-          pane="$p"
-          break
-        fi
-      done < <("$tmux" list-panes -s -t "=$name" -F '#{pane_id} #{@role}' 2>/dev/null)
+      pane="$(_as_roles_pane "$tmux" "$name" "$r")"
       [[ -n "$pane" ]] || continue
       stuck[$r]=1
       "$tmux" send-keys -t "$pane" "$keys" Enter || continue
@@ -18443,6 +18502,127 @@ _as_roles_resets() {
     sleep 1
   done
   _as_msg "$(date -Iseconds) tmux session '$name' is gone; no more resets taken"
+}
+
+# _as_roles_pane TMUX NAME ROLE -- print the id of the pane of tmux session NAME whose
+# @role is ROLE; nothing when there is none.
+_as_roles_pane() {
+  local p pr
+  while read -r p pr; do
+    if [[ "$pr" == "$3" ]]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  done < <("$1" list-panes -s -t "=$2" -F '#{pane_id} #{@role}' 2>/dev/null)
+  return 0
+}
+
+# _as_roles_restart_wait -- seconds the host side waits for a relaunched role's keeper
+# to be live (#416). AGENT_SANDBOX_RESTART_WAIT changes it, for the test suites.
+_as_roles_restart_wait() {
+  local w="${AGENT_SANDBOX_RESTART_WAIT:-30}"
+  [[ "$w" =~ ^[0-9]+$ ]] || w=30
+  printf '%s' "$w"
+}
+
+# _as_roles_restart TMUX PANE PROJECT ROLE SHUTDOWN RELAUNCH -- a restart marker taken
+# (#416): ROLE is relaunched in PANE under the policy the user approved since its keeper
+# started, and resumes its session. In order, and the first that fails ends it, with its
+# reason written into the marker (_as_roles_restart_answer):
+#   1. RELAUNCH is there: none is a role at a terminal whose profile cannot resume;
+#   2. the project's .agent-sandbox is approved as it is now (_as_roles_approved) -- what
+#      the relaunch would otherwise refuse or ask about, so the role is never ended for a
+#      launch that would not run; both are checked before anything ends;
+#   3. SHUTDOWN, the role's --shutdown, run from the project, succeeds: its keeper ended,
+#      with everything joined into it, the launch in the pane among them;
+#   4. tmux respawns PANE with RELAUNCH (the line the pane was opened with, resuming),
+#      once the pane's own process has no child left (the old launch has finished, up to
+#      5 s): its last screen is cleared, what scrolled above it stays in the history, so
+#      that screen goes into this watcher's log first (tmux capture-pane, plain text);
+#   5. a keeper of ROLE is live within _as_roles_restart_wait seconds, under any profile
+#      (an [agent] line approved since may have moved the role to another).
+# Then the marker is removed (_as_serve_reset), and gone means the role runs again.
+# Succeeds when the marker is answered: removed, or its reason written into it (or gone
+# meanwhile); fails when it could be neither, and so is still a request.
+_as_roles_restart() {
+  local tmux="$1" pane="$2" proj="$3" r="$4" sd="$5" rl="$6" why="" st=0 i w pid k sb slug
+  if [[ -z "$rl" ]]; then
+    why="not restarted: its agent's profile says nothing of how to resume a session ([agent] resume), so its pane would start a new one; it runs on as it was"
+  elif ! _as_roles_approved "$proj"; then
+    why="not restarted: .agent-sandbox is not approved as it is now (review it on the host: $invoked --trust); it runs on as it was"
+  else
+    (cd -- "$proj" && exec bash -c "$sd" </dev/null) || st=$?
+    if ((st)); then
+      why="not relaunched: its shutdown failed (status $st; see the log), so its pane was left as it was"
+    else
+      pid="$("$tmux" display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null)" || pid=""
+      if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        for ((i = 0; i < 50; i++)); do
+          k=""
+          { read -r k <"/proc/$pid/task/$pid/children"; } 2>/dev/null || :
+          [[ -n "$k" ]] || break
+          sleep 0.1
+        done
+      fi
+      # the old launch's last screen, which the respawn clears, into this log (stdout)
+      _as_msg "$(date -Iseconds) role '$r': the last screen of pane $pane, before its relaunch:"
+      "$tmux" capture-pane -p -t "$pane" 2>/dev/null || :
+      if ! "$tmux" respawn-pane -k -t "$pane" -c "$proj" bash -c "$rl"; then
+        why="ended, and not relaunched: tmux could not respawn its pane $pane; relaunch it there yourself"
+      else
+        w="$(_as_roles_restart_wait)"
+        slug="$(_as_path_slug "$proj")"
+        why="relaunched in pane $pane, but no keeper of it was running within $w s; see that pane"
+        for ((i = 0; i <= w * 10; i++)); do
+          for sb in "$(_as_state_dir)"/*/"$slug/$r"; do
+            if _as_keeper_live "$sb"; then
+              why=""
+              break 2
+            fi
+          done
+          sleep 0.1
+        done
+      fi
+    fi
+  fi
+  if [[ -n "$why" ]]; then
+    _as_msg "$(date -Iseconds) role '$r': a restart marker -- $why"
+    _as_roles_restart_answer "$proj" "$r" "$why"
+    return
+  fi
+  _as_serve_reset "$proj" "$r" --roles restart || return 1
+  _as_msg "$(date -Iseconds) role '$r': a restart marker -- ended it, relaunched it in pane $pane, its keeper is live, and removed the marker"
+}
+
+# _as_roles_approved PROJECT -- is the project's .agent-sandbox approved as it is now,
+# purpose files and all, as _as_roles_open asks before it opens a pane: approved, or no
+# file and no approval of one (a file approved and gone since is not)?
+_as_roles_approved() {
+  local df="$1/.agent-sandbox" rec
+  rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$1")")"
+  if [[ -f "$df" ]]; then
+    _as_dotfile_trusted "$1" "$df"
+  else
+    [[ ! -f "$rec" ]]
+  fi
+}
+
+# _as_roles_restart_answer PROJECT ROLE TEXT -- the host's answer to ROLE's restart
+# marker: TEXT, one line, written into it from inside the directory (as _as_serve_reset
+# enters it) by a rename, so a link there is replaced, never followed. Only while the
+# marker is there: one the Supervisor has removed is not made again. Fails when it is
+# there and could not be written.
+_as_roles_restart_answer() {
+  local proj
+  proj="$(realpath -e -- "$1")" || return 0
+  (
+    cd -P -- "$proj/.asb/coord/to" 2>/dev/null || exit 0
+    [[ "$PWD" == "$proj/.asb/coord/to" ]] || exit 0
+    [[ -e "$2.restart" || -L "$2.restart" ]] || exit 0
+    _as_serve_put . "$2.restart" "$3"$'\n' && exit 0
+    _as_msg "--roles: could not write the reason into $1/.asb/coord/to/$2.restart"
+    exit 1
+  )
 }
 
 # ---------------------------------------------------------------------------

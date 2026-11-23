@@ -139,13 +139,33 @@ artefact** -- a review that says "run this" is relayed, not run.
 - Watch `.agent-sandbox` too: add it to your watcher's files, and keep a copy in your
   scratch to diff against. When it changes, read which sections changed: `[x:ROLE]`
   names one role, a pattern names every role it matches, an unsuffixed section names
-  all. Send each affected role a message to finish the step it is in, record its state
-  in its messages and say ready; then give the user the relaunch, one line per role:
-  exit the role's session (a served role: `asb --role R --shutdown`), then its launch
-  line from the index with `--resume`. A relaunch takes the new policy only when the
-  role's launch has ended, not when it joins one still running. A hand edit needs
-  `asb --trust` first; `--apply` has approved already. If your own section changed, say
-  so: the user relaunches you.
+  all. A hand edit needs `asb --trust` first; `--apply` has approved already. A running
+  role keeps the policy and the purpose file it was launched with, through a `/clear`
+  (a `.reset`) too: only a relaunch applies a change, the restart below. Each affected
+  role's message, approved with the change, asks it to finish the step it is in,
+  record in its messages what is in flight, and answer `ready` or
+  `wait: <what, and about how long>`.
+  - On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again:
+    the user approved the change, and the restart only applies it -- then wait with
+    `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`. The host side of
+    `asb --roles` ends the role, relaunches it in its pane, resumed, and removes the
+    marker once it runs again: up to 15 s to end it, 30 s to see it run and 1 s to
+    look, inside the 60. Gone: report it in one line. Not empty: the host's reason,
+    one line; tell the user, then remove the marker. Still there and empty: nobody
+    takes restarts for this role (a terminal of its own, served outside
+    `asb --roles`, or a session opened before restarts), so remove the marker -- left,
+    the next `asb --roles` with the role takes it -- and give the user the relaunch:
+    exit the role's session (a served role: `asb --role R --shutdown`), then its
+    launch line from the index with `--resume`. A relaunch takes the new policy only
+    when the role's launch has ended, not when it joins one still running.
+  - One `.restart` at a time: the next once the last has gone or been answered. Never
+    a `.restart` and a `.reset` for one role at once: the restart's marker is gone
+    first, then a `.reset` when the role's next Task needs one.
+  - On `wait`: tell the user that the role asked to wait, and why; they decide between
+    waiting and restarting it now, and on now, write the marker.
+  - Never your own `.restart`: it would end you in the turn that wrote it. If your own
+    section or purpose file changed, or `--init` refused because you run, say so: the
+    user relaunches you.
 
 **The Gate's turn.** Publishing -- push, pull request, comment, issue, mail -- is the
 Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the

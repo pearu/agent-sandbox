@@ -754,7 +754,14 @@ STUB
   chmod +x "$H/bin/setsid"
 }
 
-@test "--roles starts the host side that takes resets once the session is made: setsid -f, the engine with __roles-resets, tmux, the session, the project and ROLE<TAB>KEYS per role; stdin /dev/null, its output to <state>/.roles-resets/<slug>.log" {
+# sd ROLE [PROFILE] -- the --shutdown the host side runs for ROLE (#416).
+sd() {
+  local l
+  printf -v l '%q ' "$SELF" --profile "${2:-claude}" --role "$1" --shutdown
+  printf '%s' "${l% }"
+}
+
+@test "--roles starts the host side that takes resets and restarts once the session is made: setsid -f, the engine with __roles-resets, tmux, the session, the project and ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>RELAUNCH per role; stdin /dev/null, its output to <state>/.roles-resets/<slug>.log" {
   stub_setsid
   mkdir -p "$PROJ/.asb/coord/to"
   local log
@@ -762,35 +769,59 @@ STUB
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b.2 --resume
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  local -a want=(-f "$SELF" __roles-resets "$H/bin/tmux" proj "$PROJ" $'a\t/clear' $'b.2\t/clear')
+  local -a want=(-f "$SELF" __roles-resets "$H/bin/tmux" proj "$PROJ"
+    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --resume)"
+    "b.2"$'\t'"/clear"$'\t'"$(sd b.2)"$'\t'"$(window --role b.2 --resume)")
   [ "$(printf '%s\n' "${S[@]}")" = "$(printf '%s\n' "${want[@]}")" ]
   [ "$(cat "$H/setsid.fds")" = "$(printf '/dev/null\n%s\nmade' "$log")" ]
   [[ "$output" == *"the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start (/clear) in that role's pane, then goes (log: $log)"* ]]
+  [[ "$output" == *"the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; on a failure its reason is written into it (log: $log)"* ]]
   [[ "$output" != *"no reset taken"* ]]
   [[ "$output" == *"To attach to it: tmux attach -t proj"* ]]
   # the log's directory is not a profile's: --list reads every profile's stores, and finds none
   [ -d "${log%/*}" ]
   run_engine -- asb --list-all
   [[ "$output" != *"roles-resets"* ]]
-  # served roles: their loop takes the marker; a project without the inboxes: nothing to take
+  # a line without --resume: the relaunch adds it, after the line's own words
+  rm -f "$H/setsid"
+  run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a --allow pypi.org
+  [ "$status" -eq 0 ]
+  mapfile -t S <"$H/setsid"
+  [ "${S[6]}" = "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --allow pypi.org --resume)" ]
+  [ "${#S[@]}" -eq 7 ]
+  # served roles: watched for restarts only (their loop takes the reset), the line as it
+  # is (the loop resumes its own session); no reset said, and none lacking
   rm -f "$H/setsid"
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b --serve
   [ "$status" -eq 0 ]
-  [ ! -e "$H/setsid" ] && [[ "$output" != *"takes resets"* ]]
+  mapfile -t S <"$H/setsid"
+  want=("a"$'\t\t'"$(sd a)"$'\t'"$(window --role a --serve)" "b"$'\t\t'"$(sd b)"$'\t'"$(window --role b --serve)")
+  [ "$(printf '%s\n' "${S[@]:6}")" = "$(printf '%s\n' "${want[@]}")" ]
+  [[ "$output" != *"takes resets"* ]]
+  [[ "$output" != *"no reset taken"* ]]
+  [[ "$output" == *"the host takes restarts"* ]]
+  # a project without the inboxes: nothing to take
+  rm -f "$H/setsid"
   rm -r "$PROJ/.asb"
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b
   [ "$status" -eq 0 ]
-  [ ! -e "$H/setsid" ] && [[ "$output" != *"takes resets"* ]]
+  [ ! -e "$H/setsid" ]
+  [[ "$output" != *"takes resets"* ]]
+  [[ "$output" != *"takes restarts"* ]]
 }
 
-@test "--roles with mixed agents: each role's keys are its agent's profile's [agent] clear; a role whose profile has none is not watched, and the launch says so (#355)" {
+@test "--roles with mixed agents: each role's keys are its agent's profile's [agent] clear; a role whose profile has none is watched for restarts only, and the launch says so; its shutdown names its profile, and a profile that cannot resume gets no relaunch (#355, #416)" {
   stub_setsid
   mkdir -p "$PROJ/.asb/coord/to"
   two_profiles
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" "$P2" -- asb --roles a b c --agent b=codex
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  [ "$(printf '%s\n' "${S[@]:5}")" = "$(printf '%s\n' "$PROJ" $'a\t/clear' $'c\t/clear')" ]
+  local -a want=("$PROJ"
+    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --resume)"
+    "b"$'\t\t'"$(sd b codex)"$'\t'"$(window --role b --agent codex --resume)"
+    "c"$'\t'"/clear"$'\t'"$(sd c)"$'\t'"$(window --role c --resume)")
+  [ "$(printf '%s\n' "${S[@]:5}")" = "$(printf '%s\n' "${want[@]}")" ]
   [[ "$output" == *"no reset taken for b: their agent's profile says nothing of a fresh start ([agent] clear); a fresh start there is yours to give"* ]]
   [[ "$output" == *"types the role's fresh start (/clear) in that role's pane"* ]]
   # a profile with keys of its own: per role
@@ -799,16 +830,21 @@ STUB
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" "$P2" -- asb --roles a b --agent b=codex
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  [ "$(printf '%s\n' "${S[@]:5}")" = "$(printf '%s\n' "$PROJ" $'a\t/clear' $'b\t/new')" ]
+  [ "$(printf '%s\n' "${S[@]:6}" | cut -f1,2)" = "$(printf '%s\n' $'a\t/clear' $'b\t/new')" ]
   [[ "$output" == *"types the role's fresh start (/clear, /new) in that role's pane"* ]]
   [[ "$output" != *"no reset taken"* ]]
-  # no role with keys: no watcher, and every role named
+  # no role with keys: watched for restarts, and every role named; a profile with no
+  # [agent] resume: no relaunch line, so the host side ends nothing (its answer says why)
   rm -f "$H/setsid"
-  CLEAR="" two_profiles
+  CLEAR="" RESUME="" two_profiles
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" "$P2" -- asb --roles a b --agent codex
   [ "$status" -eq 0 ]
-  [ ! -e "$H/setsid" ]
-  [[ "$output" == *"no reset taken for a b:"* ]] && [[ "$output" != *"takes resets"* ]]
+  mapfile -t S <"$H/setsid"
+  want=("a"$'\t\t'"$(sd a codex)"$'\t' "b"$'\t\t'"$(sd b codex)"$'\t')
+  [ "$(printf '%s\n' "${S[@]:6}")" = "$(printf '%s\n' "${want[@]}")" ]
+  [[ "$output" == *"no reset taken for a b:"* ]]
+  [[ "$output" != *"takes resets"* ]]
+  [[ "$output" == *"the host takes restarts"* ]]
 }
 
 # stub_tmux_watched -- a tmux for the watcher: every call appended to $H/calls; has-session
@@ -884,6 +920,274 @@ resets() {
   [ "$(grep -c '^send-keys' "$H/calls")" -eq 1 ]
   [ "$(grep -c '^has-session' "$H/calls")" -eq 4 ]
   [[ "$output" == *"--roles: could not remove $PROJ/.asb/coord/to/a.reset; no reset"* ]]
+}
+
+# THE HOST TAKES RESTARTS (#416). An empty .asb/coord/to/ROLE.restart: the approval
+# checked, the role's --shutdown run, its pane respawned with its relaunch line, and the
+# marker removed once a keeper of the role is live; on a failure the reason is written
+# into the marker, which is then not taken again.
+
+# stub_tmux_restart -- the watcher's tmux, for restarts: every call appended to $CALLS;
+# has-session succeeds for its first $HAS_N calls; list-panes prints $PANES;
+# display-message prints $PANE_PID (when set); capture-pane two lines of an old screen.
+# respawn-pane writes its argv to
+# $CALLS.respawn, the children $PANE_PID has then to $CALLS.kids, exits $RESPAWN_RC, and
+# with $LIVE set makes a live keeper record there after 0.5 s (its sleeper's pid in
+# $KEEPERS), noting in $CALLS.live whether the marker $MARK was still there just before
+# (with $AGAIN set, it then writes $MARK again once, as soon as it has gone).
+stub_tmux_restart() {
+  cat >"$H/bin/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CALLS"
+case "$1" in
+  has-session)
+    n=$(($(cat "$CALLS.n" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"$CALLS.n"
+    ((n <= HAS_N))
+    exit
+    ;;
+  list-panes) cat "$PANES" ;;
+  display-message) [[ -z "${PANE_PID:-}" ]] || printf '%s\n' "$PANE_PID" ;;
+  capture-pane) printf 'old screen line 1\nold screen line 2\n' ;;
+  respawn-pane)
+    printf '%s\n' "$@" >"$CALLS.respawn"
+    [[ -z "${PANE_PID:-}" ]] || cat "/proc/$PANE_PID/task/$PANE_PID/children" >"$CALLS.kids"
+    ((${RESPAWN_RC:-0} == 0)) || exit "$RESPAWN_RC"
+    if [[ -n "${LIVE:-}" ]]; then
+      sleep 60 </dev/null >/dev/null 2>&1 3>&- &
+      p=$!
+      echo "$p" >>"$KEEPERS"
+      read -r st <"/proc/$p/stat"
+      read -r -a f <<<"${st##*) }"
+      (
+        sleep 0.5
+        if [[ -e "$MARK" ]]; then echo there >"$CALLS.live"; else echo gone >"$CALLS.live"; fi
+        mkdir -p "$LIVE/keeper"
+        printf '%s %s %s %s\n' "$p" "${f[19]}" "$p" "${f[19]}" >"$LIVE/keeper/id"
+        # AGAIN: a new marker as soon as this one has gone, before the watcher's next look
+        if [[ -n "${AGAIN:-}" && ! -e "$CALLS.again" ]]; then
+          for ((i = 0; i < 250; i++)); do
+            [[ -e "$MARK" ]] || break
+            sleep 0.02
+          done
+          : >"$CALLS.again"
+          : >"$MARK"
+        fi
+      ) </dev/null >/dev/null 2>&1 3>&- &
+    fi
+    ;;
+esac
+exit 0
+STUB
+  chmod +x "$H/bin/tmux"
+  # the role's --shutdown: where it ran, its words, and whether the marker was there
+  cat >"$H/shutdown" <<'STUB'
+#!/usr/bin/env bash
+m=gone
+[[ -e "$MARK" || -L "$MARK" ]] && m=there
+printf '%s|%s|%s\n' "$PWD" "$*" "$m" >>"$CALLS.shutdowns"
+[[ -z "${RM_MARK:-}" ]] || rm -f "$MARK" # the Supervisor removes it meanwhile
+exit "${SD_RC:-0}"
+STUB
+  chmod +x "$H/shutdown"
+  TO="$PROJ/.asb/coord/to"
+  mkdir -p "$TO"
+  printf '%%1 a\n%%2 b\n' >"$H/panes"
+  LIVE_A="$H/home/.local/state/agent-sandbox/claude/$(printf '%s' "$PROJ" | sed 's:[^A-Za-z0-9-]:-:g')/a"
+  RL='asb --role a --resume; exec "${SHELL:-bash}"'
+}
+
+teardown() {
+  [[ -s "${H:-}/keepers" ]] || return 0
+  local p
+  while read -r p; do kill "$p" 2>/dev/null || :; done <"$H/keepers"
+  return 0
+}
+
+# restarts [VAR=VALUE...] -- run the watcher for session `sess` and role a, as --roles
+# starts it: a's entry is ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>RELAUNCH, RELAUNCH being $RL
+restarts() {
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" CALLS="$H/calls" PANES="$H/panes" HAS_N="${HAS_N:-1}" \
+    MARK="$TO/a.restart" KEEPERS="$H/keepers" AGENT_SANDBOX_RESTART_WAIT="${WAIT:-5}" "$@" \
+    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t'"/clear"$'\t'"$H/shutdown --role a"$'\t'"$RL" </dev/null
+}
+
+# calls_are LINE... -- the tmux calls, in order, are these
+calls_are() {
+  local -a C
+  mapfile -t C <"$H/calls"
+  [ "$(printf '%s\n' "${C[@]}")" = "$(printf '%s\n' "$@")" ] || {
+    printf 'calls:\n%s\n' "${C[@]}"
+    return 1
+  }
+}
+
+@test "the host side of --roles takes a restart marker: the approval, then the role's --shutdown from the project, the pane's own process let finish, its last screen saved in the log, respawn-pane -k on the role's pane in the project with its relaunch line, and the marker removed only once a keeper of the role is live (#416)" {
+  stub_tmux_restart
+  : >"$TO/a.restart"
+  # the pane's process still has the old launch as its child for a moment
+  bash -c 'sleep 0.5; :' 3>&- &
+  local pp=$!
+  restarts LIVE="$LIVE_A" PANE_PID="$pp"
+  [ "$status" -eq 0 ]
+  calls_are "has-session -t =sess" "list-panes -s -t =sess -F #{pane_id} #{@role}" \
+    "display-message -p -t %1 #{pane_pid}" "capture-pane -p -t %1" "respawn-pane -k -t %1 -c $PROJ bash -c $RL" \
+    "has-session -t =sess"
+  [ "$(cat "$H/calls.shutdowns")" = "$PROJ|--role a|there" ]
+  # the old screen, which the respawn clears, is in the log under its header
+  [[ "$output" == *"role 'a': the last screen of pane %1, before its relaunch:"$'\n'"old screen line 1"$'\n'"old screen line 2"$'\n'* ]]
+  [ "$(cat "$H/calls.respawn")" = "$(printf '%s\n' respawn-pane -k -t %1 -c "$PROJ" bash -c "$RL")" ]
+  [ ! -s "$H/calls.kids" ]             # respawned once the old launch had gone
+  [ "$(cat "$H/calls.live")" = there ] # the marker stayed until the keeper was live
+  [ ! -e "$TO/a.restart" ]
+  [[ "$output" == *"role 'a': a restart marker -- ended it, relaunched it in pane %1, its keeper is live, and removed the marker"* ]]
+  # a link as the marker: removed, never followed
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.live"
+  rm -rf "${LIVE_A:?}/keeper"
+  echo keep >"$H/victim"
+  ln -s "$H/victim" "$TO/a.restart"
+  restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ ! -L "$TO/a.restart" ]
+  [ "$(cat "$H/victim")" = keep ]
+  # a marker with no pane of that role: it stays, empty, and nothing is ended
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns"
+  printf '%%2 b\n' >"$H/panes"
+  : >"$TO/a.restart"
+  restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ -e "$TO/a.restart" ]
+  [ ! -s "$TO/a.restart" ]
+  [ ! -e "$H/calls.shutdowns" ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 0 ]
+}
+
+@test "the host side of --roles: a restart that cannot run ends nothing -- .agent-sandbox not approved as it is, or a profile that cannot resume: the reason written into the marker, one line, and not taken again (#416)" {
+  stub_tmux_restart
+  : >"$TO/a.restart"
+  echo '# an edit not approved' >>"$PROJ/.agent-sandbox"
+  HAS_N=3 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TO/a.restart")" = "not restarted: .agent-sandbox is not approved as it is now (review it on the host: agent-sandbox --trust); it runs on as it was" ]
+  [ "$(wc -l <"$TO/a.restart")" -eq 1 ]
+  [ ! -e "$H/calls.shutdowns" ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 1 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 0 ]
+  [[ "$output" == *"role 'a': a restart marker -- not restarted: .agent-sandbox is not approved"* ]]
+  # an approved file gone since: not approved either
+  rm -f "$H/calls" "$H/calls.n" "$PROJ/.agent-sandbox"
+  : >"$TO/a.restart"
+  restarts LIVE="$LIVE_A"
+  [[ "$(cat "$TO/a.restart")" == "not restarted: .agent-sandbox is not approved as it is now"* ]]
+  [ ! -e "$H/calls.shutdowns" ]
+  # approved again; a link as the marker is replaced by the answer, never followed
+  agents '[agent]' 'command = claude'
+  rm -f "$H/calls" "$H/calls.n" "$TO/a.restart"
+  echo keep >"$H/victim"
+  ln -s "$H/victim" "$TO/a.restart"
+  RL="" HAS_N=3 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ ! -L "$TO/a.restart" ]
+  [ "$(cat "$H/victim")" = keep ]
+  [ "$(cat "$TO/a.restart")" = "not restarted: its agent's profile says nothing of how to resume a session ([agent] resume), so its pane would start a new one; it runs on as it was" ]
+  [ ! -e "$H/calls.shutdowns" ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 1 ]
+}
+
+@test "the host side of --roles: a restart that fails on the way -- the shutdown fails, the pane cannot be respawned, or no keeper of the role is live within the wait: the reason written into the marker, one line, taken once, and never into a marker removed meanwhile (#416)" {
+  stub_tmux_restart
+  : >"$TO/a.restart"
+  HAS_N=3 restarts LIVE="$LIVE_A" SD_RC=3
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TO/a.restart")" = "not relaunched: its shutdown failed (status 3; see the log), so its pane was left as it was" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 1 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 0 ]
+  # the pane cannot be respawned
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns"
+  : >"$TO/a.restart"
+  HAS_N=3 restarts LIVE="$LIVE_A" RESPAWN_RC=1
+  [ "$(cat "$TO/a.restart")" = "ended, and not relaunched: tmux could not respawn its pane %1; relaunch it there yourself" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 1 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 1 ]
+  # relaunched, and no keeper comes up within the wait: a record left by a keeper that
+  # did not end cleanly (a SIGKILL, a reboot) is no live keeper
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns"
+  : >"$TO/a.restart"
+  mkdir -p "$LIVE_A/keeper"
+  bash -c : &
+  wait "$!"
+  printf '%s 1 %s 1\n' "$!" "$!" >"$LIVE_A/keeper/id"
+  WAIT=1 HAS_N=3 restarts
+  [ "$(cat "$TO/a.restart")" = "relaunched in pane %1, but no keeper of it was running within 1 s; see that pane" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 1 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 1 ]
+  [[ "$output" == *"role 'a': a restart marker -- relaunched in pane %1, but no keeper"* ]]
+  # a marker removed meanwhile is not made again by the answer
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns"
+  : >"$TO/a.restart"
+  restarts LIVE="$LIVE_A" SD_RC=3 RM_MARK=1
+  [ "$status" -eq 0 ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 1 ]
+  [ ! -e "$TO/a.restart" ]
+  [ ! -L "$TO/a.restart" ]
+}
+
+@test "the host side of --roles: a restart marker it can neither answer nor remove is taken once, not at every second; one it answered is no guard against the next (#416)" {
+  stub_tmux_restart
+  : >"$TO/a.restart"
+  echo '# an edit not approved' >>"$PROJ/.agent-sandbox"
+  chmod 555 "$TO"
+  HAS_N=3 restarts LIVE="$LIVE_A"
+  chmod 755 "$TO"
+  [ "$status" -eq 0 ]
+  [ ! -s "$TO/a.restart" ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 1 ]
+  [[ "$output" == *"--roles: could not write the reason into $PROJ/.asb/coord/to/a.restart"* ]]
+  # relaunched, and the marker cannot go: not ended again
+  agents '[agent]' 'command = claude'
+  rm -f "$H/calls" "$H/calls.n"
+  chmod 555 "$TO"
+  HAS_N=3 restarts LIVE="$LIVE_A"
+  chmod 755 "$TO"
+  [ "$status" -eq 0 ]
+  [ -e "$TO/a.restart" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 1 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 1 ]
+  [[ "$output" == *"--roles: could not remove $PROJ/.asb/coord/to/a.restart; it is not taken again until it has gone"* ]]
+  # one it answered is no guard: a marker written again before the next look is taken
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns" "$TO/a.restart" "${LIVE_A:?}/keeper/id"
+  : >"$TO/a.restart"
+  HAS_N=2 restarts LIVE="$LIVE_A" AGAIN=1
+  [ "$status" -eq 0 ]
+  [ -e "$H/calls.again" ]
+  [ ! -e "$TO/a.restart" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 2 ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 2 ]
+}
+
+@test "the host side of --roles: a restart and a reset marker together: the restart first, and the reset waits for the next look; a role with no keys takes restarts only (#416)" {
+  stub_tmux_restart
+  : >"$TO/a.restart"
+  : >"$TO/a.reset"
+  HAS_N=2 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  local fmt='#{pane_id} #{@role}'
+  calls_are "has-session -t =sess" "list-panes -s -t =sess -F $fmt" \
+    "display-message -p -t %1 #{pane_pid}" "capture-pane -p -t %1" "respawn-pane -k -t %1 -c $PROJ bash -c $RL" \
+    "has-session -t =sess" "list-panes -s -t =sess -F $fmt" "send-keys -t %1 /clear Enter" "has-session -t =sess"
+  [ ! -e "$TO/a.restart" ]
+  [ ! -e "$TO/a.reset" ]
+  # no keys (a served role, or a profile with no clear): its reset is not the host's
+  rm -f "$H/calls" "$H/calls.n" "${LIVE_A:?}/keeper/id"
+  : >"$TO/a.restart"
+  : >"$TO/a.reset"
+  run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" CALLS="$H/calls" PANES="$H/panes" HAS_N=2 \
+    MARK="$TO/a.restart" KEEPERS="$H/keepers" LIVE="$LIVE_A" AGENT_SANDBOX_RESTART_WAIT=5 \
+    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t\t'"$H/shutdown --role a"$'\t'"$RL" </dev/null
+  [ "$status" -eq 0 ]
+  [ ! -e "$TO/a.restart" ]
+  [ -e "$TO/a.reset" ]
+  [ "$(grep -c '^send-keys' "$H/calls")" -eq 0 ]
 }
 
 @test "--roles without a terminal: a pending link already approved needs no review, the panes open (#401)" {
