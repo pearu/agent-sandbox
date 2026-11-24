@@ -78,6 +78,8 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   file, as with any ruling.
 - A Task names what its tests cover only when the project's `.asb/tests` does not; the
   test policy is the project's, not the Task's.
+- A measurement a Task cites goes in your directory; throwaway runs go in
+  `.asb/scratch/<task>/`, deleted once the Task has landed.
 - A restart question from S (an approved change to your policy or purpose file, which
   only a relaunch applies): answer `ready` in your messages once no turn's work is in
   flight and no background command but your watcher runs, after writing there what

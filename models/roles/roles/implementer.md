@@ -70,6 +70,13 @@ suite running, a section unwritten) ends by naming what is pending and what foll
 - Tests, while iterating: run the `iterate` command of `.asb/tests` (the tests your
   change affects), not the whole suite, and the Handoff lists what ran. The whole suite
   is the Reviewer's, once, at acceptance; a failure there comes back as a finding.
+- Throwaway work goes in `.asb/scratch/<task>/`, never inside your tree or a directory
+  the roles share: worktrees, copies of a tree, mutants, measurement and coverage
+  outputs. A git worktree can live there too, named by an absolute path, since git runs
+  in your tree: from the project directory, `git -C .asb/impl/{n} worktree add
+  "$PWD/.asb/scratch/<task>/wt" BRANCH`. Once the Task has landed, delete its directory
+  and run `git -C .asb/impl/{n} worktree prune`; keep only what an open Task still
+  needs, and say in your messages what you kept and why.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.

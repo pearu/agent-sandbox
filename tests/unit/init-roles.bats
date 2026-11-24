@@ -941,6 +941,51 @@ effort_of() {
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: throwaway work goes in .asb/scratch/<task>/, out of every tree, and is cleared once the Task has landed; the Supervisor reminds the Implementer and the Reviewer in the next Task's message" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local imp="$PROJ/.asb/roles/implementer-1.md" rev="$PROJ/.asb/roles/reviewer-1.md"
+  local pl="$PROJ/.asb/roles/planner-1.md" sup="$PROJ/.asb/roles/supervisor.md" p r
+  # the Implementer, in **Protocol.**: where, never in its tree, worktrees, the clearing
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$imp" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- Throwaway work goes in `.asb/scratch/<task>/`, never inside your tree or a directory the roles share: worktrees, copies of a tree, mutants, measurement and coverage outputs.'* ]]
+  [[ "$p" == *'A git worktree can live there too, named by an absolute path, since git runs in your tree: from the project directory, `git -C .asb/impl/1 worktree add "$PWD/.asb/scratch/<task>/wt" BRANCH`.'* ]]
+  [[ "$p" == *'Once the Task has landed, delete its directory and run `git -C .asb/impl/1 worktree prune`; keep only what an open Task still needs, and say in your messages what you kept and why.'* ]]
+  [ "$(grep -cF -- '.asb/scratch/<task>/' "$imp")" -eq 2 ]
+  # git runs in the clone: a relative worktree path would land inside it (T34, F1)
+  run ! grep -qE 'worktree add \.?\.?/?\.asb/' "$imp"
+  run ! grep -qF '`git worktree' "$imp"
+  # the Reviewer, in **Protocol.**: no history, so no worktrees; its deliverables stay put
+  r="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$rev" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$r" == *'- Throwaway work goes in `.asb/scratch/<task>/`, never in a directory the roles share: copies of a tree, mutants, measurement and coverage outputs.'* ]]
+  [[ "$r" == *'What another role must run is a deliverable, not scratch, and stays in your Review directory.'* ]]
+  [[ "$r" == *'Once the Task has landed, delete its scratch directory; keep only what an open Task still needs, and say in your messages what you kept and why.'* ]]
+  run ! grep -qF 'worktree' "$rev"
+  # the Planner, in **Protocol.**: cited measurements in its directory, the rest scratch
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$pl" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- A measurement a Task cites goes in your directory; throwaway runs go in `.asb/scratch/<task>/`, deleted once the Task has landed.'* ]]
+  # the Supervisor, in **Sending a message.**: a line of the next Task's message, at green
+  p="$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *"- Once a step's run is green, the message that opens the next Task for its Implementer and for its Reviewer carries one line more: clear the landed Task's scratch (\`.asb/scratch/<task>/\`, its worktrees pruned), keeping only what an open Task still needs."* ]]
+  [[ "$p" == *'It is a line of that message, not a message of its own.'* ]]
+  for r in supervisor planner implementer reviewer; do
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
+  done
+}
+
+# shellcheck disable=SC2016 # backquotes are the doc's text, not ours
+@test "docs/roles.md: a role's throwaway work goes in .asb/scratch/<task>/ and is cleared once the Task lands; why: the trust review's link scan walks the clones, not the scratch (#401)" {
+  local f docs
+  f="$(dirname "$ENGINE")/docs/roles.md"
+  docs="$(tr '\n' ' ' <"$f" | tr -s ' ')"
+  [[ "$docs" == *'- **Scratch is cleared once its Task lands.** A role'"'"'s throwaway work (worktrees, copies of a tree, mutants, measurement and coverage outputs) goes in `.asb/scratch/<task>/`, never in a clone or a directory the roles share, and is deleted once the Task has landed;'* ]]
+  [[ "$docs" == *'the Supervisor reminds the Implementer and the Reviewer in the message that opens their next Task.'* ]]
+  [[ "$docs" == *'Why: `asb --trust` and `--apply` scan every directory a role binds from the host for symbolic links (#401), so leftovers in a clone cost every approval:'* ]]
+  [[ "$docs" == *'`.asb/scratch/` is each role'"'"'s own store, which the scan does not enter, so clearing it frees the disk; it does not speed the review.'* ]]
+  [ "$(sed -n '/^- \*\*Scratch is cleared once its Task lands\.\*\*/,/^- \*\*Builds\.\*\*/p' "$f" | awk 'length > 88' | wc -l)" -eq 0 ]
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
 @test "the roles model: after the Gate's push the Supervisor's reply ends on the Planner's step or a question, never on the watch; a Task already written for the waiting Implementer is asked about ahead and goes at green (#333)" {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]

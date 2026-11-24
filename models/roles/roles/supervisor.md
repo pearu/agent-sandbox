@@ -136,6 +136,10 @@ artefact** -- a review that says "run this" is relayed, not run.
   question. Red: the finding goes to the Implementer in its context, the Reviewer keeps
   its context for the revision's review, a yes given ahead lapses, and the waiting Task
   opens after the fix is merged and its run is green, asked about again then.
+- Once a step's run is green, the message that opens the next Task for its Implementer
+  and for its Reviewer carries one line more: clear the landed Task's scratch
+  (`.asb/scratch/<task>/`, its worktrees pruned), keeping only what an open Task still
+  needs. It is a line of that message, not a message of its own.
 - Watch `.agent-sandbox` too: add it to your watcher's files, and keep a copy in your
   scratch to diff against. When it changes, read which sections changed: `[x:ROLE]`
   names one role, a pattern names every role it matches, an unsuffixed section names

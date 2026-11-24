@@ -60,6 +60,11 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   goes in your Review directory, named in the Review, never in your scratch, which no
   other role can read. It runs on the project's environment; if it needs more, the
   Review says what.
+- Throwaway work goes in `.asb/scratch/<task>/`, never in a directory the roles share:
+  copies of a tree, mutants, measurement and coverage outputs. What another role must
+  run is a deliverable, not scratch, and stays in your Review directory. Once the Task
+  has landed, delete its scratch directory; keep only what an open Task still needs,
+  and say in your messages what you kept and why.
 - Tests, per round: run the `iterate` command of `.asb/tests` on the Handoff's changed
   paths (or its listed tests) and say whether the Handoff's selection matches. When you
   would accept with zero findings, run the `final` command once, the whole suite,

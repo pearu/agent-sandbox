@@ -241,6 +241,16 @@ Every role launches from the repository itself:
   Implementers, whose clones read through it); a clone's is its Implementer's. In a
   tree whose history is hidden, git says `not a git repository`. A Planner that wants
   history reads it on GitHub.
+- **Scratch is cleared once its Task lands.** A role's throwaway work (worktrees,
+  copies of a tree, mutants, measurement and coverage outputs) goes in
+  `.asb/scratch/<task>/`, never in a clone or a directory the roles share, and is
+  deleted once the Task has landed; the Supervisor reminds the Implementer and the
+  Reviewer in the message that opens their next Task. Why: `asb --trust` and `--apply`
+  scan every directory a role binds from the host for symbolic links (#401), so
+  leftovers in a clone cost every approval: a clone's 10,000 links, most of them a 38 GB
+  coverage report's, once cost each approval about 40 s of CPU. `.asb/scratch/` is each
+  role's own store, which the scan does not enter, so clearing it frees the disk; it
+  does not speed the review.
 - **Builds.** An Implementer builds in its clone; the Supervisor builds `main` after a
   merge, so `main` always holds the integration state and its build, which you can try
   on the host. The Supervisor re-runs the suite only when `main` moved since the
