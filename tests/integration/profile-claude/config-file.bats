@@ -15,7 +15,7 @@ setup() {
   load "$BATS_TEST_DIRNAME/../../helpers/common"
   load "$BATS_TEST_DIRNAME/../../helpers/integration"
   require_bwrap
-  I="$(mkdir -p "$BATS_TEST_TMPDIR/i" && cd "$BATS_TEST_TMPDIR/i" && pwd -P)"
+  I="$(mkdir -p "$BATS_TEST_TMPDIR/i.x" && cd "$BATS_TEST_TMPDIR/i.x" && pwd -P)" # a "." the slugs convert (#454)
   IHOME="$I/home"
   IWORK="$I/work"
   mkdir -p "$IHOME/.local/share/claude/versions/9.9.9" "$IWORK"
@@ -44,7 +44,7 @@ PROBE
   cp "$IHOME/.claude.json" "$I/host-before.json"
   local inside="$IHOME/.claude/.claude.json"
   inside="${inside//\//_}"
-  STORE="$IHOME/.local/state/agent-sandbox/claude/${IWORK//[^A-Za-z0-9-]/-}/default/config/seed-only/${inside#_}"
+  STORE="$IHOME/.local/state/agent-sandbox/claude/$(state_slug "$IWORK")/default/config/seed-only/${inside#_}"
 }
 
 run_claude() {

@@ -90,8 +90,6 @@ esac
 # when the run ends, an interrupted run included. (Not bats' --tempdir, which its source
 # marks internal.) bats told to keep its directory (--no-tempdir-cleanup, to debug a
 # test) prints where it is, and the run's directory is then kept with it.
-# No dot in its name: tests derive a Claude project slug from a path with ${p//\//-}, as
-# Claude Code does for one of letters, digits, - and / (profile-claude/memory.bats).
 scope="$(mktemp -d "${TMPDIR:-/tmp}/asb-run-XXXXXX")"
 keep=0
 for a in "$@"; do

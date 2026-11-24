@@ -7,7 +7,7 @@ setup() {
   load "$BATS_TEST_DIRNAME/../../helpers/common"
   load "$BATS_TEST_DIRNAME/../../helpers/integration"
   require_bwrap
-  I="$(mkdir -p "$BATS_TEST_TMPDIR/i" && cd "$BATS_TEST_TMPDIR/i" && pwd -P)"
+  I="$(mkdir -p "$BATS_TEST_TMPDIR/i.x" && cd "$BATS_TEST_TMPDIR/i.x" && pwd -P)" # a "." the slugs convert (#454)
   IHOME="$I/home"
   IWORK="$I/work"
   mkdir -p "$IHOME/.local/share/claude/versions/9.9.9" "$IWORK"
@@ -15,20 +15,21 @@ setup() {
 #!/usr/bin/env bash
 R="$PWD/report"; : >"$R"; say() { printf '%s=%s\n' "$1" "$2" >>"$R"; }
 w() { touch "$1" 2>/dev/null && { rm -f "$1"; echo yes; } || echo no; }
-cur="${PWD//\//-}"
 say projects "$(ls -A "$HOME/.claude/projects" 2>/dev/null | sort | tr '\n' ' ')"
-say current_writable "$(w "$HOME/.claude/projects/$cur/memory/probe")"
-say current_native "$([[ -f $HOME/.claude/projects/$cur/memory/MEMORY.md ]] && echo yes || echo no)"
+say current_writable "$(w "$HOME/.claude/projects/$CUR_SLUG/memory/probe")"
+say current_native "$([[ -f $HOME/.claude/projects/$CUR_SLUG/memory/MEMORY.md ]] && echo yes || echo no)"
 say shared_readable "$([[ -f $HOME/.claude/projects/$SHARED_SLUG/memory/note.md ]] && echo yes || echo no)"
 say shared_writable "$(w "$HOME/.claude/projects/$SHARED_SLUG/memory/probe")"
 say other_visible "$([[ -e $HOME/.claude/projects/$OTHER_SLUG ]] && echo yes || echo no)"
 PROBE
   chmod +x "$IHOME/.local/share/claude/versions/9.9.9/claude"
-  CUR_SLUG="${IWORK//\//-}"
+  # The slugs are the engine's (#454). The stub, inside, gets them from the launch
+  # (AGENT_SANDBOX_FORWARD): the profile file the setup reads need not be in view there.
+  CUR_SLUG="$(claude_slug "$IWORK")"
   OTHER="$I/other-proj"
   SHARED="$I/shared-proj"
-  OTHER_SLUG="${OTHER//\//-}"
-  SHARED_SLUG="${SHARED//\//-}"
+  OTHER_SLUG="$(claude_slug "$OTHER")"
+  SHARED_SLUG="$(claude_slug "$SHARED")"
   mkdir -p "$IHOME/.claude/projects/$CUR_SLUG/memory" \
     "$IHOME/.claude/projects/$OTHER_SLUG/memory" \
     "$IHOME/.claude/projects/$SHARED_SLUG/memory"
@@ -46,7 +47,7 @@ run_claude() {
     AGENT_SANDBOX_PROFILE_DIR="$REPO_ROOT/profiles" AGENT_SANDBOX_NET=none \
     AGENT_SANDBOX_SESSION_BASE="$I/base" \
     AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" \
-    AGENT_SANDBOX_FORWARD="SHARED_SLUG OTHER_SLUG" SHARED_SLUG="$SHARED_SLUG" OTHER_SLUG="$OTHER_SLUG" \
+    AGENT_SANDBOX_FORWARD="CUR_SLUG SHARED_SLUG OTHER_SLUG" CUR_SLUG="$CUR_SLUG" SHARED_SLUG="$SHARED_SLUG" OTHER_SLUG="$OTHER_SLUG" \
     "$@" \
     bash -c 'cd "$1" && shift && exec env "$@"' _ "$IWORK" "${ENGINE_CMD[@]}" "$IHOME/.local/share/claude/versions/9.9.9/claude" probe
   declare -gA M=()

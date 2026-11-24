@@ -23,7 +23,7 @@ setup() {
 #!/usr/bin/env bash
 exit 0
 PROBE
-  SB="$IHOME/.local/state/agent-sandbox/probe/$(printf '%s' "$(cd "$IWORK" && pwd -P)" | sed 's:[^A-Za-z0-9-]:-:g')/default"
+  SB="$IHOME/.local/state/agent-sandbox/probe/$(state_slug "$(cd "$IWORK" && pwd -P)")/default"
   printf 'YOURS\n' >"$IHOME/.probe/docs/a.md"
   BASE=(AGENT_SANDBOX_NET=none XDG_STATE_HOME="$IHOME/.local/state")
   # The keeper's grace in the grace tests: kcov's start-up (coverage) outlasts 2 s.

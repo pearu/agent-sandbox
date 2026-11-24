@@ -18,7 +18,7 @@ if [[ -n "${PROBE_WRITE:-}" ]]; then
 fi
 say finished yes
 PROBE
-  SB="$IHOME/.local/state/agent-sandbox/probe/$(printf '%s' "$(cd "$IWORK" && pwd -P)" | sed 's:[^A-Za-z0-9-]:-:g')/default"
+  SB="$IHOME/.local/state/agent-sandbox/probe/$(state_slug "$(cd "$IWORK" && pwd -P)")/default"
   ENV=(AGENT_SANDBOX_NET=none XDG_STATE_HOME="$IHOME/.local/state" AGENT_SANDBOX_FORWARD="PROBE_WRITE")
 }
 
