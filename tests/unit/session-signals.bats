@@ -260,6 +260,22 @@ cleaned() {
   [[ -n "${AGENT_SANDBOX_KCOV:-}" ]] || [ "$(cleanups)" -eq 1 ]
 }
 
+# complaints FILE -- bash's own complaints in a launch's output FILE: its lines
+# `…/asb: line N: …`, all but one. A TERM of a burst that arrives after the launch's
+# trap has started _as_session_signal and before its first line, `trap '' INT TERM HUP`,
+# has run stays pending; bash's run_pending_traps then finds that trap ignored, and
+# warns "bad value in trap_list[15]: 0x1" (0x1, SIG_IGN) instead of running it. bash's
+# trap.c checks for this very case, a race ("This is possible due to a race
+# condition"), so as not to run a handler that is no longer there: the TERM is ignored,
+# as the handler means it to be, and the cleanup has run once. That line, exactly, is
+# no complaint. Every other is, its neighbours included: the trap found at its default
+# (the "resending" line, a TERM bash sends itself again), any other value, the same
+# warning for another signal (the burst is TERM only), and any other warning.
+complaints() {
+  grep '/asb: line [0-9]*:' "$1" \
+    | grep -vx '.*/asb: line [0-9]*: warning: run_pending_traps: bad value in trap_list\[15\]: 0x1' || :
+}
+
 # signal_once SIG STATUS -- one SIG to a launch in setup ends it with STATUS, cleaned up
 # once.
 signal_once() {
@@ -284,10 +300,37 @@ signal_once() {
   run ! grep -q "Segmentation fault" "$H/out"
   run ! grep -q "unexpected EOF" "$H/out"
   # bash's own complaints about its state (5.2.37 on main: "pop_var_context: head of
-  # shell_variables not a function context")
-  run ! grep -q "/asb: line [0-9]*:" "$H/out"
+  # shell_variables not a function context"), but its warning for a TERM it ignored
+  run complaints "$H/out"
+  [ -z "$output" ]
   cleaned
   release_lock
+}
+
+@test "complaints: every line of bash's '/asb: line N:' is one, but run_pending_traps' warning for an ignored TERM" {
+  local a="/tmp/bats-run-x/test/1/h/bin/asb"
+  printf '%s\n' \
+    "agent-sandbox: connect: preset shared" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x1" \
+    "$a: line 1: pop_var_context: head of shell_variables not a function context" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: (nil)" \
+    "$a: line 1236: warning: run_pending_traps: signal handler is SIG_DFL, resending 15 (SIGTERM) to myself" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x1 (and more)" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[1]: 0x1" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x55d0c2a4b0e0" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[14]: 0x1" \
+    "$a: line 1237: warning: something else" \
+    "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x1" >"$H/out"
+  run complaints "$H/out"
+  [ "${#lines[@]}" -eq 8 ]
+  [ "${lines[0]}" = "$a: line 1: pop_var_context: head of shell_variables not a function context" ]
+  [ "${lines[1]}" = "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: (nil)" ]
+  [ "${lines[2]}" = "$a: line 1236: warning: run_pending_traps: signal handler is SIG_DFL, resending 15 (SIGTERM) to myself" ]
+  [ "${lines[3]}" = "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x1 (and more)" ]
+  [ "${lines[4]}" = "$a: line 1236: warning: run_pending_traps: bad value in trap_list[1]: 0x1" ]
+  [ "${lines[5]}" = "$a: line 1236: warning: run_pending_traps: bad value in trap_list[15]: 0x55d0c2a4b0e0" ]
+  [ "${lines[6]}" = "$a: line 1236: warning: run_pending_traps: bad value in trap_list[14]: 0x1" ]
+  [ "${lines[7]}" = "$a: line 1237: warning: something else" ]
 }
 
 @test "a launch in setup sent one TERM ends 143, cleaned up once" {
