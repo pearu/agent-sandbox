@@ -193,6 +193,54 @@ CHECK
   [ -z "$output" ]
 }
 
+# A role's: /auto-mode-setup off.
+OURS_SKILLS='{"hooks":{},"skillOverrides":{"auto-mode-setup":"off"}}'
+
+@test "merge-settings: theirs sets skillOverrides auto-mode-setup: theirs decides, ours not added, said" {
+  run py merge-settings --ours "$OURS_SKILLS" --user '{"skillOverrides":{"auto-mode-setup":"on","simplify":"off"}}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = auto-mode-setup-kept ]
+  [ "$(pyget "$T/out.json" 'd["skillOverrides"]')" = "{'auto-mode-setup': 'on', 'simplify': 'off'}" ]
+}
+
+@test "merge-settings: theirs has a skillOverrides object without auto-mode-setup: ours added into it, theirs kept" {
+  run py merge-settings --ours "$OURS_SKILLS" --user '{"skillOverrides":{"simplify":"off"},"model":"m"}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(pyget "$T/out.json" 'd["skillOverrides"]["simplify"]')" = off ]
+  [ "$(pyget "$T/out.json" 'd["skillOverrides"]["auto-mode-setup"]')" = off ]
+  [ "$(pyget "$T/out.json" 'sorted(d["skillOverrides"])')" = "['auto-mode-setup', 'simplify']" ]
+  [ "$(pyget "$T/out.json" 'd["model"]')" = m ]
+}
+
+@test "merge-settings: theirs has no skillOverrides: ours as it is" {
+  run py merge-settings --ours "$OURS_SKILLS" --user '{"model":"m"}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(pyget "$T/out.json" 'd["skillOverrides"]')" = "{'auto-mode-setup': 'off'}" ]
+}
+
+@test "merge-settings: theirs has a skillOverrides that is not an object: left as it is, nothing added, said; the hooks still merged" {
+  local u ours='{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"ours"}]}]},"skillOverrides":{"auto-mode-setup":"off"}}'
+  for u in '{"skillOverrides":["auto-mode-setup"]}' '{"skillOverrides":"off"}' '{"skillOverrides":null}'; do
+    rm -f "$T/out.json"
+    run py merge-settings --ours "$ours" --user "$u" --out "$T/out.json"
+    [ "$status" -eq 0 ]
+    [ "$output" = skills-skipped ]
+    [ "$(pyget "$T/out.json" 'json.dumps(d["skillOverrides"])')" = "$(python3 -I -c 'import json, sys; print(json.dumps(json.loads(sys.argv[1])["skillOverrides"]))' "$u")" ]
+    [ "$(pyget "$T/out.json" 'd["hooks"]["Stop"][0]["hooks"][0]["command"]')" = ours ]
+  done
+}
+
+@test "merge-settings: ours without skillOverrides (a plain session): theirs untouched, nothing added, nothing said" {
+  run py merge-settings --ours '{"hooks":{}}' --user '{"skillOverrides":"off"}' --out "$T/out.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run py merge-settings --ours '{"hooks":{}}' --user '{"model":"m"}' --out "$T/out2.json"
+  [ "$status" -eq 0 ]
+  [ "$(pyget "$T/out2.json" 'sorted(d)')" = "['hooks', 'model']" ]
+}
+
 @test "merge-settings: our statusLine only when theirs has none; theirs, even an odd one, is kept as it is (#287)" {
   local ours='{"hooks":{},"statusLine":{"type":"command","command":"bash s.sh r","refreshInterval":1}}'
   run py merge-settings --ours "$ours" --user '{"model":"m"}' --out "$T/out.json"

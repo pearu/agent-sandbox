@@ -438,10 +438,11 @@ profile_briefing_args() {
   local host_file="$_brief_out_host/settings.json" inside_file="$_brief_out_inside/settings.json"
   local ours user_val="" i
   local refusal="bash $_brief_out_inside/refusal-hook.sh" f kv bg=off ev
-  # The role's auto-compact value (profile_auto_compact_args), said with a failure below
-  # that leaves it out.
+  # The role's auto-compact value (profile_auto_compact_args), and a role's
+  # /auto-mode-setup off (below), said with a failure below that leaves them out.
   local ac_lost=""
   [[ -z "${_claude_auto_compact:-}" ]] || ac_lost=" (and the role's auto-compact $_claude_auto_compact is not applied)"
+  [[ "${_role:-default}" == default ]] || ac_lost+=" (and /auto-mode-setup is not turned off)"
   for f in refusal-hook.sh state-hook.sh statusline.sh context.sh; do
     cp -- "$profile_home/$f" "$_brief_out_host/$f" || {
       _as_msg "briefing: cannot copy $f to $_brief_out_host; continuing without the session hooks$ac_lost"
@@ -535,6 +536,13 @@ profile_briefing_args() {
     off) ours+=",\"autoCompactEnabled\":false" ;;
     idle-off) ours+=",\"idleCompaction\":false" ;;
   esac
+  # A role's session does not offer `/auto-mode-setup`, nor run it: its dialog would hold
+  # a served or unwatched role, its draft would be built from what the sandbox lets it
+  # see, and its result goes to the account's shared ~/.claude/settings.json, past the
+  # reviewed .agent-sandbox. "off" turns off the command and the offer (2.1.311; a
+  # --settings skillOverrides merges with the user's settings files per key). Every role
+  # but `default`, as the auto-compact default; theirs decides (profile.py merge-settings).
+  [[ "${_role:-default}" == default ]] || ours+=",\"skillOverrides\":{\"auto-mode-setup\":\"off\"}"
   ours+="}"
 
   # The LAST --settings, deliberately: Claude Code honours only the last one, so
@@ -579,6 +587,10 @@ profile_briefing_args() {
       && _as_msg "briefing: your --settings has a permissions value that is not an object (or allow that is not an array); the engine's and [permissions] rules were not added, so the agent will ask"
     [[ "$_merge_note" == *compact-kept* ]] \
       && _as_msg "briefing: your --settings sets autoCompactEnabled or idleCompaction, so it decides how the session compacts; the role's auto-compact $_claude_auto_compact is not added"
+    [[ "$_merge_note" == *auto-mode-setup-kept* ]] \
+      && _as_msg "briefing: your --settings sets skillOverrides \"auto-mode-setup\", so it decides whether /auto-mode-setup is offered; the role's \"off\" is not added"
+    [[ "$_merge_note" == *skills-skipped* ]] \
+      && _as_msg "briefing: your --settings has a skillOverrides value that is not an object; it is left as it is, and the role's \"auto-mode-setup\": \"off\" is not added, so Claude Code may offer /auto-mode-setup"
   else
     printf '%s\n' "$ours" >"$host_file" || {
       _as_msg "briefing: cannot write $host_file; continuing without the session hooks$ac_lost"

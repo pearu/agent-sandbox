@@ -287,10 +287,12 @@ Sections:
   wrapper that overrides an earlier one keeps working. Nothing of yours is overridden:
   the briefing's contribution is a list of hook entries and the status line, so the
   merge writes `hooks` only by appending, and `statusLine` only when yours has none -- a
-  status line of your own wins. No other setting is read or rewritten, and a `hooks`
-  shape it does not recognise is refused rather than coerced. `disableAllHooks` in your
-  settings is respected, and the engine then says the briefing will not be injected;
-  `briefing.md` stays bound and readable either way.
+  status line of your own wins. For a role, not `default`, it also adds
+  `"auto-mode-setup": "off"` to your `skillOverrides` object, unless yours sets that key
+  or is not an object; the launch says which. No other setting is read or rewritten, and
+  a `hooks` shape it does not recognise is refused rather than coerced.
+  `disableAllHooks` in your settings is respected, and the engine then says the briefing
+  will not be injected; `briefing.md` stays bound and readable either way.
 
   **A role's purpose** (#222): `[briefing:<glob>]` briefs the roles the glob matches
   from a purpose file -- what the role is for, which no mount can say -- `file =

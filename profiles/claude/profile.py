@@ -159,7 +159,11 @@ def merge_settings(ours, user, out):
     wins (#287) -- and our compaction key (a role's auto-compact, #438:
     autoCompactEnabled or idleCompaction) only when theirs sets neither of the two: a
     user who passes their own autoCompactEnabled or idleCompaction still decides how the
-    session compacts, whichever of the two ours would have been. Nothing else of theirs
+    session compacts, whichever of the two ours would have been -- and our skillOverrides
+    entries (a role's `"auto-mode-setup": "off"`) into their skillOverrides object, per
+    key: their other overrides are kept, an entry of theirs for the same key decides it
+    (`auto-mode-setup-kept` is printed), and a skillOverrides that is not an object is
+    left as it is with none of ours added (`skills-skipped`). Nothing else of theirs
     is read, rewritten or merged. A hooks shape we
     do not recognise is refused rather than coerced (list() of a dict would replace
     their data with its keys). A permissions that is not an object, or an allow that
@@ -202,6 +206,18 @@ def merge_settings(ours, user, out):
     compact_kept = any(k in theirs for k in _COMPACT_KEYS) and any(k in mine for k in _COMPACT_KEYS)
     if not any(k in theirs for k in _COMPACT_KEYS):
         merged.update((k, mine[k]) for k in _COMPACT_KEYS if k in mine)
+    skills_kept = skills_skipped = False
+    our_skills = mine.get("skillOverrides", {})
+    if our_skills:
+        their_skills = theirs.get("skillOverrides", {})
+        if not isinstance(their_skills, dict):
+            # Theirs stays as it was, as a permissions that is not an object does.
+            skills_skipped = True
+        else:
+            # Per key, into their object: their other overrides are kept, and an entry
+            # of theirs for one of our keys decides it.
+            skills_kept = any(k in their_skills for k in our_skills)
+            merged["skillOverrides"] = {**their_skills, **{k: v for k, v in our_skills.items() if k not in their_skills}}
     rules = mine.get("permissions", {}).get("allow", [])
     skipped = False
     if rules:
@@ -223,6 +239,10 @@ def merge_settings(ours, user, out):
         print("permissions-skipped")
     if compact_kept:
         print("compact-kept")
+    if skills_kept:
+        print("auto-mode-setup-kept")
+    if skills_skipped:
+        print("skills-skipped")
     return 0
 
 

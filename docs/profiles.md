@@ -161,12 +161,17 @@ without cutting it, `refreshInterval` 1, the role written into its command since
 its stdin nor the sandbox's environment carries it; a `statusLine` in the user's
 `--settings` wins) (#287), and, for a role with a `[briefing] start`, the `/start`
 command (`.claude/commands/start.md`, the start text, the directory added with
-`--add-dir`). The contract is still the bash hooks, and the policy stays in them: the
-helper does one thing and exits nonzero when it cannot, and the hook decides what a
-launch then does. `python3` is always there -- the engine refuses a launch without it,
-since every command is joined by it -- so a hook needs no second, bash version of what
-the helper does. The engine gives the hook its directory as `profile_home` (what
-`{profile}` expands to), and the installer copies the profile's directory whole.
+`--add-dir`). For a role (every one but `default`), the `--settings` also turns
+`/auto-mode-setup` off, `"skillOverrides": {"auto-mode-setup": "off"}`, the command and
+its offer: its dialog would hold a served or unwatched role, and its result goes to the
+account's shared `~/.claude/settings.json`, past the reviewed `.agent-sandbox`; an entry
+of the user's own `--settings` for that key decides it. The contract is still the bash
+hooks, and the policy stays in them: the helper does one thing and exits nonzero when
+it cannot, and the hook decides what a launch then does. `python3` is always there --
+the engine refuses a launch without it, since every command is joined by it -- so a
+hook needs no second, bash version of what the helper does. The engine gives the hook
+its directory as `profile_home` (what `{profile}` expands to), and the installer copies
+the profile's directory whole.
 
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay
