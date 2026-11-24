@@ -200,7 +200,7 @@ ca_check_fixture() {
   WHEN="$(date -d "@$T" '+%F %T')"
   mkdir -p "$SB/keeper" "${B%/*}"
   printf 'CERTS\n' >"$B"
-  touch -d "@$T" "$B"
+  touch -m -d "@$T" "$B"
   printf '%s\t%s\n' "$B" "$(sha256sum "$B" | cut -d' ' -f1)" >"$SB/keeper/ca"
   printf '1 0 0:1 / / rw - tmpfs tmpfs rw\n2 1 0:2 /x %s ro - ext4 /dev/x ro\n' \
     "${B// /\\040}" >"$BATS_TEST_TMPDIR/mi.bound"
@@ -223,7 +223,7 @@ ca_check_fixture() {
 @test "_as_ca_check: the bind there but the host's bundle changed since is a note" {
   ca_check_fixture
   printf 'CERTS\nNEW\n' >"$B"
-  touch -d "@$T" "$B"
+  touch -m -d "@$T" "$B"
   _as_ca_check "$SB" "$BATS_TEST_TMPDIR/mi.bound"
   [ "$_ca_note" = "note: role 'gate': the host's $B has changed (at $WHEN) since the role started; it keeps the bundle it started with, the proxy's CA included, so HTTPS works -- the host's new one applies at its next launch" ]
 }
