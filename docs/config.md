@@ -1480,7 +1480,8 @@ own settings files and the `/config` toggle (Claude Code reads policy, then
   in a print run, exit status 1). The terminal shows "Context limit reached ·
   /compact or /clear to continue", and the role waits there until you type `/compact`
   or `/clear`. The work so far is in the transcript, so `/compact` and then a message
-  picks the Task up.
+  picks the Task up (the roles model clears instead, from the role's saved state:
+  [roles.md](roles.md#what-the-levels-set-off), what the levels set off).
 - **What `idle-off` keeps.** Compaction at the context limit, which a long Task may
   need; it drops only the idle one, which on accounts Anthropic's server enables it for
   compacts a conversation of 200K tokens or more after about 54 minutes idle, before
@@ -1507,7 +1508,7 @@ the `--settings` file when it starts.
 
 ```ini
 [agent:implementer-*]
-context-plan = 60%                # plan from here: of the stop, not of the window
+context-plan = 85%                # plan from here: of the stop, not of the window
 context-rescue = 25000            # rescue with this many tokens left before the stop
 ```
 
@@ -1520,7 +1521,7 @@ auto-compact off: the window less min(the model's max output tokens, 20000) less
 model, and the rescue level stays room for one save whatever the window. A served
 role's rescue level is the larger of `context-rescue` and twice its largest turn: one
 turn of a role with no terminal can cross the margin. **With a context file and no
-line, `60%` and `25000`.** `-` is never: that level is not written. A percent is a
+line, `85%` and `25000`.** `-` is never: that level is not written. A percent is a
 whole one from 1 to 100 with its `%`, a token count a whole number of at least 1;
 another value is refused at the review and a launch refuses it, as for `effort`.
 `[agent:<glob>]` beats `[agent]`. The levels are the engine's words, agent-neutral;

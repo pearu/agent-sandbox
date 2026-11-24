@@ -349,11 +349,16 @@ teardown() {
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/gate.md" | wc -l)" -eq 0 ]
   # the Supervisor: one command, its paths from the index, every role's but its own
   grep -qxF "  \`run_in_background: true\`, and run it again after each wake: \`.agent-sandbox\`, then" "$sup"
-  grep -qxF '  one path per role in the index but yourself; a change to any of them wakes you:' "$sup"
+  grep -qxF "  one path per role in the index but yourself, then every role's \`context.level\`, yours" "$sup"
+  grep -qxF '  included (a file not written yet is fine); a change to any of them wakes you:' "$sup"
   grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF "  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \\" "$sup"
-  grep -qxF '  .asb/coord/gate/messages.md' "$sup"
+  grep -qxF "  .asb/coord/gate/messages.md \\" "$sup"
+  # and every role's context level, its own first (#456)
+  grep -qxF "  .asb/coord/supervisor/context.level .asb/coord/planner-1/context.level ... \\" "$sup"
+  grep -qxF '  .asb/coord/gate/context.level' "$sup"
+  [ "$(grep -A1 -xF '  .asb/coord/gate/context.level' "$sup" | sed -n 2p)" = '```' ]
   run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
   # the Gate's turn: it wakes on its inbox; a stale alive gets its launch line, as any role's
   local flat
@@ -587,11 +592,22 @@ effort_of() {
     # the line right after the section's effort line
     sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" | grep -A1 '^effort = ' | tail -1 | grep -q '^auto-compact = off  *# '
   done
-  [ "$(grep -c '^auto-compact = ' "$df")" -eq 6 ]                      # once per role pattern, never per instance
+  [ "$(grep -c '^auto-compact = ' "$df")" -eq 6 ] # once per role pattern, never per instance
+  # its comment proposes no compaction: a clear, from the role's saved state (#456)
+  [ "$(grep -c '^auto-compact = off  *# at its context limit a turn stops: /clear, from saved state$' "$df")" -eq 6 ]
+  run ! grep -qF '/compact' "$df"
   run ! grep -q '^auto-compact' <(sed -n '/^\[agent\]$/,/^\[/p' "$df") # not in the unsuffixed [agent]: a plain session keeps its own
   run_review
   [[ "$output" == *"[agent:gate] auto-compact = off: the roles gate run with auto-compact off"* ]]
   [[ "$output" != *"not a value"* ]]
+  # a file with the comment from before #456: kept as it is, nothing offered for it
+  sed -i 's|# at its context limit a turn stops: /clear, from saved state$|# at its context limit a turn stops: /compact or /clear|' "$df"
+  [ "$(grep -c '/compact or /clear$' "$df")" -eq 6 ]
+  cp "$df" "$H/before"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  [[ "$output" != *"auto-compact"* ]]
   # a file from before #438: the lines, per role, as --apply lines; the file unchanged
   sed -i '/^auto-compact = /d' "$df"
   cp "$df" "$H/before"
@@ -615,7 +631,7 @@ effort_of() {
   [ "$(grep -c '^context = ' "$df")" -eq 5 ] # once per role pattern; not the setup role's, which has no coord directory
   for h in '[agent:planner-*]' '[agent:implementer-*]' '[agent:reviewer-*]' '[agent:supervisor]' '[agent:gate]'; do
     sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" | grep -A2 '^auto-compact = ' >"$H/lv"
-    sed -n 2p "$H/lv" | grep -q '^context-plan = 60%  *# '
+    sed -n 2p "$H/lv" | grep -q '^context-plan = 85%  *# '
     sed -n 3p "$H/lv" | grep -q '^context-rescue = 25000  *# '
   done
   [ "$(grep -c '^context-plan = ' "$df")" -eq 5 ]
@@ -623,6 +639,15 @@ effort_of() {
   run_review
   [[ "$output" == *"[briefing:planner-*] context, for the roles planner-*: their agent's profile keeps .asb/coord/{role}/context"* ]]
   [[ "$output" != *"not a value"* ]]
+  # a file written at the earlier default (60%): an existing line is the user's, kept,
+  # and no --apply line offers the new one
+  sed -i 's/^context-plan = 85% /context-plan = 60% /' "$df"
+  [ "$(grep -c '^context-plan = 60% ' "$df")" -eq 5 ]
+  cp "$df" "$H/before"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  [[ "$output" != *"context-plan"* ]]
   # a file from before #456: the lines, per role, as --apply lines; the file unchanged
   sed -i '/^context = /d; /^context-plan = /d; /^context-rescue = /d' "$df"
   cp "$df" "$H/before"
@@ -635,7 +660,7 @@ effort_of() {
   grep -qxF "    agent-sandbox --apply '[briefing:supervisor]' 'context = .asb/coord/supervisor/context'" <<<"$output"
   grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'context = .asb/coord/gate/context'" <<<"$output"
   for h in planner-\* implementer-\* reviewer-\* supervisor gate; do
-    grep -qxF "    agent-sandbox --apply '[agent:$h]' 'context-plan = 60%' 'context-rescue = 25000'" <<<"$output"
+    grep -qxF "    agent-sandbox --apply '[agent:$h]' 'context-plan = 85%' 'context-rescue = 25000'" <<<"$output"
   done
 }
 
@@ -664,7 +689,7 @@ effort_of() {
   [[ "$output" == *"added to .agent-sandbox: [agent:planner-*] [agent:implementer-*] [agent:reviewer-*] [agent:supervisor] [agent:setup]"* ]]
   cmp <(head -n "$(wc -l <"$H/before")" "$df") "$H/before" # nothing before it changed
   [ "$(effort_of '[agent:supervisor]' "$df")" = medium ]
-  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low' 'auto-compact = off' 'context-plan = 60%' 'context-rescue = 25000'" <<<"$output"
+  grep -qxF "    agent-sandbox --apply '[agent:gate]' 'effort = low' 'auto-compact = off' 'context-plan = 85%' 'context-rescue = 25000'" <<<"$output"
 }
 
 @test "the roles model with a role's effort = - (no level, the agent's own): a second --init leaves the file byte-identical, the section being there, and offers no --apply line for it" {
@@ -833,7 +858,7 @@ effort_of() {
   local rev="$PROJ/.asb/roles/reviewer-1.md" imp="$PROJ/.asb/roles/implementer-1.md"
   local relay p r
   # the Supervisor, in **The relay.**: the loop also ends when it is not converging
-  relay="$(sed -n '/^\*\*The relay\.\*\*/,/^\*\*What you never/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  relay="$(sed -n '/^\*\*The relay\.\*\*/,/^\*\*Context\.\*\*/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$relay" == *'go without a question, on that word, round after round, until the Reviewer accepts, the Implementer objects, or the loop is not converging (below).'* ]]
   # the one-line report's two new items
   [[ "$relay" == *'what the Reviewer still holds open, counted by kind (e.g. "R1 holds 2 factual, 3 prose"),'* ]]
@@ -951,7 +976,7 @@ effort_of() {
   [[ "$p" == *'- Throwaway work goes in `.asb/scratch/<task>/`, never inside your tree or a directory the roles share: worktrees, copies of a tree, mutants, measurement and coverage outputs.'* ]]
   [[ "$p" == *'A git worktree can live there too, named by an absolute path, since git runs in your tree: from the project directory, `git -C .asb/impl/1 worktree add "$PWD/.asb/scratch/<task>/wt" BRANCH`.'* ]]
   [[ "$p" == *'Once the Task has landed, delete its directory and run `git -C .asb/impl/1 worktree prune`; keep only what an open Task still needs, and say in your messages what you kept and why.'* ]]
-  [ "$(grep -cF -- '.asb/scratch/<task>/' "$imp")" -eq 2 ]
+  [ "$(grep -cF -- '.asb/scratch/<task>/' "$imp")" -eq 3 ] # and the branch-in-clone bullet's (#456)
   # git runs in the clone: a relative worktree path would land inside it (T34, F1)
   run ! grep -qE 'worktree add \.?\.?/?\.asb/' "$imp"
   run ! grep -qF '`git worktree' "$imp"
@@ -1050,4 +1075,131 @@ effort_of() {
   init -- github
   [ "$status" -eq 0 ]
   [ ! -e "$PROJ/.asb/tests" ]
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the Supervisor watches every role's context level and acts on plan, rescue and stopped; a clear needs the user's word; never /compact; its own context goes to reminders.md, read first at a fresh start (#456)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" ctx at
+  # **Context.**, its own section, after **The relay.**
+  [ "$(grep -c '^\*\*Context\.\*\* ' "$sup")" -eq 1 ]
+  [ "$(grep -B1 '^\*\*Context\.\*\* ' "$sup" | head -1)" = '' ]
+  [ "$(grep -n '^\*\*The relay\.\*\* ' "$sup" | cut -d: -f1)" -lt "$(grep -n '^\*\*Context\.\*\* ' "$sup" | cut -d: -f1)" ]
+  ctx="$(sed -n '/^\*\*Context\.\*\*/,/^\*\*What you never/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$ctx" == *'**Context.** Each role'"'"'s `.asb/coord/<role>/context` says how full its context is, one line (`level=… tokens=… left=… turn=… maxturn=…`), and `context.level` beside it the level alone, rewritten only when it changes: `ok`; `plan`, at `context-plan` of the stop (85 % by default); `rescue`, at `context-rescue` tokens or fewer left before the stop (25000 by default); `stopped`, at the stop.'* ]]
+  [[ "$ctx" == *'When a `.level` file wakes you, read it with the role'"'"'s `context` line, and act:'* ]]
+  [[ "$ctx" == *'- `plan`, another role'"'"'s: at its next Task boundary, bring the user the choice -- keep the context, save what matters then clear, or clear outright -- with the Planner'"'"'s view when the Task is long.'* ]]
+  [[ "$ctx" == *'It joins the fresh-or-keep question before that Task.'* ]]
+  [[ "$ctx" == *'- `rescue`, another role'"'"'s: its own Stop hook tells it, once, to save its working state.'* ]]
+  [[ "$ctx" == *'The `.level` change comes before the save; the role writes `.asb/coord/<role>/state.md`, then a line in its messages, `state.md saved at rescue, N tokens left`, which wakes you after it.'* ]]
+  [[ "$ctx" == *'On that wake, report the save to the user in one line, and append to your messages the tuning line: the role, the `left` before (its N), and the `context` line'"'"'s `left` and `turn=` as you read them then -- `turn=` is the whole turn'"'"'s growth, the save included, counted from the turn'"'"'s prompt, so it bounds the save'"'"'s cost from above; the save'"'"'s own cost is the `left` before less the `left` after, once the `context` line has moved past the save, and until then write `after: pending` and fill it in from the next `context` line you read.'* ]]
+  [[ "$ctx" == *'Then:'* ]]
+  [[ "$ctx" == *'- on a single Task, let the role go on in the room left;'* ]]
+  [[ "$ctx" == *'- when its next step will not fit, ask the Planner to split the rest into smaller Tasks;'* ]]
+  [[ "$ctx" == *'- when its context also carries earlier Tasks (it was kept at the Task'"'"'s start), propose, once it stops, clearing it and restarting the current Task from `state.md`.'* ]]
+  [[ "$ctx" == *'- `stopped`: name the context limit as the cause, and propose the reset from the role'"'"'s `state.md`: its `.reset`, then a message that restarts the Task from it.'* ]]
+  [[ "$ctx" == *'With no `state.md`, propose `--summarize`, and say it is the last resort.'* ]]
+  [[ "$ctx" == *'- A clear always needs the user'"'"'s word, the relay notwithstanding: the message that restarts a Task from `state.md` is asked about as any that opens a Task.'* ]]
+  [[ "$ctx" == *'When waiting would block the work, the user may hand you the decision: then act, and tell them.'* ]]
+  [[ "$ctx" == *'- Never `/compact`, and never propose it: compaction is no remedy here.'* ]]
+  [[ "$ctx" == *'- Your own, `.asb/coord/supervisor/context`: at `plan`, at a quiet moment -- no step of a round in flight, nothing awaiting the user'"'"'s word -- and at once at `rescue` (your Stop hook says so too), bring `.asb/scratch/reminders.md` up to date: the round'"'"'s state, the open Tasks and their steps, the user'"'"'s standing words, and what you wait on.'* ]]
+  [[ "$ctx" == *'Then suggest a `/clear` of your session; the user types it.'* ]]
+  # /compact only where it is refused
+  [ "$(grep -c '/compact' "$sup")" -eq 1 ]
+  # **At start.**: reminders.md first, its first bullet; and the start text says it too
+  [ "$(sed -n '/^\*\*At start\.\*\*$/{n;p;}' "$sup")" = '- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you' ]
+  at="$(sed -n '/^\*\*At start\.\*\*/,/^\*\*Where things/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$at" == *'- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you saved before your last `/clear` (**Context.**, below).'* ]]
+  [[ "$(tr '\n' ' ' <"$PROJ/.asb/start/supervisor.md" | tr -s ' ')" == *'Do what your purpose file says at start -- at a fresh start, read `.asb/scratch/reminders.md` first where it exists; print the launch lines, arm your watcher -- then read every role'"'"'s messages'* ]]
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/start/supervisor.md" | wc -l)" -eq 0 ]
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: asked to save its working state -- by its Stop hook or by S -- a role writes .asb/coord/<role>/state.md, an Implementer after a commit; at a fresh start it reads it first (#456)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local p r
+  # planner-1, in **Protocol.**
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$PROJ/.asb/roles/planner-1.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- When you are asked to save your working state -- by your Stop hook at the rescue level, or by S -- write `.asb/coord/planner-1/state.md`, the whole file each time: the Task (its inbox N) and its base, the step you are in, what is done and where (commits, files), what is pending and the next action, and the decisions not yet in any artefact.'* ]]
+  [[ "$p" == *'Then append one line to your messages: `state.md saved at rescue, N tokens left`, N from the hook'"'"'s reason, or `state.md saved` when S asked.'* ]]
+  [[ "$p" == *'Then go on if the step fits in the room left, or stop at a clean point and say in your messages what is left.'* ]]
+  [[ "$p" == *'- At a fresh start, if `state.md` names the Task your latest inbox message opens or continues, read it first.'* ]]
+  [ "$(grep -c '^- When you are asked to save your working state' "$PROJ/.asb/roles/planner-1.md")" -eq 1 ]
+  # implementer-1, in **Protocol.**
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$PROJ/.asb/roles/implementer-1.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- When you are asked to save your working state -- by your Stop hook at the rescue level, or by S -- commit your work in progress, then write `.asb/coord/implementer-1/state.md`, the whole file each time: the Task (its inbox N) and its base, the step you are in, what is done and where (the commit, files), what is pending and the next action, and the decisions not yet in any artefact.'* ]]
+  [[ "$p" == *'Then append one line to your messages: `state.md saved at rescue, N tokens left`, N from the hook'"'"'s reason, or `state.md saved` when S asked.'* ]]
+  [[ "$p" == *'Then go on if the step fits in the room left, or stop at a clean point and say in your messages what is left.'* ]]
+  [[ "$p" == *'- At a fresh start, if `state.md` names the Task your latest inbox message opens or continues, read it first.'* ]]
+  [ "$(grep -c '^- When you are asked to save your working state' "$PROJ/.asb/roles/implementer-1.md")" -eq 1 ]
+  # reviewer-1, in **Protocol.**
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$PROJ/.asb/roles/reviewer-1.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- When you are asked to save your working state -- by your Stop hook at the rescue level, or by S -- write `.asb/coord/reviewer-1/state.md`, the whole file each time: the Task (its inbox N) and its base, the step you are in, what is done and where (commits, files), what is pending and the next action, and the decisions not yet in any artefact.'* ]]
+  [[ "$p" == *'Then append one line to your messages: `state.md saved at rescue, N tokens left`, N from the hook'"'"'s reason, or `state.md saved` when S asked.'* ]]
+  [[ "$p" == *'Then go on if the step fits in the room left, or stop at a clean point and say in your messages what is left.'* ]]
+  [[ "$p" == *'- At a fresh start, if `state.md` names the Task your latest inbox message opens or continues, read it first.'* ]]
+  [ "$(grep -c '^- When you are asked to save your working state' "$PROJ/.asb/roles/reviewer-1.md")" -eq 1 ]
+  # gate, in **Executing a message.**
+  p="$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- When you are asked to save your working state -- by your Stop hook at the rescue level, or by S -- write `.asb/coord/gate/state.md`, the whole file each time: the message you are handling (its inbox N), the step you are in, what is done and where, what is pending and the next action, and the decisions not yet in any artefact.'* ]]
+  [[ "$p" == *'Then append one line to your messages: `state.md saved at rescue, N tokens left`, N from the hook'"'"'s reason, or `state.md saved` when S asked.'* ]]
+  [[ "$p" == *'Then go on if the step fits in the room left, or stop at a clean point and say in your messages what is left.'* ]]
+  [[ "$p" == *'- At a fresh start, if `state.md` names the message your latest inbox message is or continues, read it first.'* ]]
+  [ "$(grep -c '^- When you are asked to save your working state' "$PROJ/.asb/roles/gate.md")" -eq 1 ]
+  # the Gate writes it too: where it writes says so
+  p="$(tr '\n' ' ' <"$PROJ/.asb/roles/gate.md" | tr -s ' ')"
+  [[ "$p" == *'the only place you write, beside your scratch, `.asb/scratch/`, and your saved state, `.asb/coord/gate/state.md`.'* ]]
+  [[ "$p" == *'write anywhere but your messages, your state.md and your scratch.'* ]]
+  for r in planner implementer reviewer gate; do
+    [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/$r.md" | wc -l)" -eq 0 ]
+  done
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: the branch under review is checked out in the Implementer's clone, the tree the Reviewer reads, and the Handoff carries the commit message; a Reviewer that finds the clone's tree is not main plus the Handoff's diff says so and stops (#456)" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local p r
+  # the Implementer, in **Protocol.**, right after the scratch bullet
+  p="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$PROJ/.asb/roles/implementer-1.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$p" == *'- The branch under review is checked out in your clone, `.asb/impl/1/` -- the tree the Reviewer reads -- before you write the Handoff, and stays checked out while the review runs; a branch is checked out in one tree at a time, so first remove or detach a worktree that holds it.'* ]]
+  [[ "$p" == *'Only throwaway worktrees go to `.asb/scratch/<task>/`.'* ]]
+  [[ "$p" == *'The Handoff names the branch and its commit and carries its commit message, verbatim: the Reviewer sees no history.'* ]]
+  [ "$(grep -A1 -F 'needs, and say in your messages what you kept and why.' "$PROJ/.asb/roles/implementer-1.md" | sed -n 2p)" = '- The branch under review is checked out in your clone, `.asb/impl/1/` -- the tree the' ]
+  # the Reviewer, in **Protocol.**
+  r="$(sed -n '/^\*\*Protocol\.\*\*/,/^\*\*What you never/p' "$PROJ/.asb/roles/reviewer-1.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$r" == *'- The Implementer'"'"'s clone, `.asb/impl/N/`, holds the Handoff'"'"'s branch while you review: its tree is `main` plus the Handoff'"'"'s diff (its history is hidden from you; compare the trees).'* ]]
+  [[ "$r" == *'If it is not, say so in your messages and stop: do not review `main` plus the diff instead.'* ]]
+}
+
+# shellcheck disable=SC2016 # backquotes are the doc's text, not ours
+@test "docs/roles.md: what the context levels set off -- the Supervisor's acts, state.md and who saves, the user's word on a clear, no compaction, the Supervisor's own context; the branch under review in the clone (#456)" {
+  local f docs
+  f="$(dirname "$ENGINE")/docs/roles.md"
+  docs="$(tr '\n' ' ' <"$f" | tr -s ' ')"
+  [[ "$docs" == *'### What the levels set off The Supervisor watches every role'"'"'s `context.level`, its own included, beside the messages, and reads each change with the role'"'"'s `context` line (#456):'* ]]
+  [[ "$docs" == *'- **`plan`, at a Task boundary.** Before the role'"'"'s next Task, the Supervisor brings you three choices, with the Planner'"'"'s view when the Task is long: keep the context, save what matters and then clear, or clear outright.'* ]]
+  [[ "$docs" == *'At 85 % of the stop this comes late, when it matters; where every Implementer and Reviewer Task opens fresh anyway, it matters most for long Tasks and for the single roles, the Planner, the Gate and the Supervisor.'* ]]
+  [[ "$docs" == *'- **`rescue`, at once.** The role saves its working state for the Task in `.asb/coord/<role>/state.md`, rewritten at each save: the Task (its inbox N) and its base, the step it is in, what is done and where, what is pending and the next action, and the decisions not yet in any artefact.'* ]]
+  [[ "$docs" == *'An Implementer commits its work in progress first and names the commit.'* ]]
+  [[ "$docs" == *'Its own `Stop` hook tells it to, once, at the turn that crosses into `rescue` ([profiles.md](profiles.md)), so the save comes in that same turn, at a terminal and in a served role alike, and ends it with one line in its messages, `state.md saved at rescue, N tokens left` (`state.md saved` when the Supervisor asked), which wakes the Supervisor after the save.'* ]]
+  [[ "$docs" == *'It reports the save in one line, and notes in its messages the `left` before and after and the turn'"'"'s `turn=`, the figures a later retune of `context-rescue` needs: `turn=` is the whole turn'"'"'s growth, an upper bound on the save'"'"'s cost; the save'"'"'s own is the `left` before less the `left` after.'* ]]
+  [[ "$docs" == *'On a single Task the role goes on in the room left; when its next step will not fit, the Planner splits the rest into smaller Tasks; when its context also carries earlier Tasks, the Supervisor proposes, once it stops, clearing it and restarting the Task from `state.md`.'* ]]
+  [[ "$docs" == *'A role starting fresh reads `state.md` first when it names the Task its latest inbox message opens or continues.'* ]]
+  [[ "$docs" == *'- **`stopped`.** The Supervisor names the context limit as the cause and proposes the reset from `state.md`; with none, `--summarize`, as the last resort.'* ]]
+  [[ "$docs" == *'- **A clear always needs your word.** When waiting would block the work, you may hand the decision to the Supervisor; it then acts and tells you.'* ]]
+  [[ "$docs" == *'- **No compaction.** `/compact` is never the remedy; a role'"'"'s context is saved by the role, in its own words, then cleared.'* ]]
+  [[ "$docs" == *'- **The Supervisor'"'"'s own context.** At `plan`, at a quiet moment (no step of a round in flight, nothing awaiting your word), and at once at `rescue`, it brings `.asb/scratch/reminders.md` up to date -- the round'"'"'s state, the open Tasks and their steps, your standing words, what it waits on -- and suggests a `/clear` of its session, which you type.'* ]]
+  [[ "$docs" == *'At a fresh start it reads `reminders.md` first.'* ]]
+  [[ "$docs" == *'Add to it what a round turns out to need, when it does; `asb --trust` then reviews the change.'* ]]
+  [[ "$docs" == *'- **The branch under review is in the clone.** The Implementer checks it out in `.asb/impl/N/`, the tree the Reviewer reads, before the Handoff, and keeps it there while the review runs; only throwaway worktrees go to `.asb/scratch/<task>/`.'* ]]
+  [[ "$docs" == *'The Handoff carries the commit message, verbatim, since the Reviewer sees no history.'* ]]
+  [[ "$docs" == *'A Reviewer that finds the clone'"'"'s tree is not `main` plus the Handoff'"'"'s diff says so and stops, rather than review `main` plus the diff.'* ]]
+  [[ "$docs" == *'context fills stops at its next request ("Context limit reached"); the Supervisor then proposes a reset from the role'"'"'s saved state, never `/compact` (the context levels, below).'* ]]
+  run ! grep -qF 'you type `/compact`' "$f"
+  [ "$(sed -n '/^### What the levels set off$/,/^## 9\. /p' "$f" | awk 'length > 88' | wc -l)" -eq 0 ]
+  [ "$(sed -n '/^- \*\*The branch under review is in the clone\.\*\*/,/^- \*\*Builds\.\*\*/p' "$f" | awk 'length > 88' | wc -l)" -eq 0 ]
 }

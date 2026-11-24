@@ -126,9 +126,10 @@ Implementer and its Reviewer within a Task you opted in to the relay (section 5)
 it writes on the word you gave when the Task opened, and reports in one line each,
 watching the loop for convergence: a loop that is not converging it stops, and proposes
 handing it to the Planner. So a line in a role's inbox is your word by construction,
-given per message or once for the Task. It watches every role's messages; when a role
-reports done, it proposes the next step and asks. At start it prints the launch line
-of every other role, from the index -- `asb --role NAME --resume`, which starts the
+given per message or once for the Task. It watches every role's messages, and every
+role's context level (section 8, the context file); when a role reports done, it
+proposes the next step and asks. At start it prints the launch line of every other
+role, from the index -- `asb --role NAME --resume`, which starts the
 role's session when it has none and resumes it when it has, its agent the one
 `.agent-sandbox` names -- and one line that opens them all, a tmux pane each:
 `asb --roles NAME NAME ... --resume` (section 9). On your word it merges an accepted
@@ -251,6 +252,12 @@ Every role launches from the repository itself:
   coverage report's, once cost each approval about 40 s of CPU. `.asb/scratch/` is each
   role's own store, which the scan does not enter, so clearing it frees the disk; it
   does not speed the review.
+- **The branch under review is in the clone.** The Implementer checks it out in
+  `.asb/impl/N/`, the tree the Reviewer reads, before the Handoff, and keeps it there
+  while the review runs; only throwaway worktrees go to `.asb/scratch/<task>/`. The
+  Handoff carries the commit message, verbatim, since the Reviewer sees no history. A
+  Reviewer that finds the clone's tree is not `main` plus the Handoff's diff says so and
+  stops, rather than review `main` plus the diff.
 - **Builds.** An Implementer builds in its clone; the Supervisor builds `main` after a
   merge, so `main` always holds the integration state and its build, which you can try
   on the host. The Supervisor re-runs the suite only when `main` moved since the
@@ -942,8 +949,8 @@ start = .asb/start/planner.md     # its first turn: arm the watcher, read the in
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
-context-plan = 60%                # the context file says plan from here: of the stop, not the window
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
+context-plan = 85%                # the context file says plan from here: of the stop, not the window
 context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- implementers: a clone each --------------------------------------------------
@@ -974,8 +981,8 @@ start = .asb/start/implementer.md # its first turn: arm the watcher, read the in
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
-context-plan = 60%                # the context file says plan from here: of the stop, not the window
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
+context-plan = 85%                # the context file says plan from here: of the stop, not the window
 context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- reviewers: the common block already hides every history -----------------------
@@ -990,8 +997,8 @@ start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the in
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
-context-plan = 60%                # the context file says plan from here: of the stop, not the window
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
+context-plan = 85%                # the context file says plan from here: of the stop, not the window
 context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- supervisor: coordinates, on your word; merges and builds main; publishes nothing --
@@ -1014,8 +1021,8 @@ start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messa
 context = .asb/coord/supervisor/context # how full its context is: S reads it, and watches .level
 [agent:supervisor]
 effort = medium                   # routes, merges and builds on your word; the reasoning is the others'
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
-context-plan = 60%                # the context file says plan from here: of the stop, not the window
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
+context-plan = 85%                # the context file says plan from here: of the stop, not the window
 context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- gate: publishes what the Supervisor sends on your word, and nothing else --------
@@ -1048,8 +1055,8 @@ start = .asb/start/gate.md        # its first turn: arm the watcher, read the in
 context = .asb/coord/gate/context # how full its context is: S reads it, and watches .level
 [agent:gate]
 effort = low                      # executes an approved message as written
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
-context-plan = 60%                # the context file says plan from here: of the stop, not the window
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
+context-plan = 85%                # the context file says plan from here: of the stop, not the window
 context-rescue = 25000            # ...and rescue with this many tokens left before the stop
 
 # ---- setup: builds the environment, once per project, again after main moves ----
@@ -1067,7 +1074,7 @@ git = refuse
 file = .asb/roles/setup.md
 [agent:setup]
 effort = high                     # a failing build is debugged here
-auto-compact = off                # at its context limit a turn stops: /compact or /clear
+auto-compact = off                # at its context limit a turn stops: /clear, from saved state
 ```
 
 Each role has an effort level of its own, `[agent:...] effort` (`--effort LEVEL` for
@@ -1096,8 +1103,9 @@ Each role's section also says `auto-compact = off` ([config.md](config.md#auto-c
 which is every role's default anyway, written to be seen: a role waits on its inbox most
 of its life, and Claude Code compacting it there, idle, replaces what it was told and
 has read with a summary nobody chose, sometimes mid-Task. With it off, a role whose
-context fills stops at its next request ("Context limit reached"), and you type
-`/compact` or `/clear` at its terminal. A served role's turn there ends with "Prompt is
+context fills stops at its next request ("Context limit reached"); the Supervisor
+then proposes a reset from the role's saved state, never `/compact` (the context
+levels, below). A served role's turn there ends with "Prompt is
 too long" on the loop's output and exit status 1, which the loop appends to the role's
 messages as `turn stopped at the context limit (blocking_limit)` (the claude profile
 reads the reason from the turn's result; #456); every turn after it ends the same, until
@@ -1108,13 +1116,13 @@ at the limit and drops only the idle one; it takes effect at the role's next lau
 
 Each role's `[briefing:...]` section also names its context file,
 `context = .asb/coord/{role}/context` ([config.md](config.md#the-file), `[briefing]`;
-#456), and its `[agent:...]` section the two levels, `context-plan = 60%` and
+#456), and its `[agent:...]` section the two levels, `context-plan = 85%` and
 `context-rescue = 25000` ([config.md](config.md#the-context-levels)). The claude
 profile keeps the file current, one line, rewritten (by a rename) only when a value
 changes:
 
 ```
-level=plan tokens=612000 window=1000000 stop=977000 left=365000 used=62% turn=+18000 maxturn=41000 session=ID at=2026-11-23T10:00:00Z
+level=ok tokens=612000 window=1000000 stop=977000 left=365000 used=62% turn=+18000 maxturn=41000 session=ID at=2026-11-23T10:00:00Z
 ```
 
 - `tokens`: the context, the last response's input, cache-creation and cache-read
@@ -1159,6 +1167,46 @@ launch says so otherwise, and names none. In a glob section (`[briefing:planner-
 each instance's name; every other line has it substituted as before. A
 `[briefing:<glob>]` section briefs its roles from their purpose files, whatever keys it
 holds. The setup role has no context file: it has no coord directory.
+
+### What the levels set off
+
+The Supervisor watches every role's `context.level`, its own included, beside the
+messages, and reads each change with the role's `context` line (#456):
+
+- **`plan`, at a Task boundary.** Before the role's next Task, the Supervisor brings you
+  three choices, with the Planner's view when the Task is long: keep the context, save
+  what matters and then clear, or clear outright. At 85 % of the stop this comes late,
+  when it matters; where every Implementer and Reviewer Task opens fresh anyway, it
+  matters most for long Tasks and for the single roles, the Planner, the Gate and the
+  Supervisor.
+- **`rescue`, at once.** The role saves its working state for the Task in
+  `.asb/coord/<role>/state.md`, rewritten at each save: the Task (its inbox N) and its
+  base, the step it is in, what is done and where, what is pending and the next action,
+  and the decisions not yet in any artefact. An Implementer commits its work in progress
+  first and names the commit. Its own `Stop` hook tells it to, once, at the turn that
+  crosses into `rescue` ([profiles.md](profiles.md)), so the save comes in that same
+  turn, at a terminal and in a served role alike, and ends it with one line in its
+  messages, `state.md saved at rescue, N tokens left` (`state.md saved` when the
+  Supervisor asked), which wakes the Supervisor after the save. It reports the save in
+  one line, and notes in its messages the `left` before and after and the turn's
+  `turn=`, the figures a later retune of `context-rescue` needs: `turn=` is the whole
+  turn's growth, an upper bound on the save's cost; the save's own is the `left` before
+  less the `left` after. On a single Task the role goes on in the room left; when its
+  next step will not fit, the Planner splits the rest into smaller Tasks; when its
+  context also carries earlier Tasks, the Supervisor proposes, once it stops, clearing
+  it and restarting the Task from `state.md`. A role starting fresh reads `state.md`
+  first when it names the Task its latest inbox message opens or continues.
+- **`stopped`.** The Supervisor names the context limit as the cause and proposes the
+  reset from `state.md`; with none, `--summarize`, as the last resort.
+- **A clear always needs your word.** When waiting would block the work, you may hand
+  the decision to the Supervisor; it then acts and tells you.
+- **No compaction.** `/compact` is never the remedy; a role's context is saved by the
+  role, in its own words, then cleared.
+- **The Supervisor's own context.** At `plan`, at a quiet moment (no step of a round in
+  flight, nothing awaiting your word), and at once at `rescue`, it brings
+  `.asb/scratch/reminders.md` up to date -- the round's state, the open Tasks and their
+  steps, your standing words, what it waits on -- and suggests a `/clear` of its
+  session, which you type. At a fresh start it reads `reminders.md` first.
 
 Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
 change.

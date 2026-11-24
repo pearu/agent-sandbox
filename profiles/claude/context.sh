@@ -46,7 +46,8 @@
 ctx_num() { [[ "$1" =~ ^[0-9]{1,15}$ ]]; }
 
 # ctx_update FILE PLAN RESCUE SERVED KEY=VALUE... -- write FILE (and FILE.level) from
-# the KEY=VALUEs and FILE's line, as above. Status 0 always.
+# the KEY=VALUEs and FILE's line, as above, and set CTX_LEVEL and CTX_LEFT to the level
+# and the tokens left it computed (left empty when not known). Status 0 always.
 ctx_update() {
   local file="$1" plan="$2" rescue="$3" served="$4" kv k v dir name line="" old lev oldlev="" tmp fd=""
   shift 4
@@ -152,6 +153,9 @@ ctx_update() {
   fi
   [[ "$oldlev" == "$lev" && -f "$file.level" && ! -L "$file.level" ]] || ctx_put "$dir" "$name.level" "$lev"
   [[ -z "$fd" ]] || exec {fd}<&-
+  # What this update made of it, for the Stop hook's save prompt (state-hook.sh).
+  # shellcheck disable=SC2034 # read by the caller that sourced this file
+  CTX_LEVEL="$lev" CTX_LEFT="$left"
   return 0
 }
 

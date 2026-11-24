@@ -246,6 +246,184 @@ prompt() {
   [ "$(level)" = "?" ]
 }
 
+# save LEFT [MORE] -- the Stop hook's save prompt, LEFT tokens left, MORE the other
+# refusals' clauses after it ("; ..."), as one JSON object
+save() {
+  printf '{"decision":"block","reason":"agent-sandbox: your context is at its rescue level (%s tokens left before the stop): save your working state as your purpose file says%s, then end your turn."}' "$1" "${2:-}"
+}
+
+@test "the Stop hook prompts the save once, at the crossing into rescue: not again at rescue, nor at rescue -> stopped (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  sl 900000
+  prompt s1
+  transcript "$t" 960000 # 17000 left of the stop 977000: rescue
+  stop s1 "$t"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(save 17000)" ]
+  python3 -I -c 'import json, sys; m = json.loads(sys.argv[1]); assert m["decision"] == "block", m' "$output"
+  [ "$(level)" = rescue ]
+  [ "$(cat "$S.rescue")" = s1 ]
+  # the turn the prompt continued, and the next: still rescue, no second prompt
+  stop s1 "$t"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  prompt s1
+  transcript "$t" 965000
+  stop s1 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = rescue ]
+  # a Stop whose tokens can't be read (no level) leaves the record: no prompt after it
+  stop s1 "$BATS_TEST_TMPDIR/none.jsonl"
+  [ -z "$output" ]
+  [ "$(cat "$S.rescue")" = s1 ]
+  prompt s1
+  transcript "$t" 966000
+  stop s1 "$t"
+  [ -z "$output" ]
+  # rescue -> stopped: none
+  prompt s1
+  transcript "$t" 977000
+  stop s1 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = stopped ]
+  # and stopped -> rescue in the same session: still none (stopped does not rearm)
+  prompt s1
+  transcript "$t" 970000
+  stop s1 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = rescue ]
+}
+
+@test "the Stop hook's crossing is its own record, not the file's previous level: the status line put the file at rescue first, and the Stop still prompts (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  sl 900000
+  prompt s1
+  sl 960000 # mid-turn, the status line: rescue before the Stop
+  [ "$(level)" = rescue ]
+  transcript "$t" 960000
+  stop s1 "$t"
+  [ "$output" = "$(save 17000)" ]
+}
+
+@test "the Stop hook's save prompt is rearmed by a drop below rescue -- a clear, a new session, or plan in the same one -- and a new session at rescue prompts (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  sl 900000
+  prompt s1
+  transcript "$t" 960000
+  stop s1 "$t"
+  [ "$output" = "$(save 17000)" ]
+  # a clear: a new session, ok -- rearmed
+  prompt s2
+  transcript "$t" 30000
+  stop s2 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = ok ]
+  [ ! -e "$S.rescue" ]
+  prompt s2
+  transcript "$t" 955000 # 22000 left
+  stop s2 "$t"
+  [ "$output" = "$(save 22000)" ]
+  [ "$(cat "$S.rescue")" = s2 ]
+  # plan in the same session: rearmed
+  prompt s2
+  transcript "$t" 700000
+  stop s2 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = plan ]
+  [ ! -e "$S.rescue" ]
+  prompt s2
+  transcript "$t" 960000
+  stop s2 "$t"
+  [ "$output" = "$(save 17000)" ]
+  # another session straight at rescue (a resumed one): the record names s2, so it prompts
+  prompt s3
+  transcript "$t" 962000
+  stop s3 "$t"
+  [ "$output" = "$(save 15000)" ]
+  [ "$(cat "$S.rescue")" = s3 ]
+}
+
+@test "the Stop hook's save prompt: none with stop_hook_active, and then the next Stop at rescue prompts (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  sl 900000
+  prompt s1
+  transcript "$t" 960000
+  hook Stop "{\"session_id\":\"s1\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"done.\",\"stop_hook_active\":true}"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(level)" = rescue ]
+  [ ! -e "$S.rescue" ]
+  stop s1 "$t"
+  [ "$output" = "$(save 17000)" ]
+}
+
+@test "the Stop hook's save prompt: none without a context file, nor while the level is ?, nor at stopped (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  transcript "$t" 960000
+  run env AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 bash "$P/state-hook.sh" Stop off "$S" \
+    <<<"{\"session_id\":\"s1\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"done.\"}"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$S.rescue" ]
+  printf 'level=rescue tokens=960000 window=1000000 stop=977000 left=17000 used=98%% turn=? maxturn=? session=s1 at=x\n' >"$C"
+  run env AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 bash "$P/state-hook.sh" Stop off "$S" \
+    <<<"{\"session_id\":\"s1\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"done.\"}"
+  [ -z "$output" ]
+  rm -f "$C"
+  # with the file but no window yet (a served role's first turn): level ?, none
+  stop s1 "$t" AGENT_SANDBOX_CONTEXT_SERVED=1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(level)" = "?" ]
+  [ ! -e "$S.rescue" ]
+  # past rescue in one turn, to stopped: none -- a save turn there is refused at the limit
+  sl 900000
+  prompt s1
+  transcript "$t" 980000
+  stop s1 "$t"
+  [ -z "$output" ]
+  [ "$(level)" = stopped ]
+  [ ! -e "$S.rescue" ]
+}
+
+@test "the Stop hook's save prompt combines with the watcher's and the summary line's refusals in one reason (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl" w=.asb/coord/to/planner-1.md sum="$BATS_TEST_TMPDIR/summary"
+  sl 900000
+  prompt s1
+  transcript "$t" 960000
+  stop s1 "$t" CLAUDE_PID=$$ AGENT_SANDBOX_WATCH="$w" AGENT_SANDBOX_SUMMARY="$sum"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(save 17000 "; your watcher on $w is not running; arm it as your purpose file says (the Bash tool, run_in_background: true); write this session's one-line summary to $sum")" ]
+  python3 -I -c 'import json, sys; m = json.loads(sys.argv[1]); assert m["decision"] == "block", m' "$output"
+  # once: the next Stop has the other two alone
+  stop s1 "$t" CLAUDE_PID=$$ AGENT_SANDBOX_WATCH="$w"
+  [ "$output" = "{\"decision\":\"block\",\"reason\":\"agent-sandbox: your watcher on $w is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn.\"}" ]
+  # rearmed by plan, the next crossing with the summary line's alone
+  prompt s1
+  transcript "$t" 700000
+  stop s1 "$t"
+  [ "$(level)" = plan ]
+  prompt s1
+  transcript "$t" 960000
+  stop s1 "$t" AGENT_SANDBOX_SUMMARY="$sum"
+  [ "$output" = "$(save 17000 "; write this session's one-line summary to $sum")" ]
+}
+
+@test "a served role's Stop hook prompts the save from its second turn on: the serve loop's update gives the window, and may cross into rescue first (#456)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl"
+  transcript "$t" 900000
+  stop s1 "$t" AGENT_SANDBOX_CONTEXT_SERVED=1 # the first turn: no window, level ?
+  [ -z "$output" ]
+  [ "$(level)" = "?" ]
+  # the serve loop after the turn (profile_serve_result), with tokens past the rescue level
+  run bash "$P/context.sh" "$C" 60 25000 1 tokens=970000 window=1000000 maxout=12000 session=s1
+  [ "$(level)" = rescue ] # 15000 left of the stop 985000
+  prompt s1 AGENT_SANDBOX_CONTEXT_SERVED=1
+  transcript "$t" 972000
+  stop s1 "$t" AGENT_SANDBOX_CONTEXT_SERVED=1
+  [ "$output" = "$(save 13000)" ]
+}
+
 @test "context.sh reads back only numbers: a line a sandbox wrote with anything else in it runs nothing and is replaced" {
   # shellcheck disable=SC2016 # literally, as a sandbox could write it
   printf '%s\n' 'level=ok tokens=a[$(touch '"$BATS_TEST_TMPDIR"'/pwned)] window=1000000 stop=x maxturn=$(id) turn=+1;id session=s1' >"$C"

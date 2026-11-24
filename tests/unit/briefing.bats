@@ -1557,7 +1557,7 @@ check_role() {
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
   [ "$status" -eq 0 ]
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context 60 40000" ]
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context 85 40000" ]
   ctx_project '[agent:planner-*]' 'context-plan = -' 'context-rescue = -' '[connect:*]'
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
@@ -1567,7 +1567,7 @@ check_role() {
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
   [ "$status" -eq 0 ]
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/ctx/planner-2 60 25000" ]
+  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/ctx/planner-2 85 25000" ]
   ctx_project '[connect:*]' # the planners' line only, again
   # a role the line does not match: no context anywhere
   rm -rf "$OUT"
@@ -1582,11 +1582,11 @@ check_role() {
   ctx_project
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude -p 'Reply ok.'
   [ "$status" -eq 0 ]
-  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 bash $IN/state-hook.sh Stop off" ]
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=85 AGENT_SANDBOX_CONTEXT_RESCUE=25000 bash $IN/state-hook.sh Stop off" ]
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" AGENT_SANDBOX_SERVE_TURN=1 -- asb --role planner-1 claude -p --resume 01234567-89ab-cdef-0123-456789abcdef 'Read your inbox.'
   [ "$status" -eq 0 ]
-  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=60 AGENT_SANDBOX_CONTEXT_RESCUE=25000 AGENT_SANDBOX_CONTEXT_SERVED=1 bash $IN/state-hook.sh Stop off" ]
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$PROJ/.asb/coord/planner-1/context AGENT_SANDBOX_CONTEXT_PLAN=85 AGENT_SANDBOX_CONTEXT_RESCUE=25000 AGENT_SANDBOX_CONTEXT_SERVED=1 bash $IN/state-hook.sh Stop off" ]
 }
 
 @test "[briefing] context in a directory the role does not write through to the project: said at launch, no file named, the launch goes on" {
@@ -1628,7 +1628,7 @@ check_role() {
   [[ "$output" != *"unknown [agent] key"* ]]
   check_role planner-1
   [ "$status" -eq 0 ]
-  [[ "$output" == *$'\n'"  context file: .asb/coord/planner-1/context (and .asb/coord/planner-1/context.level); levels: plan at 60% of the stop (the default), rescue at 40000 tokens left (.agent-sandbox [agent:planner-*])"$'\n'* ]]
+  [[ "$output" == *$'\n'"  context file: .asb/coord/planner-1/context (and .asb/coord/planner-1/context.level); levels: plan at 85% of the stop (the default), rescue at 40000 tokens left (.agent-sandbox [agent:planner-*])"$'\n'* ]]
   [[ "$output" == *$'\n'"  context: the status line and the Stop hook keep $PROJ/.asb/coord/planner-1/context current, and --serve after each turn"$'\n'* ]]
   ctx_project '[connect:planner-*]' 'project = read-only'
   check_role planner-1

@@ -153,6 +153,40 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The Supervisor acts on the roles' context levels, and a role saves its working
+  state at the rescue level (#456).** The context file and its `.level` (below) were
+  written, but nobody acted on them. Now:
+  - **The Supervisor's watcher** takes every role's `.asb/coord/<role>/context.level`,
+    its own included, beside the messages. At `plan`, before the role's next Task, it
+    brings the user the choice: keep the context, save then clear, or clear. At
+    `rescue`, the role's line after its save wakes it: it reports the save in one line,
+    notes the figures for a later retune (the `left` before and after, and the turn's
+    growth), and lets the role go on, asks the Planner to split, or proposes a clear
+    that restarts the Task from the saved state. At `stopped`, it proposes that reset,
+    or `--summarize` as the last resort when nothing was saved. A clear always needs
+    the user's word, and `/compact` is never the remedy. For its own context, it
+    brings `.asb/scratch/reminders.md` up to date and suggests a `/clear`, and reads
+    that file first at a fresh start.
+  - **Every role saves** to `.asb/coord/<role>/state.md` when asked: the Task (its
+    inbox N) and its base, the step, what is done and where, what is pending, the next
+    action, and the decisions not yet in any artefact. An Implementer commits its work
+    in progress first. Then one line in its messages, `state.md saved at rescue, N
+    tokens left`, tells the Supervisor the save is done. A role starting fresh reads it
+    first when it names the Task.
+  - **The claude profile's `Stop` hook asks for the save,** once, at the turn that
+    crosses into `rescue`: "your context is at its rescue level (N tokens left before
+    the stop): save your working state as your purpose file says, then end your turn".
+    The role saves in that same turn, at a terminal or served. A drop below `rescue`
+    or a new session rearms it; `stopped` never prompts. The hook keeps its own record
+    of the crossing, since the status line and the `--serve` loop rewrite the file
+    between turns.
+  - **The Implementer checks the branch under review out in its clone,** the tree the
+    Reviewer reads, and the Handoff carries the commit message verbatim, since the
+    Reviewer sees no history. The Reviewer stops when the clone's tree is not `main`
+    plus the Handoff's diff, instead of reviewing `main` plus a diff.
+  - **The roles model's `auto-compact = off` comment** says "/clear, from saved state"
+    at the context limit, no longer "/compact or /clear". An existing line is kept.
+
 - **The claude profile turns `/auto-mode-setup` off for a role.** After a `/clear`,
   Claude Code's dialog "Teach auto mode about your environment?" held a role until the
   user answered: a served or unwatched role would stall on it, inside the sandbox its
@@ -1051,6 +1085,13 @@ names are gone; there are no aliases for removed names before 1.0.
   addon's.
 
 ### Changed
+
+- **`[agent] context-plan` defaults to 85 % of the stop, not 60 % (#456).** At 60 %
+  the planning level came far too early: in use, saving what mattered worked with only
+  2 % of the context left. The engine's default for a role with a context file and no
+  line, and the roles model's `[agent:...]` sections, now say `85%`. An existing
+  `context-plan` line is the user's: `asb --init roles` keeps it and offers no new one.
+  `context-rescue` stays 25000.
 
 - **A role keeps its throwaway work in `.asb/scratch/<task>/` and clears it once the
   Task has landed.** In this project `asb --trust` and `--apply` took about 40 s of CPU

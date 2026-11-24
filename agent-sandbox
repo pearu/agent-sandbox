@@ -7696,9 +7696,9 @@ _as_context_plan_ok() { [[ "$1" =~ ^[1-9][0-9]?%$|^100%$ ]]; }
 # _as_context_rescue_ok VALUE -- a context-rescue: a number of tokens, 1 to 15 digits.
 _as_context_rescue_ok() { [[ "$1" =~ ^[1-9][0-9]{0,14}$ ]]; }
 
-# The levels a role gets with no line (#456): plan at 60% of the stop, rescue at 25000
+# The levels a role gets with no line (#456): plan at 85% of the stop, rescue at 25000
 # tokens left. First values: the context files of real roles say what fits.
-_as_context_plan_default() { printf '60%%'; }
+_as_context_plan_default() { printf '85%%'; }
 _as_context_rescue_default() { printf '25000'; }
 
 # _as_context_levels_resolve ROLE [LINE...] -- the levels of ROLE: sets _context_plan

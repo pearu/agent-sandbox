@@ -92,7 +92,7 @@
 # `context-plan = PERCENT%`, `context-rescue = TOKENS`: where the role's context file
 # ([briefing] context, below) says plan (that share of the stop used: where the agent
 # refuses a request) and rescue (that many tokens or fewer left before it). With a
-# context file and no line, 60% and 25000; `-` is never. A served role's rescue level is
+# context file and no line, 85% and 25000; `-` is never. A served role's rescue level is
 # at least twice its largest turn.
 #[agent]
 #command = claude
@@ -103,7 +103,7 @@
 #account = -
 #effort = high
 #auto-compact = idle-off
-#context-plan = 60%
+#context-plan = 85%
 #context-rescue = 25000
 
 
