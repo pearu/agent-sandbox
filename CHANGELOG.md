@@ -153,6 +153,22 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The claude profile turns `/auto-mode-setup` off for a role.** After a `/clear`,
+  Claude Code's dialog "Teach auto mode about your environment?" held a role until the
+  user answered: a served or unwatched role would stall on it, inside the sandbox its
+  draft is built from partial material, and its result goes to the account's shared
+  `~/.claude/settings.json`, past the reviewed `.agent-sandbox`. Now the briefing's
+  `--settings` of every role but `default` carries `"skillOverrides":
+  {"auto-mode-setup": "off"}`, which turns off the command and the offer; a plain
+  session gets nothing. With your own `--settings`, ours goes into your
+  `skillOverrides` object, your other overrides kept; an entry of yours for
+  `auto-mode-setup` decides it, and a `skillOverrides` that is not an object is left as
+  it is, with nothing added; the launch says either. Measured on Claude Code 2.1.311:
+  with the key `/auto-mode-setup` is out of the command list and answers "Skill
+  "auto-mode-setup" is disabled via skillOverrides", and a `--settings`
+  `skillOverrides` merges with your `settings.json` one per key, so a skill you turned
+  off there stays off in a role. A role gets it at its next launch.
+
 - **A role's context size, where the Supervisor reads it (#456).** S handed a role Task
   after Task with nothing telling it how full the role's context was, and with
   `auto-compact = off` the first sign was a stopped role. Now `[briefing] context = PATH`

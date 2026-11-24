@@ -247,6 +247,32 @@ CHECK
   grep -q '"model": "opus"' "$OUT/settings.json"
 }
 
+@test "a role's settings turn /auto-mode-setup off; a plain session's have no skillOverrides" {
+  settings_of asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["skillOverrides"])' "$OUT/settings.json")" = "{'auto-mode-setup': 'off'}" ]
+  settings_of asb claude --version
+  [ "$status" -eq 0 ]
+  check_state_settings "$OUT/settings.json" default off
+  run ! grep -q skillOverrides "$OUT/settings.json"
+}
+
+@test "a user's --settings that sets skillOverrides auto-mode-setup, or has a skillOverrides that is not an object, keeps it, and the launch says so" {
+  settings_of asb --role planner-1 claude --settings '{"skillOverrides":{"auto-mode-setup":"on"}}' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"your --settings sets skillOverrides \"auto-mode-setup\", so it decides whether /auto-mode-setup is offered; the role's \"off\" is not added"* ]]
+  grep -q '"auto-mode-setup": "on"' "$OUT/settings.json"
+  settings_of asb --role planner-1 claude --settings '{"skillOverrides":"off"}' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"your --settings has a skillOverrides value that is not an object; it is left as it is, and the role's \"auto-mode-setup\": \"off\" is not added"* ]]
+  grep -q '"skillOverrides": "off"' "$OUT/settings.json"
+  # theirs with another override: both kept, nothing said
+  settings_of asb --role planner-1 claude --settings '{"skillOverrides":{"simplify":"off"}}' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *skillOverrides* ]]
+  [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["skillOverrides"])' "$OUT/settings.json")" = "{'simplify': 'off', 'auto-mode-setup': 'off'}" ]
+}
+
 @test "[claude] state-background = on: the state hooks set the terminal background, and SessionEnd resets it; off by default (#287)" {
   printf '[claude]\nstate-background = on\n' >"$H/proj/.agent-sandbox"
   engine_cmd
@@ -632,7 +658,11 @@ STUB
   # a --settings of theirs the merge refuses: theirs kept, the key with the hooks lost, said
   settings_of asb --role planner-1 claude --settings '{"hooks": []}' --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"the briefing's hooks were not installed (and the role's auto-compact off is not applied)"* ]]
+  [[ "$output" == *"the briefing's hooks were not installed (and the role's auto-compact off is not applied) (and /auto-mode-setup is not turned off)"* ]]
+  # a plain session's refused merge: neither is said
+  settings_of asb claude --settings '{"hooks": []}' --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the briefing's hooks were not installed."* ]]
 }
 
 @test "[agent] auto-compact, no briefing to give it: a join of a role whose keeper has none, and a profile with the hook but no profile_briefing_args, say it is not applied, once" {
