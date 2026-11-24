@@ -422,14 +422,22 @@ store_dir() {
   printf '%s' "$d"
 }
 
-# conv STORE NAME MTIME RECORD... -- a conversation file of the store, last written at MTIME.
+# conv STORE NAME MTIME RECORD... -- a conversation file of the store, last written at
+# MTIME, a time with its zone ("2026-10-21 09:00 UTC"): an instant, set as the file's
+# mtime alone (the engine reads the mtime) and by epoch, read by the same `date` as
+# `shown` reads it.
 conv() {
-  local d="$1/transcripts/own/home_tester_.claude_projects_x" f
+  local d="$1/transcripts/own/home_tester_.claude_projects_x" f t
   mkdir -p "$d/memory"
   f="$d/$2.jsonl"
   printf '%s\n' "${@:4}" >"$f"
-  touch -d "$3" "$f"
+  t="$(date -d "$3" +%s)"
+  touch -m -d "@$t" "$f"
 }
+
+# shown WHEN -- WHEN (a time with its zone: conv's MTIME, a record's ISO timestamp) as
+# --list shows it to the user: in local time, the engine's "%Y-%m-%d %H:%M".
+shown() { date -d "$1" '+%Y-%m-%d %H:%M'; }
 
 user_rec() { printf '{"type":"user","message":{"role":"user","content":"%s"},"timestamp":"%s"}' "$1" "$2"; }
 
@@ -463,19 +471,19 @@ list_fixture() {
 
 @test "--list shows this project's roles, newest first: state, created, active, and the summary chain" {
   list_fixture
-  run_engine TZ=UTC -- asb --role ignored --list
+  run_engine -- asb --role ignored --list
   [ "$status" -eq 0 ]
   local want
   want="$PROJ
-  rev     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13   claude, base
+  rev     stopped   created $(shown 2026-10-20T08:00:00.000Z)   active $(shown '2026-10-26 15:13 UTC')   claude, base
     CUDA version pinned in CI
-  tri     stopped   created 2026-10-26 11:50   active 2026-10-26 12:01   claude, base
+  tri     stopped   created $(shown 2026-10-26T11:50:00.000Z)   active $(shown '2026-10-26 12:01 UTC')   claude, base
     Issue triage: skip build
-  fresh   stopped   created 2026-10-25 09:00   active 2026-10-25 10:00   claude, base
+  fresh   stopped   created $(shown 2026-10-25T09:00:00Z)   active $(shown '2026-10-25 10:00 UTC')   claude, base
     Fix the build please
-  setup   stopped   created 2026-10-14 16:20   active 2026-10-24 10:00   claude, base
+  setup   stopped   created $(shown 2026-10-14T16:20:00Z)   active $(shown '2026-10-24 10:00 UTC')   claude, base
     no conversation
-  own     stopped   created 2026-10-22 09:00   active 2026-10-22 10:00   claude, base
+  own     stopped   created $(shown 2026-10-22T09:00:00Z)   active $(shown '2026-10-22 10:00 UTC')   claude, base
     My own line
 To resume: asb --role ROLE --agent claude --resume"
   [ "$output" = "$want" ]
@@ -512,10 +520,10 @@ To resume: asb --role ROLE --agent claude --resume"
 @test "--list-all works outside any project: projects ordered by their newest role" {
   list_fixture
   mkdir -p "$H/nowhere"
-  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  RUN_CWD="$H/nowhere" run_engine -- asb --list-all
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = /elsewhere/other ]
-  [ "${lines[1]}" = "  gh-x   stopped   created 2026-10-27 07:00   active 2026-10-27 08:00   claude, base" ]
+  [ "${lines[1]}" = "  gh-x   stopped   created $(shown 2026-10-27T07:00:00Z)   active $(shown '2026-10-27 08:00 UTC')   claude, base" ]
   [ "${lines[2]}" = "    other project" ]
   [ "${lines[3]}" = "$PROJ" ]
   [[ "$output" == *"CUDA version pinned in CI"* ]]
@@ -545,7 +553,7 @@ To resume: asb --role ROLE --agent claude --resume"
 
 @test "--list WORD keeps the roles whose name, summary or conversations mention it" {
   list_fixture
-  run_engine TZ=UTC -- asb --list cuda # the summary, any case
+  run_engine -- asb --list cuda # the summary, any case
   [ "$status" -eq 0 ]
   [[ "$output" == *"  rev "* ]]
   [[ "$output" != *"  tri "* && "$output" != *"  own "* ]]
@@ -566,13 +574,13 @@ To resume: asb --role ROLE --agent claude --resume"
 
 @test "--list takes a command word and ignores it, as the other verbs do; a second other word is refused" {
   list_fixture
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   local all="$output"
   [[ "$all" == *"  rev "*"  tri "* ]]
-  run_engine TZ=UTC -- asb --list claude # the profile, not a search word
+  run_engine -- asb --list claude # the profile, not a search word
   [ "$status" -eq 0 ]
   [ "$output" = "$all" ]
-  run_engine TZ=UTC -- asb --list-all /usr/local/bin/claude # a path whose basename names it
+  run_engine -- asb --list-all /usr/local/bin/claude # a path whose basename names it
   [ "$status" -eq 0 ]
   [[ "$output" == *"  rev "*"  tri "* ]]
   run_engine -- asb --list cuda claude
@@ -598,17 +606,17 @@ To resume: asb --role ROLE --agent claude --resume"
 @test "--list colours role names cyan and the project's line bold at a terminal, nothing else; plain through a pipe and with NO_COLOR (#314)" {
   list_fixture
   # through a pipe (run captures it): plain
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [ "$status" -eq 0 ]
   [[ "$output" != *$'\e'* ]]
   command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
   engine_cmd
   local C=$'\e[36m' R=$'\e[0m' B=$'\e[1m'
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" ${TZ+"TZ=$TZ"} script -qec "$(printf "%q " "${@:4}") --list" /dev/null' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   output="${output//$'\r'/}"
   [ "${lines[0]//$'\r'/}" = "${B}$PROJ${R}" ]
-  [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created 2026-10-20 08:00   active 2026-10-26 15:13   claude, base"$'\n'* ]]
+  [[ "$output" == *$'\n'"  ${C}rev${R}     stopped   created $(shown 2026-10-20T08:00:00.000Z)   active $(shown '2026-10-26 15:13 UTC')   claude, base"$'\n'* ]]
   [[ "$output" == *$'\n'"  ${C}setup${R}   stopped   "* ]]
   # nothing but the role names and the project's line
   local plain="${output//$C/}"
@@ -660,7 +668,7 @@ To resume: asb --role ROLE --agent claude --resume"
   [ "$status" -eq 0 ]
   [[ "$output" == "asb --list-all: no role has stores (nothing under "*")" ]]
   list_fixture
-  run_engine TZ=UTC -- asb --list-all
+  run_engine -- asb --list-all
   [ "$status" -eq 0 ]
   [[ "$output" == *"CUDA version pinned in CI"* ]]
   [[ "$output" != *accounts* ]]
@@ -689,6 +697,10 @@ acct_role() {
   conv "$sb" s "$3" "$(user_rec "$1" 2026-10-20T08:00:00Z)"
 }
 
+# The start of every acct_role row: ROLE, created as acct_role makes it, active at
+# 09:00 UTC on 2026-10-DAY, all as --list shows them (local time).
+acct_row() { printf '  %s   stopped   created %s   active %s' "$1" "$(shown 2026-10-20T08:00:00Z)" "$(shown "2026-10-$2 09:00 UTC")"; }
+
 @test "--list ends a role's line with its agent and account, and the login's due or expired state within 7 days (#355)" {
   local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
   login_file "$H/home/.claude/.credentials.json" "$(expiry_ms 30)"
@@ -701,39 +713,39 @@ acct_role() {
   acct_role d old "2026-10-22 09:00 UTC"
   acct_role e "" "2026-10-21 09:00 UTC"
   rm "${SBOX%/default}/e/account" # no record: the base
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [ "$status" -eq 0 ]
   local want
   want="$PROJ
-  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base
+$(acct_row a 25)   claude, base
     a
-  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account work
+$(acct_row b 24)   claude, account work
     b
-  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days
+$(acct_row c 23)   claude, account soon, login due in 3 days
     c
-  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --agent claude --account old --login
+$(acct_row d 22)   claude, account old, login expired: asb --agent claude --account old --login
     d
-  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, base
+$(acct_row e 21)   claude, base
     e
 To resume: asb --role ROLE --agent claude --resume"
   [ "$output" = "$want" ]
   # the base's login, read from the base's own file: due, then expired
   login_file "$H/home/.claude/.credentials.json" "$(expiry_ms 1)"
-  run_engine TZ=UTC -- asb --list
-  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login due in 1 day" ]
-  [ "${lines[9]}" = "  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, base, login due in 1 day" ]
-  [ "${lines[3]}" = "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account work" ]
+  run_engine -- asb --list
+  [ "${lines[1]}" = "$(acct_row a 25)   claude, base, login due in 1 day" ]
+  [ "${lines[9]}" = "$(acct_row e 21)   claude, base, login due in 1 day" ]
+  [ "${lines[3]}" = "$(acct_row b 24)   claude, account work" ]
   login_file "$H/home/.claude/.credentials.json" "$(expiry_ms -1)"
-  run_engine TZ=UTC -- asb --list
-  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired: run /login" ]
+  run_engine -- asb --list
+  [ "${lines[1]}" = "$(acct_row a 25)   claude, base, login expired: run /login" ]
   # --list-all says the same
   mkdir -p "$H/nowhere"
-  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  RUN_CWD="$H/nowhere" run_engine -- asb --list-all
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "$PROJ" ]
-  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired: run /login" ]
-  [ "${lines[5]}" = "  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account soon, login due in 3 days" ]
-  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account old, login expired: asb --agent claude --account old --login" ]
+  [ "${lines[1]}" = "$(acct_row a 25)   claude, base, login expired: run /login" ]
+  [ "${lines[5]}" = "$(acct_row c 23)   claude, account soon, login due in 3 days" ]
+  [ "${lines[7]}" = "$(acct_row d 22)   claude, account old, login expired: asb --agent claude --account old --login" ]
 }
 
 @test "--list says nothing of the login when its expiry is unknown: no file, no key, not a number, a link, not JSON (#355)" {
@@ -751,14 +763,14 @@ To resume: asb --role ROLE --agent claude --resume"
   acct_role d link "2026-10-22 09:00 UTC"
   acct_role e junk "2026-10-21 09:00 UTC"
   acct_role f "" "2026-10-20 09:00 UTC"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [ "$status" -eq 0 ]
-  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account nofile" ]
-  [ "${lines[3]}" = "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   claude, account nokey" ]
-  [ "${lines[5]}" = "  c   stopped   created 2026-10-20 08:00   active 2026-10-23 09:00   claude, account str" ]
-  [ "${lines[7]}" = "  d   stopped   created 2026-10-20 08:00   active 2026-10-22 09:00   claude, account link" ]
-  [ "${lines[9]}" = "  e   stopped   created 2026-10-20 08:00   active 2026-10-21 09:00   claude, account junk" ]
-  [ "${lines[11]}" = "  f   stopped   created 2026-10-20 08:00   active 2026-10-20 09:00   claude, base" ]
+  [ "${lines[1]}" = "$(acct_row a 25)   claude, account nofile" ]
+  [ "${lines[3]}" = "$(acct_row b 24)   claude, account nokey" ]
+  [ "${lines[5]}" = "$(acct_row c 23)   claude, account str" ]
+  [ "${lines[7]}" = "$(acct_row d 22)   claude, account link" ]
+  [ "${lines[9]}" = "$(acct_row e 21)   claude, account junk" ]
+  [ "${lines[11]}" = "$(acct_row f 20)   claude, base" ]
   [[ "$output" != *login* ]]
   # A FIFO and a directory where the login should be: the account's directory is a role's
   # writable state, so its agent can put either there. Neither is read, and a FIFO is not
@@ -769,58 +781,66 @@ To resume: asb --role ROLE --agent claude --resume"
   acct_role h dir "2026-10-18 09:00 UTC"
   engine_cmd
   # shellcheck disable=SC2016 # the inner shell's own arguments
-  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --list' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" ${TZ+"TZ=$TZ"} "${@:4}" --list' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
-  grep -qxF "  g   stopped   created 2026-10-20 08:00   active 2026-10-19 09:00   claude, account fifo" <<<"$output"
-  grep -qxF "  h   stopped   created 2026-10-20 08:00   active 2026-10-18 09:00   claude, account dir" <<<"$output"
+  grep -qxF "$(acct_row g 19)   claude, account fifo" <<<"$output"
+  grep -qxF "$(acct_row h 18)   claude, account dir" <<<"$output"
   [[ "$output" != *login* ]]
   # shellcheck disable=SC2016 # the inner shell's own arguments
-  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC "${@:4}" --role g --status claude' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  run timeout 20 bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" ${TZ+"TZ=$TZ"} "${@:4}" --role g --status claude' _ "$H/proj" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   grep -qxF "  account: fifo (~/.local/state/agent-sandbox/claude/accounts/fifo)" <<<"$output"
   # a record that does not read as one is not guessed at: no agent, no account
   printf 'claude\t../../x\n' >"${SBOX%/default}/a/account"
-  run_engine TZ=UTC -- asb --list
-  [ "${lines[1]}" = "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00" ]
+  run_engine -- asb --list
+  [ "${lines[1]}" = "$(acct_row a 25)" ]
 }
 
 @test "--status prints the role's account, its directory and the login's expiry date, stopped and running (#355)" {
   local acc="$H/home/.local/state/agent-sandbox/claude/accounts" ms day
-  ms="$(expiry_ms 30)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  ms="$(expiry_ms 30)" day="$(date -d "@$((ms / 1000))" +%F)"
   login_file "$H/home/.claude/.credentials.json" "$ms"
   run_engine -- asb claude --version # the base: the record's NAME is empty
   [ "$(cat "$SBOX/account")" = "claude	" ]
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *$'\n'"  account: none, the base (~/.claude), login valid until $day"* ]]
   # the base's login expired: the date, and what renews it
-  ms="$(expiry_ms -1)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  ms="$(expiry_ms -1)" day="$(date -d "@$((ms / 1000))" +%F)"
   login_file "$H/home/.claude/.credentials.json" "$ms"
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   [[ "$output" == *$'\n'"  account: none, the base (~/.claude), login expired $day: run /login"* ]]
+  # the day is the user's: a second either side of UTC midnight, the local day of each
+  # (in any zone off UTC, one of the two is another day than UTC's)
+  local t
+  for t in '2026-01-01 23:59:59 UTC' '2026-01-02 00:00:00 UTC'; do
+    login_file "$H/home/.claude/.credentials.json" "$(($(date -d "$t" +%s) * 1000))"
+    run_engine -- asb --status claude
+    [[ "$output" == *$'\n'"  account: none, the base (~/.claude), login expired $(date -d "$t" +%F): run /login"* ]]
+  done
   # an account's, due: from the stopped store's record
-  ms="$(expiry_ms 3)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  ms="$(expiry_ms 3)" day="$(date -d "@$((ms / 1000))" +%F)"
   login_file "$acc/work/.credentials.json" "$ms"
   printf 'claude\twork\n' >"$SBOX/account"
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login due $day (in 3 days): asb --agent claude --account work --login"* ]]
   # unknown: the account and its directory, nothing of the login
   rm "$acc/work/.credentials.json"
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   grep -qxF "  account: work (~/.local/state/agent-sandbox/claude/accounts/work)" <<<"$output"
   # a tampered record, a name that is no account's: no account line at all
   login_file "$H/home/.local/x/.credentials.json" "$(expiry_ms 3)" # where the name leads from accounts/
   printf 'claude\t../../../../x\n' >"$SBOX/account"
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"not running; its stores"* ]]
   [[ "$output" != *"account:"* && "$output" != *login* ]]
   # running: the keeper's policy says it, whatever the record says now
-  ms="$(expiry_ms 30)" day="$(TZ=UTC date -d "@$((ms / 1000))" +%F)"
+  ms="$(expiry_ms 30)" day="$(date -d "@$((ms / 1000))" +%F)"
   login_file "$acc/work/.credentials.json" "$ms"
   engine_bg -- asb --account work claude --version
   printf 'claude\t\n' >"$SBOX/account"
-  run_engine TZ=UTC -- asb --status claude
+  run_engine -- asb --status claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"running since"* ]]
   [[ "$output" == *$'\n'"  account: work (~/.local/state/agent-sandbox/claude/accounts/work), login valid until $day"$'\n'* ]]
@@ -837,7 +857,7 @@ To resume: asb --role ROLE --agent claude --resume"
   run ! grep -q '^login-renew' "$H/profiles/claude/agent-sandbox"
   grep -qxF 'login-renew = sign in again from the menu' "$H/profiles/other/agent-sandbox"
   local rms day sb
-  rms="$(expiry_ms -1)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  rms="$(expiry_ms -1)" day="$(date -d "@$((rms / 1000))" +%F)"
   login_file "$H/home/.claude/.credentials.json" "$rms"
   acct_role a "" "2026-10-25 09:00 UTC"
   sb="$H/home/.local/state/agent-sandbox/other/${PROJ//[^A-Za-z0-9-]/-}/b"
@@ -845,30 +865,30 @@ To resume: asb --role ROLE --agent claude --resume"
   printf '%s\n' "$PROJ" >"$sb/project"
   printf 'other\t\n' >"$sb/account"
   conv "$sb" s "2026-10-24 09:00 UTC" "$(user_rec b 2026-10-20T08:00:00Z)"
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
   [ "$status" -eq 0 ]
-  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, base, login expired" <<<"$output"
-  grep -qxF "  b   stopped   created 2026-10-20 08:00   active 2026-10-24 09:00   other, base, login expired: run sign in again from the menu" <<<"$output"
+  grep -qxF "$(acct_row a 25)   claude, base, login expired" <<<"$output"
+  grep -qxF "$(acct_row b 24)   other, base, login expired: run sign in again from the menu" <<<"$output"
   # --status: the date, and a renewal only where the profile names one
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
   [ "$status" -eq 0 ]
   grep -qxF "  account: none, the base (~/.claude), login expired $day" <<<"$output"
   install_stub_as other # the agent a verb of the `other` profile resolves: a copy of claude, asb installs it (#6)
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
   [ "$status" -eq 0 ]
   grep -qxF "  account: none, the base (~/.claude), login expired $day: run sign in again from the menu" <<<"$output"
-  rms="$(expiry_ms 3)" day="$(TZ=UTC date -d "@$((rms / 1000))" +%F)"
+  rms="$(expiry_ms 3)" day="$(date -d "@$((rms / 1000))" +%F)"
   login_file "$H/home/.claude/.credentials.json" "$rms"
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role a --status claude
   grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days)" <<<"$output"
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --role b --status other
   [ "$status" -eq 0 ]
   grep -qxF "  account: none, the base (~/.claude), login due $day (in 3 days): run sign in again from the menu" <<<"$output"
   # an account's renewal is the engine's, with or without the key
   login_file "$H/home/.local/state/agent-sandbox/claude/accounts/old/.credentials.json" "$(expiry_ms -1)"
   printf 'claude\told\n' >"${SBOX%/default}/a/account"
-  run_engine TZ=UTC AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
-  grep -qxF "  a   stopped   created 2026-10-20 08:00   active 2026-10-25 09:00   claude, account old, login expired: asb --agent claude --account old --login" <<<"$output"
+  run_engine AGENT_SANDBOX_PROFILE_DIR="$H/profiles" -- asb --list
+  grep -qxF "$(acct_row a 25)   claude, account old, login expired: asb --agent claude --account old --login" <<<"$output"
 }
 
 @test "the login file's other fields never reach any output: only the expiry is read (#355)" {
@@ -879,18 +899,18 @@ To resume: asb --role ROLE --agent claude --resume"
   cp "$acc/work/.credentials.json" "$H/home/.claude/.credentials.json"
   acct_role a work "2026-10-25 09:00 UTC"
   acct_role b "" "2026-10-24 09:00 UTC"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude, account work, login due in 2 days"* ]]
   [[ "$output" == *"claude, base, login due in 2 days"* ]]
   [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
-  run_engine TZ=UTC -- asb --list-all
+  run_engine -- asb --list-all
   [[ "$output" == *"claude, account work, login due in 2 days"* ]]
   [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
-  run_engine TZ=UTC -- asb --role a --status claude
+  run_engine -- asb --role a --status claude
   [[ "$output" == *"account: work ("*"login due "* ]]
   [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
-  run_engine TZ=UTC -- asb --role b --status claude
+  run_engine -- asb --role b --status claude
   [[ "$output" == *"account: none, the base ("*"login due "* ]]
   [[ "$output" != *SECRET* && "$output" != *sk-ant* ]]
 }
@@ -974,9 +994,9 @@ STUB
   [ "$(cat "$HIST")" = '{"display":"the role at work","sessionId":"mine"}' ]
   # the new line, as text, and the description's host path
   [[ "$output" == *"role 'default' summarized:"$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"* ]]
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    # What the role did"$'\n'"To resume: "* ]]
-  run_engine TZ=UTC -- asb --list-all
+  run_engine -- asb --list-all
   [[ "$output" == *$'\n'"    Pinned CUDA [31min CI"$'\n'"    description: $SBOX/summary/description.md"$'\n'* ]]
 }
 
@@ -1134,8 +1154,10 @@ STUB
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'default': the turn left no new summary line in $SBOX/summary/line"* ]]
   [ "$(find "$CONV" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]
-  # a description older than the turn is not the turn's; none at all is said too
-  touch -d '-1 hour' "$SBOX/summary/description.md"
+  # a description older than the turn is not the turn's; none at all is said too. Its
+  # atime is later than the turn: a read since is no write.
+  touch -m -d '-1 hour' "$SBOX/summary/description.md"
+  touch -a -d '+1 hour' "$SBOX/summary/description.md"
   run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=new SUMM_NODESC=1 -- asb --summarize claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"    new"$'\n'"    description: not rewritten by this turn; $SBOX/summary/description.md is an older one"* ]]
@@ -1143,9 +1165,10 @@ STUB
   run_engine AGENT_SANDBOX_JOIN="$H/bin/summ-join" SUMM_LINE=new SUMM_NODESC=1 -- asb --summarize claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"    new"$'\n'"    description: none written"* ]]
-  # nor is a line older than the turn
+  # nor is a line older than the turn (read since)
   printf 'old\n' >"$SBOX/summary/line"
-  touch -d '-1 hour' "$SBOX/summary/line"
+  touch -m -d '-1 hour' "$SBOX/summary/line"
+  touch -a -d '+1 hour' "$SBOX/summary/line"
   run_engine -- asb --summarize claude # the harness's own join stub writes nothing
   [ "$status" -eq 1 ]
   [[ "$output" == *"the turn left no new summary line"* ]]
@@ -1158,25 +1181,25 @@ STUB
   d="$sb/summary/description.md"
   printf '# x\n' >"$H/elsewhere.md"
   ln -s "$H/elsewhere.md" "$d"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [[ "$output" != *"# x"* && "$output" != *"description"* ]]
   rm "$d"
   # short: shown whole, blank lines skipped, control characters dropped
   printf '# Summary\n\n  Pinned \e[31mCUDA\n\t\nOpen: arm64\n' >"$d"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [[ "$output" == *$'\n'"    My own line"$'\n'"    # Summary"$'\n'"      Pinned [31mCUDA"$'\n'"    Open: arm64"$'\n'"To resume: "* ]]
   [[ "$output" != *"description:"* ]]
   # exactly 5: still whole
   printf 'l1\nl2\n\nl3\nl4\nl5\n\n' >"$d"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [[ "$output" == *$'\n'"    My own line"$'\n'"    l1"$'\n'"    l2"$'\n'"    l3"$'\n'"    l4"$'\n'"    l5"$'\n'"To resume: "* ]]
   # longer: the first 5, then the path
   printf 'l1\nl2\n\nl3\nl4\nl5\nl6\nl7\n' >"$d"
-  run_engine TZ=UTC -- asb --list
+  run_engine -- asb --list
   [[ "$output" == *$'\n'"    l5"$'\n'"    full description: $d"$'\n'"To resume: "* ]]
   [[ "$output" != *"l6"* ]]
   # --list-all: the path, never the content
-  run_engine TZ=UTC -- asb --list-all
+  run_engine -- asb --list-all
   [[ "$output" == *$'\n'"    My own line"$'\n'"    description: $d"$'\n'* ]]
   [[ "$output" != *"l1"* ]]
   [ "$(grep -c 'description:' <<<"$output")" -eq 1 ]
@@ -1188,11 +1211,11 @@ STUB
   sb="$(store_dir /no/record r)"
   conv "$sb" s "2026-10-20 08:00 UTC" "$(user_rec 'x' 2026-10-20T07:00:00Z)"
   mkdir -p "$H/nowhere"
-  RUN_CWD="$H/nowhere" run_engine TZ=UTC -- asb --list-all
+  RUN_CWD="$H/nowhere" run_engine -- asb --list-all
   [[ "$output" != *$'\e'* ]]
   command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
   engine_cmd
-  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" TZ=UTC script -qec "$(printf "%q " "${@:4}") --list-all" /dev/null' _ "$H/nowhere" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" ${TZ+"TZ=$TZ"} script -qec "$(printf "%q " "${@:4}") --list-all" /dev/null' _ "$H/nowhere" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [ "$status" -eq 0 ]
   output="${output//$'\r'/}"
   local B=$'\e[1m' R=$'\e[0m'

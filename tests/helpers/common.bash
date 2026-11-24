@@ -213,6 +213,10 @@ plain_profiles() {
 # Runs CMD (asb | agent-sandbox | a path) from $H/proj with a clean
 # environment plus the given variables, the stub bwrap first on PATH, and the
 # argv recorded in $H/argv. Uses bats' `run`, so $status and $output are set.
+# The test's own TZ, when set, is passed on, so a time the engine shows the user is
+# in the zone the test computes it in (a VAR given here still wins). The user's rule:
+# TZ=UTC only for a time that never reaches a user; a shown time is tested in local
+# time, the way the user sees it, and a run under any TZ shows it.
 # RUN_EXPECT=N (`RUN_EXPECT=127 run_engine -- ...`) hands bats `run -N`: the test
 # expects that exit code, and bats stops warning BW01 for a 127.
 run_engine() {
@@ -238,7 +242,7 @@ run_engine() {
   run "${expect[@]}" env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
     BWRAP_DUMP="$H/argv" JOIN_DUMP="$H/join" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" AGENT_SANDBOX_KEEPER_GRACE=0 \
     AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
+    AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on ${TZ+"TZ=$TZ"} "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   popd >/dev/null || return 1
   mapfile -t ARGV <"$H/argv"
   # What was joined into the keeper: JOIN is the join's whole argv, JOINV the command
@@ -362,7 +366,7 @@ engine_bg() {
     exec env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" USER=tester TERM=xterm LANG=C.UTF-8 \
       BWRAP_DUMP="$H/argv.bg" JOIN_DUMP="$H/join.bg" JOIN_HOLD="$H/hold" AGENT_SANDBOX_JOIN="$H/bin/join-stub.py" \
       AGENT_SANDBOX_KEEPER_GRACE=0 AGENT_SANDBOX_SESSION_BASE="$H/base" AGENT_SANDBOX_SECCOMP_DIR="$H/no-such-seccomp" \
-      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
+      AGENT_SANDBOX_PRESET="${TEST_PRESET-shared}" AGENT_SANDBOX_VERBOSE=on ${TZ+"TZ=$TZ"} "${envs[@]}" "${ENGINE_CMD[@]}" "$@"
   ) </dev/null >"$H/bg.out" 2>&1 3>&- &
   BG_PID=$!
   for ((i = 0; i < 500; i++)); do
