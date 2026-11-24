@@ -77,6 +77,12 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   "$PWD/.asb/scratch/<task>/wt" BRANCH`. Once the Task has landed, delete its directory
   and run `git -C .asb/impl/{n} worktree prune`; keep only what an open Task still
   needs, and say in your messages what you kept and why.
+- The branch under review is checked out in your clone, `.asb/impl/{n}/` -- the tree the
+  Reviewer reads -- before you write the Handoff, and stays checked out while the review
+  runs; a branch is checked out in one tree at a time, so first remove or detach a
+  worktree that holds it. Only throwaway worktrees go to `.asb/scratch/<task>/`. The
+  Handoff names the branch and its commit and carries its commit message, verbatim: the
+  Reviewer sees no history.
 - To ask another role something, write it in your messages addressed to its handle:
   S watches them and brings it to the user. When you are blocked, write why there and
   stop.
@@ -86,6 +92,16 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   ("waiting for S on: whether ..."), and asks nothing, nor do you open a question
   dialog (AskUserQuestion): an answer given here would bypass S. When the user talks
   to you here, answer here.
+- When you are asked to save your working state -- by your Stop hook at the rescue
+  level, or by S -- commit your work in progress, then write
+  `.asb/coord/{role}/state.md`, the whole file each time: the Task (its inbox N) and its
+  base, the step you are in, what is done and where (the commit, files), what is pending
+  and the next action, and the decisions not yet in any artefact. Then append one line
+  to your messages: `state.md saved at rescue, N tokens left`, N from the hook's reason,
+  or `state.md saved` when S asked. Then go on if the step fits in the room left, or
+  stop at a clean point and say in your messages what is left.
+- At a fresh start, if `state.md` names the Task your latest inbox message opens or
+  continues, read it first.
 - A restart question from S (an approved change to your policy or purpose file, which
   only a relaunch applies): answer `ready` in your messages once no turn's work is in
   flight and no background command but your watcher runs, after writing there what

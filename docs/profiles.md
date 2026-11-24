@@ -154,24 +154,35 @@ briefing on, #314), the summary rule: the `Stop` command carries
 `AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line`, and a turn that ends with that
 line missing or empty is refused once in the same way, the reason saying to write the
 one-line summary there -- not with `stop_hook_active`, not in a print run, `--serve`'s
-turns included; a `Stop` that fails both rules gets one refusal naming both; `--check`
-says it) and `statusline.sh` (the `statusLine`: a bar of the state's colour with the
-role and that state, padded to `COLUMNS` less 4, the most Claude Code shows of the line
-without cutting it, `refreshInterval` 1, the role written into its command since neither
-its stdin nor the sandbox's environment carries it; a `statusLine` in the user's
-`--settings` wins) (#287), and, for a role with a `[briefing] start`, the `/start`
-command (`.claude/commands/start.md`, the start text, the directory added with
-`--add-dir`). For a role (every one but `default`), the `--settings` also turns
-`/auto-mode-setup` off, `"skillOverrides": {"auto-mode-setup": "off"}`, the command and
-its offer: its dialog would hold a served or unwatched role, and its result goes to the
-account's shared `~/.claude/settings.json`, past the reviewed `.agent-sandbox`; an entry
-of the user's own `--settings` for that key decides it. The contract is still the bash
-hooks, and the policy stays in them: the helper does one thing and exits nonzero when
-it cannot, and the hook decides what a launch then does. `python3` is always there --
-the engine refuses a launch without it, since every command is joined by it -- so a
-hook needs no second, bash version of what the helper does. The engine gives the hook
-its directory as `profile_home` (what `{profile}` expands to), and the installer copies
-the profile's directory whole.
+turns included; `--check` says it; and, for a role with a context file (#456), the
+save prompt: a `Stop` whose update puts the level at `rescue` is refused once, the
+reason saying "your context is at its rescue level (N tokens left before the stop):
+save your working state as your purpose file says", so the role saves in that same
+turn, naming no file (the purpose file says where); once per stay at `rescue`: the hook
+writes the session it prompted to `STATE.rescue` in the sandbox's `/tmp`, a `Stop` at
+`ok` or `plan` removes it, and a session other than the one there prompts again;
+`stopped` and `?` never prompt; judged by that record, not by the file's previous level,
+which the status line and the `--serve` loop rewrite between `Stop`s; not with
+`stop_hook_active`, and then at the next `Stop`; a print run too, so a served role from
+its second turn, once the loop has given the window; a `Stop` that fails more than one
+of the three gets one refusal naming each, the save first) and `statusline.sh` (the
+`statusLine`: a bar of the state's colour with the role and that state, padded to
+`COLUMNS` less 4, the most Claude Code shows of the line without cutting it,
+`refreshInterval` 1, the role written into its command since neither its stdin nor the
+sandbox's environment carries it; a `statusLine` in the user's `--settings` wins)
+(#287), and, for a role with a `[briefing] start`, the `/start` command
+(`.claude/commands/start.md`, the start text, the directory added with `--add-dir`). For
+a role (every one but `default`), the `--settings` also turns `/auto-mode-setup` off,
+`"skillOverrides": {"auto-mode-setup": "off"}`, the command and its offer: its dialog
+would hold a served or unwatched role, and its result goes to the account's shared
+`~/.claude/settings.json`, past the reviewed `.agent-sandbox`; an entry of the user's
+own `--settings` for that key decides it. The contract is still the bash hooks, and the
+policy stays in them: the helper does one thing and exits nonzero when it cannot, and
+the hook decides what a launch then does. `python3` is always there -- the engine
+refuses a launch without it, since every command is joined by it -- so a hook needs no
+second, bash version of what the helper does. The engine gives the hook its directory as
+`profile_home` (what `{profile}` expands to), and the installer copies the profile's
+directory whole.
 
 A profile must **not** touch the engine's bwrap argument list. The declarations
 above are the whole interface, so that the sandbox's isolation guarantees stay

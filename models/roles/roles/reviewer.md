@@ -65,6 +65,10 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   run is a deliverable, not scratch, and stays in your Review directory. Once the Task
   has landed, delete its scratch directory; keep only what an open Task still needs,
   and say in your messages what you kept and why.
+- The Implementer's clone, `.asb/impl/N/`, holds the Handoff's branch while you review:
+  its tree is `main` plus the Handoff's diff (its history is hidden from you; compare
+  the trees). If it is not, say so in your messages and stop: do not review `main` plus
+  the diff instead.
 - Tests, per round: run the `iterate` command of `.asb/tests` on the Handoff's changed
   paths (or its listed tests) and say whether the Handoff's selection matches. When you
   would accept with zero findings, run the `final` command once, the whole suite,
@@ -79,6 +83,16 @@ suite running, a section unwritten) ends by naming what is pending and what foll
   ("waiting for S on: whether ..."), and asks nothing, nor do you open a question
   dialog (AskUserQuestion): an answer given here would bypass S. When the user talks
   to you here, answer here.
+- When you are asked to save your working state -- by your Stop hook at the rescue
+  level, or by S -- write `.asb/coord/{role}/state.md`, the whole file each time: the
+  Task (its inbox N) and its base, the step you are in, what is done and where (commits,
+  files), what is pending and the next action, and the decisions not yet in any
+  artefact. Then append one line to your messages:
+  `state.md saved at rescue, N tokens left`, N from the hook's reason, or
+  `state.md saved` when S asked. Then go on if the step fits in the room left, or stop
+  at a clean point and say in your messages what is left.
+- At a fresh start, if `state.md` names the Task your latest inbox message opens or
+  continues, read it first.
 - A restart question from S (an approved change to your policy or purpose file, which
   only a relaunch applies): answer `ready` in your messages once no turn's work is in
   flight and no background command but your watcher runs, after writing there what

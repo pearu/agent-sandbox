@@ -63,6 +63,22 @@
 # one, profile_serve_result), kept from the file's line. A print run too: a served
 # role's turns are print runs.
 #
+# THE SAVE PROMPT (#456). With the context file, a Stop whose update puts the level at
+# `rescue` is refused once, so that the role saves its working state in this same turn:
+# "your context is at its rescue level (LEFT tokens left before the stop): save your
+# working state as your purpose file says" -- naming no file: the purpose file says
+# where (a role's state.md, the Supervisor's reminders.md). Once per crossing: the
+# refusal writes this session's id to STATE.rescue, and a Stop at `rescue` whose
+# session is the one there is not refused again; `stopped` and `?` never are. A Stop
+# below `rescue` (ok, plan) removes the record, and a new session (a clear, another
+# session) does not match it: either rearms the prompt. The crossing is this record's,
+# not the file's previous level: the status line rewrites the file each second, and the
+# serve loop after each turn, so the file is often at `rescue` before the Stop that
+# should prompt. Not when stop_hook_active is true, as above; nor is STATE.rescue
+# written then, so the next Stop prompts. A served role's first turn has no window yet
+# (level ?): it prompts from its second turn on. It combines with the two refusals
+# above in one reason.
+#
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
 #
@@ -72,7 +88,7 @@
 # Claude Code's own stdout is the terminal: /proc/$CLAUDE_PID/fd/1, written only when
 # it is a character device, and never waited on for more than a second.
 #
-# Exits 0 always and prints nothing but the refusal above: a hook's stdout can become
+# Exits 0 always and prints nothing but the refusals above: a hook's stdout can become
 # the session's context.
 set -u
 # This file's directory, where context.sh is.
@@ -261,8 +277,10 @@ ctx_tokens() {
 context() {
   local f="${AGENT_SANDBOX_CONTEXT:-}" sess line kv tp tok bs bt base="" want pid
   local -a words=()
+  CTX_LEVEL="" CTX_LEFT="" ctx_session=""
   [[ -n "$f" ]] || return 0
   sess="$(jsession)"
+  ctx_session="${sess:-?}"
   if [[ "$1" == UserPromptSubmit ]]; then
     line="" tok=""
     if [[ -n "$sess" && -f "$f" && ! -L "$f" ]]; then
@@ -293,6 +311,23 @@ context() {
   return 0
 }
 
+# rescue -- status 0 when this Stop is to prompt the save (THE SAVE PROMPT, above): the
+# update put the level at rescue and STATE.rescue does not name this session. Below
+# rescue, it removes STATE.rescue: the next crossing prompts again.
+rescue() {
+  local had=""
+  case "$CTX_LEVEL" in
+    ok | plan)
+      rm -f -- "$statef.rescue" 2>/dev/null
+      return 1
+      ;;
+    rescue) ;;
+    *) return 1 ;;
+  esac
+  { IFS= read -r -n 128 had <"$statef.rescue"; } 2>/dev/null || :
+  [[ "$had" != "$ctx_session" ]]
+}
+
 # jstr S -- S as the inside of a JSON string (backslash, quote and control characters).
 jstr() {
   local w="$1"
@@ -300,19 +335,25 @@ jstr() {
   printf '%s' "$w"
 }
 
-# refuse WATCH SUMMARY -- print the one Stop refusal: for the watch path in
-# AGENT_SANDBOX_WATCH when WATCH is 1, for the summary line in AGENT_SANDBOX_SUMMARY when
-# SUMMARY is 1, both in one reason when both are.
+# refuse WATCH SUMMARY SAVE -- print the one Stop refusal: the save prompt when SAVE is
+# 1, for the watch path in AGENT_SANDBOX_WATCH when WATCH is 1, for the summary line in
+# AGENT_SANDBOX_SUMMARY when SUMMARY is 1, all of them in one reason.
 refuse() {
-  local r="agent-sandbox:"
-  (($1)) && r+=" your watcher on $(jstr "$AGENT_SANDBOX_WATCH") is not running; arm it as your purpose file says (the Bash tool, run_in_background: true)"
-  (($1 && $2)) && r+=";"
-  (($2)) && r+=" write this session's one-line summary to $(jstr "$AGENT_SANDBOX_SUMMARY")"
+  local r="agent-sandbox:" sep=""
+  if (($3)); then
+    r+=" your context is at its rescue level (${CTX_LEFT:-?} tokens left before the stop): save your working state as your purpose file says"
+    sep=";"
+  fi
+  if (($1)); then
+    r+="$sep your watcher on $(jstr "$AGENT_SANDBOX_WATCH") is not running; arm it as your purpose file says (the Bash tool, run_in_background: true)"
+    sep=";"
+  fi
+  (($2)) && r+="$sep write this session's one-line summary to $(jstr "$AGENT_SANDBOX_SUMMARY")"
   r+=", then end your turn"
   printf '{"decision":"block","reason":"%s."}\n' "$r"
 }
 
-state="" block=0 bsum=0
+state="" block=0 bsum=0 bsave=0 CTX_LEVEL="" CTX_LEFT="" ctx_session=""
 case "$event" in
   SessionStart) if watching; then state=waiting; else state=idle; fi ;;
   Stop)
@@ -330,6 +371,11 @@ case "$event" in
     fi
     context Stop
     re='"stop_hook_active"[[:space:]]*:[[:space:]]*true'
+    if rescue && [[ ! "$input" =~ $re ]]; then
+      { printf '%s\n' "$ctx_session" >"$statef.rescue.$$" && mv -f -- "$statef.rescue.$$" "$statef.rescue"; } 2>/dev/null \
+        || rm -f -- "$statef.rescue.$$" 2>/dev/null
+      bsave=1
+    fi
     if [[ ! "$input" =~ $re ]]; then
       [[ -n "${AGENT_SANDBOX_WATCH:-}" ]] && ((! w)) && block=1
       [[ -n "${AGENT_SANDBOX_SUMMARY:-}" && ! -s "$AGENT_SANDBOX_SUMMARY" ]] && bsum=1
@@ -362,7 +408,7 @@ if [[ -n "$state" ]]; then
   { printf '%s\n' "$state" >"$tmp" && mv -f -- "$tmp" "$statef"; } 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
 fi
 
-((block || bsum)) && refuse "$block" "$bsum"
+((block || bsum || bsave)) && refuse "$block" "$bsum" "$bsave"
 
 [[ "$background" == on ]] || exit 0
 case "$event:$state" in

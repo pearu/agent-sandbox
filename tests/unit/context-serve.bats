@@ -169,7 +169,7 @@ result() {
   serve_start
   turn 1 "Done."
   settled
-  [ "$(cat "$C.level")" = plan ] # 500000 of the stop 985000, 50.7 %: plan at 50 %, ok at the default 60 %
+  [ "$(cat "$C.level")" = plan ] # 500000 of the stop 985000, 50.7 %: plan at 50 %, ok at the default 85 %
 }
 
 @test "--serve: a turn the context limit stopped is said so in the role's messages, and its context file says stopped" {
