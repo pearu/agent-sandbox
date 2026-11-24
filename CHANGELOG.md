@@ -1036,6 +1036,26 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **A role keeps its throwaway work in `.asb/scratch/<task>/` and clears it once the
+  Task has landed.** In this project `asb --trust` and `--apply` took about 40 s of CPU
+  before the approval prompt. The trust review's link scan (#401) walked about 10,000
+  symbolic links in an Implementer's clone, most of them a 38 GB coverage report left
+  in a worktree inside it. The roles model's purpose files said where each role's
+  scratch is, but not what goes there or when it is cleared. Now:
+  - **The Implementer and the Reviewer** put worktrees, copies of a tree, mutants and
+    measurement and coverage outputs in `.asb/scratch/<task>/`, never in their tree or
+    a directory the roles share. Once the Task has landed they delete that directory
+    (the Implementer prunes its worktrees), keep only what an open Task still needs,
+    and say what they kept. A Reviewer's probes for another role stay in its Review
+    directory.
+  - **The Planner** keeps a measurement a Task cites in its directory, and its
+    throwaway runs in `.asb/scratch/<task>/`, deleted the same way.
+  - **The Supervisor** adds a line to the message that opens the Implementer's and the
+    Reviewer's next Task, once the step's run is green: clear the landed Task's scratch.
+  - **docs/roles.md** says so, and why: the scan walks every directory a role binds
+    from the host, its clone included, but not `.asb/scratch/`, a role's own store.
+    Clearing the scratch frees the disk; it does not speed the review.
+
 - **The Supervisor hands a revision loop that is not converging to the Planner, and a
   Review settles facts before prose** (#459). Under the relay, findings and revisions
   went back and forth "until the Reviewer accepts or the Implementer objects", and
