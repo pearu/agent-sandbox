@@ -452,42 +452,76 @@ wait_gone() { # wait_gone PID -- up to 10 s
 @test "a strict start that fails (a bwrap slow to show the payload) leaves nothing of pasta's subtree: the watcher ends it before the supervisor's failure exit (#430)" {
   strict_here || skip "strict needs pasta and nft"
   # A bwrap on the launch's PATH that, run with its options (--args), records its pid
-  # namespace (pasta's: it runs there as pid 1) and sleeps 30 s first, so the supervisor's
-  # 10 s wait for the payload runs out and it takes its failure path. A pasta sent TERM
-  # leaves this child running (R1's review of T11, measured on f571dae).
+  # namespace (pasta's: it runs there as pid 1), marks itself started (rd.in, for
+  # bg_sandboxed), and sleeps 60 s, so the supervisor's 10 s wait for the payload runs out
+  # (12-16 s measured on a loaded host, #470) and it takes its failure path, and a stub
+  # nothing ended outlasts the check below (a passing run is no slower: the watcher ends
+  # the stub when that wait runs out). A pasta sent TERM leaves this child running (R1's
+  # review of T11, measured on f571dae).
   cat >"$I/bin/bwrap" <<S
 #!/bin/sh
 if [ "\$1" = --args ]; then
-  /usr/bin/readlink /proc/self/ns/pid >>"$I/slow.pids"
-  /usr/bin/sleep 30
+  /usr/bin/readlink /proc/self/ns/pid >"$I/slow.ns"
+  : >"$IWORK/rd.in"
+  /usr/bin/sleep 60
 fi
 exec /usr/bin/bwrap "\$@"
 S
   chmod +x "$I/bin/bwrap"
-  bg_sandboxed rd AGENT_SANDBOX_NET=strict XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold rd)" || :
+  bg_sandboxed rd AGENT_SANDBOX_NET=strict XDG_STATE_HOME="$IHOME/.local/state" -- --profile probe --exec sh -c "$(hold rd)"
+  # The namespace, held open while the test reads it. Once the last process in it ends,
+  # a namespace nobody holds is freed, and the next one made anywhere on the host can
+  # get its inode (a concurrent test's sandbox): the check would then report that
+  # sandbox's processes as left behind here (#470). It is opened through a process in it
+  # (the stub sees itself as pid 1 there, so it cannot name itself), found by the inode
+  # while the stub sleeps through the supervisor's wait: no other namespace has that
+  # inode while this one has a process. Once held, it never has another, so "pid:[N]"
+  # names this namespace alone, whatever ends in it.
+  local ns p="" q nsfd me="$BASHPID"
+  read -r ns <"$I/slow.ns"
+  for q in /proc/[0-9]*; do
+    [[ "$(readlink "$q/ns/pid" 2>/dev/null)" == "$ns" ]] || continue
+    p="${q#/proc/}"
+    break
+  done
+  if [[ -z "$p" ]]; then
+    echo "no process in the stub's pid namespace $ns to hold it by" >&2
+    return 1
+  fi
+  exec {nsfd}<"/proc/$p/ns/pid"
+  # held, and held while the namespace still had a process: P is in it after the open
+  [ "$(readlink "/proc/$me/fd/$nsfd")" = "$ns" ]
+  [ "$(readlink "/proc/$p/ns/pid")" = "$ns" ]
   local rc=0
   wait "$BG_PID" || rc=$?
   [ "$rc" -ne 0 ]
-  sleep 1
-  local -a left=()
-  local ns q c st pp
+  # Nothing left in it: polled for up to 10 s after the launch's failure exit, by the
+  # clock (one look through /proc takes about 1 s on a busy host).
+  local -a left
+  local t0="$SECONDS" c st pp
   local -a f
-  read -r ns <"$I/slow.pids"
-  for q in /proc/[0-9]*; do
-    [[ "$(readlink "$q/ns/pid" 2>/dev/null)" == "$ns" ]] || continue
-    st=""
-    { read -r st <"$q/stat"; } 2>/dev/null || continue
-    st="${st##*) }"
-    [[ "${st:0:1}" != Z ]] || continue
-    c="" pp=""
-    { read -r c <"$q/comm"; } 2>/dev/null || :
-    read -r -a f <<<"$st"
-    pp="${f[1]:-?}"
-    left+=("${q#/proc/}($c, ppid $pp)")
-    KILLS+=("${q#/proc/}")
+  while :; do
+    left=()
+    for q in /proc/[0-9]*; do
+      [[ "$(readlink "$q/ns/pid" 2>/dev/null)" == "$ns" ]] || continue
+      st=""
+      { read -r st <"$q/stat"; } 2>/dev/null || continue
+      st="${st##*) }"
+      [[ "${st:0:1}" != Z ]] || continue
+      c="" pp=""
+      { read -r c <"$q/comm"; } 2>/dev/null || :
+      read -r -a f <<<"$st"
+      pp="${f[1]:-?}"
+      left+=("${q#/proc/}($c, ppid $pp)")
+    done
+    ((${#left[@]})) || break
+    ((SECONDS - t0 < 10)) || break
+    sleep 0.1
   done
+  exec {nsfd}<&-
   if ((${#left[@]})); then
-    echo "in pasta's pid namespace 1 s after the failed start: ${left[*]}" >&2
+    for q in "${left[@]}"; do KILLS+=("${q%%(*}"); done
+    echo "in pasta's pid namespace 10 s after the failed start: ${left[*]}" >&2
     return 1
   fi
   grep -q 'the sandbox did not start (exit 137)' "$I/rd.out" # the watcher's SIGKILL, the true status
