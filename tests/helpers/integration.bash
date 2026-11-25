@@ -10,9 +10,12 @@ require_bwrap() {
     || skip "unprivileged user namespaces unavailable (AppArmor/sysctl)"
 }
 
-# Sets I (dir), IHOME, IWORK, IPROFILES; writes the probe script from stdin.
+# Sets I (dir), IHOME, IWORK, IPROFILES; writes the probe script from stdin. I's
+# name holds a ".", a character Claude Code's slug and the engine's convert, so every
+# run, under any TMPDIR, has a project path whose slug is not just "/" turned into
+# "-" (#454).
 make_integration() {
-  I="$BATS_TEST_TMPDIR/i"
+  I="$BATS_TEST_TMPDIR/i.x"
   IHOME="$I/home"
   IWORK="$I/work"
   IPROFILES="$I/profiles"
@@ -29,6 +32,16 @@ make_integration() {
   ln -sfn "$I/probe.sh" "$I/bin/probe"
   export I IHOME IWORK IPROFILES
 }
+
+# claude_slug PATH -- PATH's directory under ~/.claude/projects/, from the claude
+# profile's own _claude_project_slug rather than a copy of its rule (#454), so a test
+# follows the engine, the 200-character truncation and its hash included. Sourced in
+# a subshell: the profile's variables and functions never reach the test.
+claude_slug() { (source "$REPO_ROOT/profiles/claude/profile.sh" && _claude_project_slug "$1"); }
+
+# state_slug PATH -- the engine's own name for PATH's state directory, from its
+# _as_path_slug, the same way. Not claude_slug: the two differ past 200 characters.
+state_slug() { (source "$REPO_ROOT/agent-sandbox" && _as_path_slug "$1"); }
 
 # Like run_engine, every launch here pins a preset. The engine's default puts the
 # declared channels at `cow`, so without this every integration suite -- conda,

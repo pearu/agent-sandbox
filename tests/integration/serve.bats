@@ -21,7 +21,7 @@ printf '%s\n' "$*" >>"$PWD/turns"
 [ "$(tail -n 1 "$PWD/inbox.md")" != SLOW ] || sleep 30
 PROBE
   W="$(cd "$IWORK" && pwd -P)"
-  SB="$IHOME/.local/state/agent-sandbox/probe/$(printf '%s' "$W" | sed 's:[^A-Za-z0-9-]:-:g')/worker"
+  SB="$IHOME/.local/state/agent-sandbox/probe/$(state_slug "$W")/worker"
   printf '[serve:worker]\nwatch = inbox.md\nprompt = prompt.md\n' >"$W/.agent-sandbox"
   printf 'Read your inbox and act on it.\n' >"$W/prompt.md"
   : >"$W/inbox.md"

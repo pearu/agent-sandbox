@@ -10,7 +10,7 @@ setup() {
   load "$BATS_TEST_DIRNAME/../../helpers/common"
   load "$BATS_TEST_DIRNAME/../../helpers/integration"
   require_bwrap
-  I="$(mkdir -p "$BATS_TEST_TMPDIR/i" && cd "$BATS_TEST_TMPDIR/i" && pwd -P)"
+  I="$(mkdir -p "$BATS_TEST_TMPDIR/i.x" && cd "$BATS_TEST_TMPDIR/i.x" && pwd -P)" # a "." the slugs convert (#454)
   IHOME="$I/home"
   IWORK="$I/work"
   mkdir -p "$IHOME/.local/share/claude/versions/9.9.9" "$IWORK"
@@ -31,7 +31,7 @@ say can_write "$(printf 'mine\n' >"$c/file-history/MY-SESSION/f@v1" 2>/dev/null 
 printf 'NEW-PROMPT\n' >>"$c/history.jsonl" 2>/dev/null
 PROBE
   chmod +x "$IHOME/.local/share/claude/versions/9.9.9/claude"
-  mkdir -p "$IHOME/.claude/projects/${IWORK//\//-}/memory" \
+  mkdir -p "$IHOME/.claude/projects/$(claude_slug "$IWORK")/memory" \
     "$IHOME/.claude/file-history/THEIR-SESSION" "$IHOME/.claude/plans" \
     "$IHOME/.claude/paste-cache"
   printf 'CANARY-FILE-CONTENT\n' >"$IHOME/.claude/file-history/THEIR-SESSION/abc@v1"
