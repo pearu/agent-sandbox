@@ -1377,6 +1377,18 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **The Supervisor called a working role stopped when its `alive` was stale (#464).**
+  At a terminal, a role's watcher exits on the message that wakes the role, and runs
+  again only once the role re-arms it, at the turn's end at the latest, where the
+  `Stop` hook enforces it; so `alive` can stay stale for as long as a turn lasts
+  (measured, Claude Code 2.1.311: `/clear` leaves the watcher running, and no zombie is
+  left behind). The Supervisor read a stale `alive` as a stopped role and
+  gave the relaunch line, which risks a second session on the same clone. Now `alive`
+  is described as what it is, a watcher waiting for the next message, and a stale one
+  is a reason to look, never a verdict. The Supervisor checks the role's `context`
+  line's `at=`, its messages, an Implementer's last commit and its summary line, and
+  reports "busy in a turn" when any moved. It gives the launch line only when the user
+  has looked and says the role is gone. The same goes for the Gate.
 - **CI's coverage shards hid their failed tests, and could hang (#462).** The coverage
   jobs passed whatever their tests did: on c30147f shard 1 printed `FAILED: 12` and
   shard 2 `FAILED: 8`, both green, and nobody could see which tests they were. One

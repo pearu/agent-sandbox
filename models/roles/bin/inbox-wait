@@ -3,8 +3,9 @@
 # (docs/roles.md, section 5). Exit 0 at the first change of any FILE -- its modification
 # time, inode or size: a rename over it, as the Write tool does, counts -- printing that
 # FILE's path, and 1 after SECS seconds without a change (0 or none: wait for ever).
-# ALIVE, a path, is touched at every poll, so its age says whether the role that waits
-# is running. A one-second poll by path: there is no inotifywait here.
+# ALIVE, a path, is touched at every poll, so its age says whether a watcher is
+# waiting: it goes stale while the role works a turn (#464). A one-second poll by path:
+# there is no inotifywait here.
 #
 # STATE carries the baseline from one run to the next (#339). Without it, the baseline
 # is each FILE as this run finds it, so a change made between one run's exit and the
