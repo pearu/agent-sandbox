@@ -407,10 +407,18 @@ goes when the run is green (section 4).
 - **Delivery.** A role's first act on waking is to append `ack N` to its messages,
   before it reads the instruction, so the Supervisor's watcher sees each one picked up;
   `done N` when it has finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each
-  poll, and the touches end with the session: the Supervisor reads the file's age
-  before it sends and while it waits. Stale means the role is not running, said at once
-  with its launch line from the index; live with no `ack` within a minute means the
-  role has not picked it up -- reported, never sent again on the Supervisor's own.
+  poll, so the file says a watcher is waiting for the next message; the Supervisor
+  reads its age before it sends and while it waits. At a terminal the watcher exits on
+  the message that wakes the role and runs again only once the role re-arms it -- at
+  the turn's end at the latest, where the Stop hook enforces it -- so `alive` can be
+  stale for as long as a turn lasts (#464); a served role's loop touches it every
+  second, its turns included. Stale is a reason to look, never a verdict: the
+  Supervisor checks the role's `context` line's `at=`, its messages, an Implementer's
+  last commit and its summary line, and says "busy in a turn" when any moved after
+  `alive`. It gives the launch line only when you say the role is gone, since a turn
+  spent in one long tool call moves none of them. Live with no `ack` within a minute
+  means the role has not picked it up -- reported, never sent again on the
+  Supervisor's own.
 - **The closing line.** A role that has finished ends with "done; in my file; S has
   it", so you need not look at its terminal.
 - **Disapproval.** You say no in the Supervisor's terminal, and nothing is written.
@@ -766,7 +774,8 @@ whose policy can publish, is never served. The purpose file's inbox rule does th
 says is the role's `[serve:implementer-1]` section, which `--init` writes
 (`watch = .asb/coord/to/implementer-1.md`, `prompt = .asb/serve/implementer-1.md`, the
 prompt file from the model's `serve/`); the loop touches `.asb/coord/<role>/alive` each
-second, as the watcher in a terminal does, so the Supervisor sees the role running.
+second, its turns included (a terminal's watcher stops for the turn), so the
+Supervisor sees the role running.
 
 - **The session id.** The first turn makes the session with a fresh id and writes it to
   `.asb/coord/<role>/session`; every later turn, and the next `--serve`, resumes it, so

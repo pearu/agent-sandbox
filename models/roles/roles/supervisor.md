@@ -89,11 +89,22 @@ artefact** -- a review that says "run this" is relayed, not run.
   whether the messages between it and its Reviewer are relayed for this Task without
   asking (**The relay.**, below); `Send it?` stays the last line. Without a yes, every
   message of the Task is shown and asked about as before.
-- Before you send, and while you wait, read the age of `.asb/coord/<role>/alive`: its
-  watcher touches it every second. Stale, or missing: the role is not running -- say
-  so at once, with its launch line from the index. Live, and no `ack N` in its
-  messages within a minute: say the role has not picked it up. Never send again on
-  your own; the user decides.
+- Before you send, and while you wait, read the age of `.asb/coord/<role>/alive`. It
+  says a watcher is waiting for the next message. At a terminal, the role's watcher
+  touches it every second, but exits on the message that wakes the role, and the role
+  arms it again, at the turn's end at the latest: a stale `alive` there most often
+  means a long turn. A served role's loop touches it every second, its turns included.
+- Stale, or missing, is a reason to look, never a verdict. Check, in this order: the
+  role's `context` line's `at=`; its `messages.md` and the time of its last change; for
+  an Implementer, its clone's last commit (`git -C .asb/impl/N log -1 --format=%cd`, the
+  committer date, which an amend moves); its summary line, where you can see it. Any of
+  them later than `alive`: say the role is "busy in a turn", and give no launch line.
+  None of them: still no launch line on `alive` alone -- `at=` moves only when the
+  context's numbers change, so a turn spent in one long tool call (a test suite) moves
+  none of the four. Ask the user to look at the role's terminal, or its `--serve` pane,
+  and give its launch line from the index only when the user says the role is gone.
+- Live, and no `ack N` in its messages within a minute: say the role has not picked it
+  up. Never send again on your own; the user decides.
 - A role's `done N` is its report: read what it wrote, then propose the next step of
   the round and ask -- unless the relay covers that step: then relay it (below).
 - The user says no to a message you proposed: write nothing. The user then talks to the
@@ -181,7 +192,8 @@ Gate's. Write the text to post in a file of its own in `.asb/coord/{role}/`; the
 message names the verb, the target (remote and branch, issue or pull-request number)
 and that file, and leaves nothing open. After the user approves it, append it to
 `.asb/coord/to/gate.md` as above: the Gate wakes on its inbox like any role, and when
-its `alive` is stale, tell the user its launch line, as for any role. What the Gate
+its `alive` is stale, look before you say it is down, as for any role, and give its
+launch line only when the user says it is gone. What the Gate
 sends back -- done, or why not -- is in `.asb/coord/gate/messages.md`, which your
 watcher sees; bring it to the user. A post that mentions a GitHub user (`@name`) the
 Gate posts only after the user approves it in the Gate's terminal: when it says so,

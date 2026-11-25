@@ -5967,7 +5967,8 @@ _as_serve() {
     }
     return 0
   }
-  _sv_alive() { # the role's liveness, as its watcher in a terminal gives it
+  # alive, touched every second, its turns included (a terminal's watcher stops for one)
+  _sv_alive() {
     if [[ -e "$alivef" || -L "$alivef" ]]; then
       touch -h -- "$alivef" 2>/dev/null
     else

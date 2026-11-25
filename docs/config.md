@@ -90,7 +90,8 @@ Sections:
   bounded by its policy alone) and the prompt's text. A turn that fails is one line in
   `.asb/coord/ROLE/messages.md`, written by a rename. The session's id goes to
   `.asb/coord/ROLE/session`, which a later `--serve` resumes, and the loop touches
-  `.asb/coord/ROLE/alive` as a terminal role's watcher does. A turn waits while
+  `.asb/coord/ROLE/alive` every second, its turns included (a terminal role's watcher
+  stops for the turn). A turn waits while
   something else is joined into the role's launch -- a terminal on the session, most
   likely: two resumes of one session at once fork it. `--status` shows the loop;
   `--shutdown`, Ctrl-C or a TERM ends it with the launch. Nothing of the project runs on
