@@ -9162,12 +9162,13 @@ _as_auto_compact_unapplied() {
   _as_msg "role '$1': its auto-compact value $_auto_compact_given ($(_as_auto_compact_where "$_auto_compact_given_from")) is not applied: profile '$profile' gives it in the briefing's settings (profile_briefing_args), and $2"
 }
 
-# _as_account_where FROM -- where an account was named, for a message: `--account`, or the
-# dot-file line's section.
+# _as_account_where FROM -- where an account was named, for a message: `--account`, the
+# dot-file line's section, or a restart marker (#482).
 _as_account_where() {
   case "$1" in
     line) printf -- '--account' ;;
     dotfile:*) printf '.agent-sandbox %s account' "${1#dotfile:}" ;;
+    marker) printf 'a restart marker' ;;
     *) printf 'nowhere' ;;
   esac
 }
@@ -10148,6 +10149,11 @@ _as_agent_notes() {
       fi
       continue
     fi
+    if [[ "$k" == accounts ]]; then
+      # #482: read only by the host side of `asb --roles`, at a restart marker.
+      _as_msg ".agent-sandbox: $sect accounts = $v: $n may be moved to $(_as_accounts_said "$v") by a restart marker of the Supervisor's (account=NAME), at the user's word, besides back to the account they were launched on; until the next asb --roles, which starts from the line and the file again"
+      continue
+    fi
     if [[ "$k" == effort ]]; then
       if [[ "$v" == - ]]; then
         _as_msg ".agent-sandbox: $sect effort = -: $n run at their agent's own effort level, whatever a weaker line says"
@@ -10215,11 +10221,11 @@ _as_agent_notes() {
   done
   # Among suffixed sections the later line wins (_as_dotfile_pick), so a role a section
   # names exactly takes a later glob's line when that glob matches it too: said, per key
-  # (command, account, effort, auto-compact, the context levels), since the exact name reads as the stronger
+  # (command, account, accounts, effort, auto-compact, the context levels), since the exact name reads as the stronger
   # one.
   local -a sfx=()
   local j eg ev lg lv key
-  for key in command account effort auto-compact context-plan context-rescue; do
+  for key in command account accounts effort auto-compact context-plan context-rescue; do
     sfx=()
     for e in ${_df_agent[@]+"${_df_agent[@]}"}; do
       [[ "${e%%$'\t'*}" == "*" || "$e" != *$'\t'"$key"$'\t'* ]] || sfx+=("$e")
@@ -10240,6 +10246,16 @@ _as_agent_notes() {
   return "$bad"
 }
 
+# _as_accounts_said WORDS -- an [agent] accounts value for a message (#482): each name
+# quoted, `-` said as the base.
+_as_accounts_said() {
+  local w out=""
+  for w in $1; do
+    if [[ "$w" == - ]]; then out+="${out:+, }the base"; else out+="${out:+, }'$w'"; fi
+  done
+  printf '%s' "$out"
+}
+
 # _as_trust_notes CWD FILE -- what the review says about the file, before the question:
 # everything that follows from its text alone, said here, once, and not at every launch.
 #   - what the parse ignores: a malformed line, an unknown section or key, a role
@@ -10253,7 +10269,7 @@ _as_agent_notes() {
 #     over, so it cannot be deleted or renamed inside (copy-on-write on one is copy);
 #   - each [remote:ALIAS] in full (_as_remote_notes, #344);
 #   - each [agent] line: the roles, the agent, its fixed arguments, the account, the
-#     effort level, the auto-compact value, the context levels (_as_agent_notes, #355);
+#     accounts a restart may move them to, the effort level, the auto-compact value, the context levels (_as_agent_notes, #355);
 #   - each [briefing] start and context line (_as_briefing_start_notes,
 #     _as_briefing_context_notes).
 # Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice,
@@ -10768,7 +10784,8 @@ _as_dotfile_parse() {
 # _as_dotfile_line SECTION GLOB LINE -- one line of a dot-file's SECTION into the
 # caller's _df_* state. GLOB is the section's role suffix, `*` for none.
 _as_dotfile_line() {
-  local section="$1" sglob="$2" line="$3" ck cv
+  local section="$1" sglob="$2" line="$3" ck cv _df_w _df_bad
+  local -a _df_words=()
   case "$section" in
     -skip-) ;;
     channel) _df_channel_lines+=("$sglob"$'\t'"$line") ;;
@@ -10972,7 +10989,8 @@ _as_dotfile_line() {
     agent)
       # [agent] and [agent:<glob>] (#355): the role's agent and the native arguments
       # always passed to it, `command = AGENT [ARGS]`, words split at blanks, its
-      # account, `account = NAME` or `-`, its effort level, `effort = LEVEL` or `-`, and
+      # account, `account = NAME` or `-`, the accounts it may be moved to at a restart,
+      # `accounts = NAME...` (#482), its effort level, `effort = LEVEL` or `-`, and
       # whether it compacts on its own, `auto-compact = on|off|idle-off` or `-`; kept
       # with the section's glob, in file order. While a profile's own dot-file is read,
       # `profile` is `agent` (_as_profile_dotfile) and [agent] is that profile's
@@ -10998,6 +11016,23 @@ _as_dotfile_line() {
               _df_agent+=("$sglob"$'\t'account$'\t'"$cv")
             else
               _as_msg ".agent-sandbox: [agent] account = $cv: not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring"
+            fi
+            ;;
+          accounts)
+            # The accounts a restart marker may move the role to (#482), besides its launch
+            # account: names, or `-`, the base, at blanks. Read by the host side of
+            # `asb --roles` alone, at a restart (_as_roles_account_ok); a launch ignores it.
+            read -r -a _df_words <<<"$cv"
+            _df_bad=""
+            for _df_w in ${_df_words[@]+"${_df_words[@]}"}; do
+              [[ "$_df_w" == - ]] || _as_role_name_ok "$_df_w" || _df_bad+="${_df_bad:+, }'$_df_w'"
+            done
+            if ((${#_df_words[@]} == 0)); then
+              _as_msg ".agent-sandbox: [agent] accounts names no account (accounts = NAME..., - for the base); ignoring"
+            elif [[ -n "$_df_bad" ]]; then
+              _as_msg ".agent-sandbox: [agent] accounts = $cv: $_df_bad not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring the line"
+            else
+              _df_agent+=("$sglob"$'\t'accounts$'\t'"${_df_words[*]}")
             fi
             ;;
           effort)
@@ -18455,7 +18490,7 @@ _as_roles_open() {
   # refused, as a single launch refuses one matching its role not.
   local -a lines=() given=(${_agent_flag[@]+"${_agent_flag[@]}"}) mine=()
   local -a agiven=(${_account_flag[@]+"${_account_flag[@]}"}) amine=()
-  local -A agent_word=() agent_prof=() clear_of=() resume_of=() acct_word=() acct_paths_of=()
+  local -A agent_word=() agent_prof=() clear_of=() resume_of=() acct_word=() acct_paths_of=() launch_of=()
   local _af_role _af_agent _af_acct hit b f k fl
   local -a forms=()
   for e in ${given[@]+"${given[@]}"}; do forms+=("--agent"$'\t'"$e"); done
@@ -18556,6 +18591,8 @@ _as_roles_open() {
     if [[ "$_acct_from" == line ]]; then
       acct_word[$r]="${_acct_name:--}"
     fi
+    # its launch account (#482), the one a restart marker may always move it back to
+    launch_of[$r]="${_acct_name:--}"
   done
   # A role with no live keeper is a pane that starts one, which runs bwrap: on a
   # bubblewrap below 0.12.0 nothing is opened (_as_bwrap_check); roles that are all
@@ -18588,23 +18625,26 @@ _as_roles_open() {
   # This same engine, by the name it was run as (asb, agent-sandbox), from any directory.
   self="$(_as_one "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")")"
   local -a args=() aw=()
-  local -A relaunch_of=()
-  local i=0 served=0
+  local -A head_of=() tail_of=()
+  local i=0 served=0 flags
   _as_roles_served && served=1
+  printf -v flags '%q ' ${_roles_flags[@]+"${_roles_flags[@]}"}
+  [[ "$flags" != "'' " ]] || flags=""
   for r in "${_roles[@]}"; do
     aw=()
     [[ -n "${agent_word[$r]:-}" ]] && aw=(--agent "${agent_word[$r]}")
-    [[ -n "${acct_word[$r]:-}" ]] && aw+=(--account "${acct_word[$r]}")
-    printf -v line '%q ' "$self" --role "$r" ${aw[@]+"${aw[@]}"} ${_roles_flags[@]+"${_roles_flags[@]}"}
-    # Its relaunch after a restart (#416): the same line, resuming the role's session --
-    # a served pane's loop resumes its own, and a line with --resume has it already; none
-    # when the role's profile cannot resume (the host side then says so, ends nothing).
-    relaunch_of[$r]="${line% }; exec \"\${SHELL:-bash}\""
+    printf -v line '%q ' "$self" --role "$r" ${aw[@]+"${aw[@]}"}
+    # Its relaunch after a restart (#416), in parts (#482): the head, the role's account
+    # word (acct_word), which a restart marker may change, and the tail -- the same line,
+    # resuming the role's session: a served pane's loop resumes its own, and a line with
+    # --resume has it already. No head when the role's profile cannot resume (the host
+    # side then says so, ends nothing). _as_roles_line joins them, as for the pane.
+    head_of[$r]="$line" tail_of[$r]="$flags"
     if ((! served && ! ${_do_resume:-0})); then
-      relaunch_of[$r]=""
-      [[ -z "${resume_of[${agent_prof[$r]}]}" ]] || relaunch_of[$r]="${line}--resume; exec \"\${SHELL:-bash}\""
+      head_of[$r]=""
+      [[ -z "${resume_of[${agent_prof[$r]}]}" ]] || head_of[$r]="$line" tail_of[$r]="${flags}--resume "
     fi
-    line="${line% }; exec \"\${SHELL:-bash}\""
+    line="$(_as_roles_line "$line" "${acct_word[$r]:-}" "$flags")"
     if ((i % 5)); then
       args+=(";" split-window -c "$dir" bash -c "$line" ";" select-layout main-horizontal)
     else
@@ -18625,11 +18665,13 @@ _as_roles_open() {
   # The host takes resets (#329) and restarts (#416), for a project with the roles model's
   # inboxes: one watcher for the session, out of this terminal's session, so closing this
   # terminal leaves it running (_as_roles_resets). It gets ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>
-  # RELAUNCH for every role: KEYS, its agent's profile's [agent] clear, for a role at a
-  # terminal (a served role's loop takes its own reset), empty for one whose profile has
-  # none, which is said; SHUTDOWN, the --shutdown that ends its launch, by its profile, so
-  # an [agent] line changed since does not point it at another role's keeper; RELAUNCH,
-  # its pane's line again, resuming (above).
+  # HEAD<TAB>ACCOUNT<TAB>TAIL<TAB>LAUNCH<TAB>PROFILE<TAB>PRESET for every role: KEYS, its
+  # agent's profile's [agent] clear, for a role at a terminal (a served role's loop takes
+  # its own reset), empty for one whose profile has none, which is said; SHUTDOWN, the
+  # --shutdown that ends its launch, by its profile, so an [agent] line changed since does
+  # not point it at another role's keeper; HEAD, ACCOUNT and TAIL, its relaunch's parts
+  # (above); and for a move to another account (#482) its launch account (`-`, the base),
+  # its agent's profile and the line's --preset, which the host checks it against.
   local log p sd
   local -a watch=() none=()
   local -A said=()
@@ -18642,7 +18684,7 @@ _as_roles_open() {
         [[ -n "$k" ]] || none+=("$r")
       fi
       printf -v sd '%q ' "$self" --profile "$p" --role "$r" --shutdown
-      watch+=("$r"$'\t'"$k"$'\t'"${sd% }"$'\t'"${relaunch_of[$r]}")
+      watch+=("$r"$'\t'"$k"$'\t'"${sd% }"$'\t'"${head_of[$r]}"$'\t'"${acct_word[$r]:-}"$'\t'"${tail_of[$r]}"$'\t'"${launch_of[$r]}"$'\t'"$p"$'\t'"${_preset_flag:-}")
     done
     ((${#none[@]} == 0)) \
       || _as_msg "no reset taken for ${none[*]}: their agent's profile says nothing of a fresh start ([agent] clear); a fresh start there is yours to give"
@@ -18658,7 +18700,7 @@ _as_roles_open() {
       && setsid -f "$self" __roles-resets "$tmux" "$name" "$dir" "${watch[@]}" </dev/null >>"$log" 2>&1; then
       [[ -z "$how" ]] \
         || _as_msg "the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start ($how) in that role's pane, then goes (log: $log)"
-      _as_msg "the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; on a failure its reason is written into it (log: $log)"
+      _as_msg "the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; one holding account=NAME does it on the account NAME (- the base), its launch account or one .agent-sandbox's [agent] accounts lists for it; on a failure its reason is written into it (log: $log)"
     else
       [[ -z "$how" ]] || _as_msg "could not start the watcher that takes resets; a fresh start is the role's ($how) typed in its pane by you"
       _as_msg "could not start the watcher that takes restarts; a restart is yours: end the role and launch it again in its pane"
@@ -18683,7 +18725,18 @@ _as_roles_served() {
   return 1
 }
 
-# _as_roles_resets TMUX NAME PROJECT ROLE<TAB>KEYS[<TAB>SHUTDOWN<TAB>RELAUNCH]... -- the
+# _as_roles_line HEAD ACCOUNT TAIL -- a role's pane line (#416, #482): HEAD, the engine,
+# --role and --agent words (`%q`-quoted, each followed by a blank), then `--account
+# ACCOUNT` when ACCOUNT is given (NAME, or `-`, the base), once, then TAIL, the line's other
+# engine words (the same way), and the shell the pane keeps once the launch has ended.
+_as_roles_line() {
+  local l="$1"
+  [[ -z "$2" ]] || printf -v l '%s--account %q ' "$l" "$2"
+  l+="$3"
+  printf '%s' "${l% }; exec \"\${SHELL:-bash}\""
+}
+
+# _as_roles_resets TMUX NAME PROJECT ROLE<TAB>KEYS[<TAB>SHUTDOWN<TAB>HEAD<TAB>ACCOUNT<TAB>TAIL<TAB>LAUNCH<TAB>PROFILE<TAB>PRESET]... -- the
 # host side of `asb --roles` (#329, #416), run as `ENGINE __roles-resets ...`, an internal
 # word no user types: started by _as_roles_open with setsid, stdin from /dev/null and its
 # output to <state>/.roles-resets/<project slug>.log, so it outlives the terminal that
@@ -18693,15 +18746,24 @@ _as_roles_served() {
 # and so the Supervisor sees nobody took it.
 #
 # ROLE.restart (#416), when the role has a SHUTDOWN, taken first: _as_roles_restart ends
-# the role and runs RELAUNCH in its pane, and removes the marker once the new launch's
-# keeper is live, or writes the reason it did not into the marker, one line. An empty
-# file is the request (a link too, never followed, its target never read), and a
-# non-empty one the host's answer, which is not taken again; it is the Supervisor's to
-# read and remove. Once it is answered (removed, or its reason written), an empty marker
-# is a new request, even one written again before the next look; one that could be
-# neither removed nor written is not taken again until it has gone or been answered. A
-# ROLE.reset beside it waits for the next look: the relaunch resumes the old session,
-# and the reset then starts a new one.
+# the role and runs its line again in its pane, and removes the marker once the new
+# launch's keeper is live, or writes the reason it did not into the marker, one line. What
+# the marker holds (_as_roles_restart_kind) says what it is:
+#   - nothing: a request, to relaunch it on its current account (a link too, never
+#     followed, its target never read);
+#   - `account=NAME`, one line (#482): a request to relaunch it on the account NAME, or
+#     `-`, the base -- the Supervisor's, on the user's word, for this one role; anything
+#     else that begins with `account=` is a request it cannot take, and so answered;
+#   - anything else: the host's answer, which never begins with `account=` and is not
+#     taken again; it is the Supervisor's to read and remove.
+# Once it is answered (removed, or its reason written), a request is a new one, even one
+# written again before the next look; one that could be neither removed nor written is
+# not taken again until it has gone or been answered. A ROLE.reset beside it waits for
+# the next look: the relaunch resumes the old session, and the reset then starts a new
+# one. The role's line is built at each restart from its parts (_as_roles_line), with its
+# current account: its pane's line's ACCOUNT at first, NAME once a move has relaunched it
+# (the pane runs that line now), so a later empty marker keeps NAME, for as long as this
+# watcher runs. A fresh `asb --roles` starts from the line and the file again.
 #
 # ROLE.reset (#329), when the role has KEYS -- the Supervisor's marker for a fresh start,
 # the same one a served role's loop takes -- makes it type the role's KEYS (its agent's
@@ -18713,29 +18775,36 @@ _as_roles_served() {
 #
 # It ends when the session NAME is gone.
 _as_roles_resets() {
-  local tmux="$1" name="$2" proj="$3" r keys rk pane rest sd rl f
+  local tmux="$1" name="$2" proj="$3" r keys rk pane f _rk_kind _rk_val _rr_acct
   shift 3
-  local -A stuck=() rstuck=()
+  local -a fl=()
+  local -A stuck=() rstuck=() cur=()
   while "$tmux" has-session -t "=$name" 2>/dev/null; do
     for rk in "$@"; do
-      r="${rk%%$'\t'*}" rest="${rk#*$'\t'}"
-      keys="${rest%%$'\t'*}" sd="" rl=""
-      if [[ "$rest" == *$'\t'* ]]; then
-        rest="${rest#*$'\t'}"
-        sd="${rest%%$'\t'*}" rl="${rest#*$'\t'}"
-      fi
+      # the fields, empty ones kept (a tab is a blank to `read`, which would merge them)
+      fl=()
+      while [[ "$rk" == *$'\t'* ]]; do
+        fl+=("${rk%%$'\t'*}")
+        rk="${rk#*$'\t'}"
+      done
+      fl+=("$rk")
+      r="${fl[0]}" keys="${fl[1]:-}"
       f="$proj/.asb/coord/to/$r.restart"
-      if [[ -n "$sd" ]]; then
-        # gone, or answered (a file with the reason, by the Supervisor's hand too)
-        if [[ ! -L "$f" ]] && [[ ! -e "$f" || (-f "$f" && -s "$f") ]]; then
+      if [[ -n "${fl[2]:-}" ]]; then
+        [[ -n "${cur[$r]+x}" ]] || cur[$r]="${fl[4]:-}"
+        _as_roles_restart_kind "$f"
+        if [[ "$_rk_kind" == gone || "$_rk_kind" == answer ]]; then
           unset 'rstuck[$r]'
-        elif [[ -z "${rstuck[$r]:-}" ]] && [[ -L "$f" || -f "$f" ]]; then
+        elif [[ -z "${rstuck[$r]:-}" && "$_rk_kind" != other ]]; then
           pane="$(_as_roles_pane "$tmux" "$name" "$r")"
           if [[ -n "$pane" ]]; then
             rstuck[$r]=1
-            if _as_roles_restart "$tmux" "$pane" "$proj" "$r" "$sd" "$rl"; then
+            _rr_acct="${cur[$r]}"
+            if _as_roles_restart "$tmux" "$pane" "$proj" "$r" "$_rk_kind" "$_rk_val" "${fl[2]}" "${fl[3]:-}" \
+              "${cur[$r]}" "${fl[5]:-}" "${fl[6]:--}" "${fl[7]:-}" "${fl[8]:-}"; then
               unset 'rstuck[$r]'
             fi
+            cur[$r]="$_rr_acct"
             continue
           fi
         fi
@@ -18781,32 +18850,217 @@ _as_roles_restart_wait() {
   printf '%s' "$w"
 }
 
-# _as_roles_restart TMUX PANE PROJECT ROLE SHUTDOWN RELAUNCH -- a restart marker taken
-# (#416): ROLE is relaunched in PANE under the policy the user approved since its keeper
-# started, and resumes its session. In order, and the first that fails ends it, with its
-# reason written into the marker (_as_roles_restart_answer):
-#   1. RELAUNCH is there: none is a role at a terminal whose profile cannot resume;
-#   2. the project's .agent-sandbox is approved as it is now (_as_roles_approved) -- what
+# _as_roles_restart_kind FILE -- what the restart marker FILE is (#416, #482): sets _rk_kind
+# to `gone`; `request` (empty, or a link, which is never followed and its target never
+# read); `account` with _rk_val NAME (`account=NAME`, one line, a trailing newline or none;
+# NAME an account name, _as_role_name_ok, or `-`, the base); `malformed` with _rk_val the
+# reason (anything else that begins with `account=`); `answer` (anything else); or
+# `other` (not a regular file: never taken). A non-empty file is read by python, opened
+# with no link followed and not waited on (a FIFO), the first 4 KiB alone.
+_as_roles_restart_kind() {
+  local out
+  _rk_kind="" _rk_val=""
+  if [[ -L "$1" ]]; then
+    _rk_kind=request
+    return 0
+  elif [[ ! -e "$1" ]]; then
+    _rk_kind=gone
+    return 0
+  elif [[ ! -f "$1" ]]; then
+    _rk_kind=other
+    return 0
+  elif [[ ! -s "$1" ]]; then
+    _rk_kind=request
+    return 0
+  fi
+  out="$(
+    python3 - "$1" <<'PY'
+import errno, os, re, stat, sys
+
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError as e:
+    print({errno.ENOENT: "gone", errno.ELOOP: "request"}.get(e.errno, "other"))
+    sys.exit(0)
+with os.fdopen(fd, "rb") as fh:
+    if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+        print("other")
+        sys.exit(0)
+    data = fh.read(4097)
+if not data:
+    print("request")
+elif not data.startswith(b"account="):
+    print("answer")
+else:
+    body = data[len(b"account="):]
+    if body.endswith(b"\n"):
+        body = body[:-1]
+    if len(data) > 4096:
+        print("malformed\tlonger than 4 KiB")
+    elif b"\n" in body:
+        print("malformed\tmore than one line")
+    elif not re.fullmatch(rb"[ -~]*", body):
+        print("malformed\tnot printable text")
+    else:
+        print("account\t" + body.decode("ascii"))
+PY
+  )" || out=""
+  _rk_kind="${out%%$'\t'*}"
+  [[ "$out" != *$'\t'* ]] || _rk_val="${out#*$'\t'}"
+  case "$_rk_kind" in
+    gone | request | answer | other) ;;
+    malformed) _rk_val="the marker's account=... is $_rk_val; write account=NAME, one line" ;;
+    account)
+      if [[ -z "$_rk_val" ]]; then
+        _rk_kind=malformed _rk_val="the marker's account= names no account; write account=NAME, one line, or account=- for the base"
+      elif [[ "$_rk_val" != - ]] && ! _as_role_name_ok "$_rk_val"; then
+        ((${#_rk_val} <= 200)) || _rk_val="${_rk_val:0:40}..."
+        _rk_kind=malformed _rk_val="the marker's account=$_rk_val is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters -- nor '-', the base"
+      fi
+      ;;
+    *) _rk_kind=other ;;
+  esac
+  return 0
+}
+
+# _as_roles_account_ok PROJECT ROLE NAME LAUNCH PROFILE PRESET -- may a restart marker move
+# ROLE to the account NAME (`-`, the base; #482)? Checked before anything ends, in order,
+# and the first that fails sets _ra_why, the reason:
+#   1. allowed: NAME is ROLE's LAUNCH account (what its pane's line or the approved file
+#      gave it at `asb --roles`; `-`, the base), or one the project's .agent-sandbox, read
+#      as it is now (approved: _as_roles_approved, before), lists for ROLE: `[agent]
+#      accounts = NAME...` or `[agent:<glob>] accounts`, the glob's over the unsuffixed
+#      (_as_dotfile_pick). With no such line no marker moves a role anywhere else: a
+#      sandboxed Supervisor names the credentials a role runs on, so the host takes only
+#      the accounts the user approved for the project;
+#   2. for NAME, not the base: PROFILE, the role's agent's, says which of its files are an
+#      account's ([agent] account-paths), and the line's PRESET is not native or none,
+#      which bind no account's directory (as _as_roles_open refuses one);
+#   3. the account's directory (_as_account_dir): there, not a link, where it is named;
+#   4. logged in: the login file, the profile's first account-paths entry, in the account's
+#      directory (the base for `-`), is a regular file (a link is not followed); and when
+#      the profile says where the login's expiry is ([agent] account-expiry), it has not
+#      passed. One due within 7 days goes on, and _ra_note says so, for the log.
+# Usage limits are the agent's service's and none of this sees them.
+# Reads the engine's profile_dir and invoked.
+# shellcheck disable=SC2154
+_as_roles_account_ok() {
+  local proj="$1" r="$2" n="$3" launch="$4" p="$5" preset="$6" who f k e dir="" lf expms="" base="" renew="" m
+  local -a lines=() paths=() exp=()
+  local _dp_val="" _dp_from="" _due="" _due_date="" _due_days=0 _acct_dir=""
+  _ra_why="" _ra_note=""
+  who="the account '$n'"
+  [[ "$n" != - ]] || who="the base, the user's own login"
+  if [[ "$n" != "$launch" ]]; then
+    [[ ! -f "$proj/.agent-sandbox" ]] || mapfile -t lines < <(_as_dotfile_agent "$proj/.agent-sandbox")
+    _as_dotfile_pick "$r" accounts ${lines[@]+"${lines[@]:1}"}
+    if [[ " $_dp_val " != *" $n "* ]]; then
+      e="the base"
+      [[ "$launch" == - ]] || e="'$launch'"
+      m="'[agent]'"
+      [[ "$_dp_from" != "dotfile:[agent:"* ]] || m="'${_dp_from#dotfile:}'"
+      if [[ -n "$_dp_val" ]]; then
+        _ra_why="$who is not one .agent-sandbox lists for role '$r' (${_dp_from#dotfile:} accounts = $_dp_val), nor its launch account ($e); the user allows it on the host: ${invoked:-asb} --apply $m 'accounts = $_dp_val $n'"
+      else
+        _ra_why="$who is not one .agent-sandbox lists for role '$r' (no [agent] accounts line), nor its launch account ($e); the user allows it on the host: ${invoked:-asb} --apply '[agent]' 'accounts = $n'"
+      fi
+      return 1
+    fi
+  fi
+  while IFS=$'\t' read -r f k e; do
+    [[ "$k" == "$p" ]] || continue
+    case "$f" in
+      account-paths) IFS=$'\t' read -r -a paths <<<"$e" ;;
+      base) base="$e" ;;
+      account-expiry) IFS=$'\t' read -r -a exp <<<"$e" ;;
+      login-renew) renew="$e" ;;
+    esac
+  done < <(_as_profile_facts "$profile_dir/$p/profile.sh")
+  if [[ "$n" == - ]]; then
+    dir="$base"
+  else
+    if ((${#paths[@]} == 0)); then
+      _ra_why="$who: profile '$p' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts; account=- runs it on its base"
+      return 1
+    fi
+    if [[ "$preset" == native || "$preset" == none ]]; then
+      _ra_why="$who: its line's --preset $preset binds no account's directory; account=- runs it on the base"
+      return 1
+    fi
+    if ! m="$(_as_account_dir "$p" "$n" marker 1 2>&1 >/dev/null)"; then
+      m="${m//$'\n'/ }"
+      _ra_why="${m#agent-sandbox: }"
+      return 1
+    fi
+    dir="$(_as_state_dir)/$p/accounts/$n"
+  fi
+  if ((${#paths[@]})) && [[ -n "$dir" ]]; then
+    lf="$dir/${paths[0]}"
+    e="$(_as_login_renew "$p" "${n#-}" "$renew")"
+    if [[ -L "$lf" || ! -f "$lf" ]]; then
+      _ra_why="$who is not logged in: its login file ${paths[0]} is not a file in $(_as_tilde "$dir")${e:+; $e}"
+      return 1
+    fi
+    if ((${#exp[@]} == 2)); then
+      expms="$(_as_login_expiry "$dir/${exp[0]}" "${exp[1]}")" || expms=""
+      _as_login_due "$expms"
+      if [[ "$_due" == expired ]]; then
+        _ra_why="the login of $who expired on $_due_date${e:+; $e}"
+        return 1
+      fi
+      [[ "$_due" != due ]] || _ra_note="the login of $who is due on $_due_date (in $_due_days day$( ((_due_days == 1)) || printf s))${e:+; $e}"
+    fi
+  fi
+  return 0
+}
+
+# _as_roles_restart TMUX PANE PROJECT ROLE KIND VALUE SHUTDOWN HEAD ACCOUNT TAIL LAUNCH
+# PROFILE PRESET -- a restart marker taken (#416): ROLE is relaunched in PANE under the
+# policy the user approved since its keeper started, and resumes its session; KIND and
+# VALUE are the marker's (_as_roles_restart_kind): a `request` relaunches it on ACCOUNT,
+# its current account (none: what the approved file gives it), an `account` on VALUE
+# (#482). The line is _as_roles_line HEAD ACCOUNT TAIL, with VALUE for ACCOUNT on a move.
+# In order, and the first that fails ends it, with its reason written into the marker
+# (_as_roles_restart_answer):
+#   1. KIND is not `malformed`;
+#   2. HEAD is there: none is a role at a terminal whose profile cannot resume;
+#   3. the project's .agent-sandbox is approved as it is now (_as_roles_approved) -- what
 #      the relaunch would otherwise refuse or ask about, so the role is never ended for a
-#      launch that would not run; both are checked before anything ends;
-#   3. SHUTDOWN, the role's --shutdown, run from the project, succeeds: its keeper ended,
+#      launch that would not run;
+#   4. for an `account`, the move is allowed and the account can run it
+#      (_as_roles_account_ok, against LAUNCH, PROFILE and PRESET) -- 1 to 4 are checked
+#      before anything ends;
+#   5. SHUTDOWN, the role's --shutdown, run from the project, succeeds: its keeper ended,
 #      with everything joined into it, the launch in the pane among them;
-#   4. tmux respawns PANE with RELAUNCH (the line the pane was opened with, resuming),
-#      once the pane's own process has no child left (the old launch has finished, up to
-#      5 s): its last screen is cleared, what scrolled above it stays in the history, so
-#      that screen goes into this watcher's log first (tmux capture-pane, plain text);
-#   5. a keeper of ROLE is live within _as_roles_restart_wait seconds, under any profile
+#   6. tmux respawns PANE with the line (the one the pane was opened with, resuming, on
+#      the account), once the pane's own process has no child left (the old launch has
+#      finished, up to 5 s): its last screen is cleared, what scrolled above it stays in
+#      the history, so that screen goes into this watcher's log first (tmux capture-pane,
+#      plain text);
+#   7. a keeper of ROLE is live within _as_roles_restart_wait seconds, under any profile
 #      (an [agent] line approved since may have moved the role to another).
-# Then the marker is removed (_as_serve_reset), and gone means the role runs again.
+# Then the marker is removed (_as_serve_reset), and gone means the role runs again. Every
+# reason begins with `not ` or `ended` or `relaunched`, never with `account=`: an answer
+# is never taken for a request. Once the pane is respawned, the caller's _rr_acct is the
+# account its line now names, which the watcher keeps as the role's current one.
 # Succeeds when the marker is answered: removed, or its reason written into it (or gone
 # meanwhile); fails when it could be neither, and so is still a request.
 _as_roles_restart() {
-  local tmux="$1" pane="$2" proj="$3" r="$4" sd="$5" rl="$6" why="" st=0 i w pid k sb slug
-  if [[ -z "$rl" ]]; then
+  local tmux="$1" pane="$2" proj="$3" r="$4" kind="$5" val="$6" sd="$7" head="$8" acct="$9"
+  local tail="${10}" launch="${11}" prof="${12}" preset="${13}" why="" st=0 i w pid k sb slug rl on
+  local _ra_why _ra_note
+  if [[ "$kind" == malformed ]]; then
+    why="not restarted: $val; it runs on as it was"
+  elif [[ -z "$head" ]]; then
     why="not restarted: its agent's profile says nothing of how to resume a session ([agent] resume), so its pane would start a new one; it runs on as it was"
   elif ! _as_roles_approved "$proj"; then
     why="not restarted: .agent-sandbox is not approved as it is now (review it on the host: $invoked --trust); it runs on as it was"
+  elif [[ "$kind" == account ]] && ! _as_roles_account_ok "$proj" "$r" "$val" "$launch" "$prof" "$preset"; then
+    why="not restarted: $_ra_why; it runs on as it was"
   else
+    [[ "$kind" != account ]] || acct="$val"
+    [[ -z "${_ra_note:-}" ]] || _as_msg "$(date -Iseconds) role '$r': a restart marker -- $_ra_note"
+    rl="$(_as_roles_line "$head" "$acct" "$tail")"
     (cd -- "$proj" && exec bash -c "$sd" </dev/null) || st=$?
     if ((st)); then
       why="not relaunched: its shutdown failed (status $st; see the log), so its pane was left as it was"
@@ -18826,6 +19080,7 @@ _as_roles_restart() {
       if ! "$tmux" respawn-pane -k -t "$pane" -c "$proj" bash -c "$rl"; then
         why="ended, and not relaunched: tmux could not respawn its pane $pane; relaunch it there yourself"
       else
+        _rr_acct="$acct"
         w="$(_as_roles_restart_wait)"
         slug="$(_as_path_slug "$proj")"
         why="relaunched in pane $pane, but no keeper of it was running within $w s; see that pane"
@@ -18847,7 +19102,26 @@ _as_roles_restart() {
     return
   fi
   _as_serve_reset "$proj" "$r" --roles restart || return 1
-  _as_msg "$(date -Iseconds) role '$r': a restart marker -- ended it, relaunched it in pane $pane, its keeper is live, and removed the marker"
+  on="$(_as_roles_account_now "$proj" "$r" "$acct")"
+  _as_msg "$(date -Iseconds) role '$r': a restart marker -- ended it, relaunched it in pane $pane $on, its keeper is live, and removed the marker"
+}
+
+# _as_roles_account_now PROJECT ROLE ACCOUNT -- the account a relaunched ROLE runs on, for
+# the log (#482): `on the account 'NAME'` or `on the base`. ACCOUNT is its line's (NAME,
+# `-`); none, the approved .agent-sandbox's [agent] account for it (_as_dotfile_pick).
+_as_roles_account_now() {
+  local n="$3" _dp_val="" _dp_from=""
+  local -a lines=()
+  if [[ -z "$n" ]]; then
+    [[ ! -f "$1/.agent-sandbox" ]] || mapfile -t lines < <(_as_dotfile_agent "$1/.agent-sandbox")
+    _as_dotfile_pick "$2" account ${lines[@]+"${lines[@]:1}"}
+    n="${_dp_val:--}"
+  fi
+  if [[ "$n" == - ]]; then
+    printf 'on the base'
+  else
+    printf "on the account '%s'" "$n"
+  fi
 }
 
 # _as_roles_approved PROJECT -- is the project's .agent-sandbox approved as it is now,

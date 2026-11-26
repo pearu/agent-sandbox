@@ -1291,6 +1291,41 @@ another one is refused. The launch records the account in the role's store, `acc
 (`PROFILE<TAB>NAME`, NAME empty for the base); the review says each `account` line, and
 `--check` shows the account in force and binds its directory in place of the base.
 
+**Moving a role of `asb --roles` to another account (#482).** Usage limits are per
+account and per week, so a long project may need a role moved while the session runs.
+The Supervisor does it on your word, per role, with its restart marker
+([roles.md](roles.md), section 9): `.asb/coord/to/ROLE.restart` holding `account=NAME`
+on one line (`account=-` for the base) ends the role and relaunches it in its pane,
+resumed, on NAME: its pane's line with `--account NAME` in place of the account the line
+named, once. The host takes NAME only when it is the role's launch account -- what the
+`--roles` line or the approved file gave it when the session opened, the base when
+nothing did; going back there is always allowed -- or one the approved file lists for
+the role:
+
+```ini
+[agent]
+accounts = work personal          # the accounts a restart may move every role to
+[agent:gate]
+accounts = -                      # the gate: to your own login only
+```
+
+`accounts = NAME...` takes account names and `-` (the base); `[agent:<glob>]` beats
+`[agent]`, as for `account`, its whole list. With no `accounts` line a marker moves no
+role off its launch account: the safe default, since the Supervisor, a sandboxed agent,
+names the credentials a role runs on, and an account you keep for other work may be
+another organisation's. The line approves the accounts for the project once, beside each
+account's own login: `asb --apply '[agent]' 'accounts = work personal'`. Only the host
+side of `--roles` reads it, at a marker; a launch does not, so changing it restarts
+nobody. Before ending anything the host also checks that the account can run the role:
+its agent's profile has `account-paths`, the line's `--preset` is not `native` or
+`none`, the directory is usable as for a launch, its login file (the first
+`account-paths` entry, in the base for `-`) is a regular file, and the login has not
+expired; one due within 7 days goes on, and the log says so. The first that fails is
+written into the marker, and the role runs on untouched. The move lasts for that
+`asb --roles` session -- a later empty marker keeps the role on NAME -- and a fresh
+`asb --roles` starts from the line and the file again: a lasting change goes there.
+Usage limits themselves are the agent's service's; nothing here sees them.
+
 **What an account role sees of the base.** Every top-level entry of the base as it is at
 launch, read-write at its path, as a role on the base sees it -- hook scripts that
 `settings.json` runs, `ide/`, `cache/` and anything else no channel names -- bound one

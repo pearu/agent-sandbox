@@ -153,6 +153,19 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The Supervisor moves a role of `asb --roles` to another account, on your word
+  (#482).** Usage limits are per account, and a role could only be moved by ending the
+  whole session and opening it again with `--account`. Now a restart marker holding
+  `account=NAME` (`-`, the base) relaunches that one role, resumed, on NAME, through the
+  same `ready` handshake; a later restart keeps it there until the next `asb --roles`.
+  The host takes NAME only when it is the role's launch account or one the approved
+  file lists for it, in a new key, `[agent] accounts = NAME...` (per role with
+  `[agent:<glob>]`; none: no move), and only when the account can run it (its
+  directory, its login file, a login not expired); otherwise it writes why into the
+  marker and ends nothing. Every role that runs a watcher writes
+  `launched on the account 'NAME'` (or `on the user's own login`) in its messages at
+  each launch, so the Supervisor sees where it runs.
+
 - **The Supervisor acts on the roles' context levels, and a role saves its working
   state at the rescue level (#456).** The context file and its `.level` (below) were
   written, but nobody acted on them. Now:

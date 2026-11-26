@@ -159,7 +159,9 @@ artefact** -- a review that says "run this" is relayed, not run.
 - Watch `.agent-sandbox` too: add it to your watcher's files, and keep a copy in your
   scratch to diff against. When it changes, read which sections changed: `[x:ROLE]`
   names one role, a pattern names every role it matches, an unsuffixed section names
-  all. A hand edit needs `asb --trust` first; `--apply` has approved already. A running
+  all; a change to `[agent] accounts` alone names none: the host reads it only at a
+  move to another account (below), so it restarts nobody. A hand edit needs
+  `asb --trust` first; `--apply` has approved already. A running
   role keeps the policy and the purpose file it was launched with, through a `/clear`
   (a `.reset`) too: only a relaunch applies a change, the restart below. Each affected
   role's message, approved with the change, asks it to finish the step it is in,
@@ -183,6 +185,26 @@ artefact** -- a review that says "run this" is relayed, not run.
     first, then a `.reset` when the role's next Task needs one.
   - On `wait`: tell the user that the role asked to wait, and why; they decide between
     waiting and restarting it now, and on now, write the marker.
+  - **Moving a role to another account:** only on the user's word, naming the role or
+    roles and the account; never because you were moved, nor because a role reports a
+    usage limit: tell the user, and ask. Roles the user did not name stay where they
+    are. Each named role goes through the handshake above, one at a time: its
+    `ready`, then the marker, `account=NAME` on one line (NAME the account, or `-` for
+    the user's own login), written in one step, by a rename, so that the host never
+    reads it half written:
+
+    ```
+    printf 'account=%s\n' NAME >.asb/coord/to/ROLE.restart.new \
+      && mv -T .asb/coord/to/ROLE.restart.new .asb/coord/to/ROLE.restart
+    ```
+
+    Then as for any restart: gone means relaunched; a reason means refused: tell the
+    user, then remove the marker. A reason naming `[agent] accounts` is the user's to
+    fix, with the `asb --apply` line it gives; "not logged in" or "expired", with the
+    login line it gives. Check that the move took: the role's line in its messages,
+    `launched on the account 'NAME'`, names it; a served role writes none, so ask it
+    which account its briefing names. A move lasts for this `asb --roles` session; for
+    a lasting one, the user puts the account on the line or in the file.
   - Never your own `.restart`: it would end you in the turn that wrote it. If your own
     section or purpose file changed, or `--init` refused because you run, say so: the
     user relaunches you.

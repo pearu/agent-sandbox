@@ -400,6 +400,25 @@ STUB
   [[ "$output" == *"the agent's base"* ]]
 }
 
+@test "the review says each [agent] accounts line: the accounts a restart marker may move the roles to (#482); a bad word in it, or none, is said and the line ignored; a launch reads none of it" {
+  printf '[agent]\naccounts = work -\n[agent:r]\naccounts = home\n[agent:q]\naccounts = ok a/b\n[agent:p]\naccounts =\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *".agent-sandbox: [agent] accounts = work -: every role may be moved to 'work', the base by a restart marker of the Supervisor's (account=NAME), at the user's word, besides back to the account they were launched on; until the next asb --roles, which starts from the line and the file again"* ]]
+  [[ "$output" == *".agent-sandbox: [agent:r] accounts = home: the roles r may be moved to 'home' by a restart marker"* ]]
+  [[ "$output" == *".agent-sandbox: [agent] accounts = ok a/b: 'a/b' not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring the line"* ]]
+  [[ "$output" != *"[agent:q] accounts = ok a/b: the roles q may be moved"* ]]
+  [[ "$output" == *".agent-sandbox: [agent] accounts names no account (accounts = NAME..., - for the base); ignoring"* ]]
+  # a role section's list followed by a glob's that matches it: the later wins, and is said
+  printf '[agent:r]\naccounts = home\n[agent:r*]\naccounts = work\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *".agent-sandbox: [agent:r] accounts = home: role r takes the later [agent:r*] accounts = work instead (among suffixed sections the later line wins); put [agent:r] after it to keep its own"* ]]
+  # a launch: no account of the list is the role's, nor checked
+  dotfile '[agent]' 'accounts = work'
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SBOX/account")" = "claude"$'\t' ]
+}
+
 @test "--check counts the profile's account-paths as classified: the base's login is not unclassified" {
   : >"$C/.oauth_refresh.lock"
   run_engine -- asb --check claude
