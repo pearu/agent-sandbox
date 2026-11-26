@@ -1390,6 +1390,15 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A declined `asb --trust` said an approved file was now refused (#484).** Answering
+  `n` for a `.agent-sandbox` approved as it is printed `not approved; launches from here
+  refuse until it is.`, though a no records nothing and launches went on as before. A
+  no to the file's question when it is approved as it is now says `left as it was: this
+  exact content stays approved.`; a file changed since it was approved, or never
+  approved, keeps the old line. A file approved in the review, whose link record then
+  could not be written, gets no line after its `approved.`, and a file approved as it
+  is that the review refuses without asking gets none after `cannot be approved`. A
+  declined link fails nothing, so it never printed the old line.
 - **The Supervisor called a working role stopped when its `alive` was stale (#464).**
   At a terminal, a role's watcher exits on the message that wakes the role, and runs
   again only once the role re-arms it, at the turn's end at the latest, where the
