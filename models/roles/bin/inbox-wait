@@ -1,5 +1,7 @@
 #!/bin/sh
-# inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE... -- written by `asb --init roles`
+# inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE...
+# inbox-wait -f -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE...
+# -- written by `asb --init roles`
 # (docs/roles.md, section 5). Exit 0 at the first change of any FILE -- its modification
 # time, inode or size: a rename over it, as the Write tool does, counts -- printing that
 # FILE's path, and 1 after SECS seconds without a change (0 or none: wait for ever).
@@ -21,8 +23,28 @@
 # its path as given (a path may hold spaces and tabs). Refused at start (exit 2): a FILE
 # path with a newline, STATE among the FILEs (by any spelling), STATE a directory or
 # unreadable, and STATE's directory missing or not writable.
+#
+# THE STREAM (-f), for a tool that takes a command's lines as events (the Supervisor's
+# watch). It does not exit at a change: it polls once a second and prints one line per
+# changed FILE per poll, for -t SECS by the clock (0 or none: for ever), then exits 0, a
+# planned end. -s is required. A FILE that grew in place (the same inode, a larger size)
+# is read from its baseline's size on, and the blank lines and the appended lines that
+# match PATTERN (-i, an ERE; several -i are alternatives) are dropped: when every
+# appended line is, the change is no event, and its baseline advances silently. An event
+# is the path, a colon and the last line kept, cut to about 160 bytes (" ..." marks a
+# cut) with its control characters shown as cat -v does (^[ for ESC), so an appended
+# line cannot make a second event or move the reader's terminal. Any other change --
+# renamed over, shrunk, appeared, gone -- is the path and " changed". STATE is written
+# once per poll that saw a change, after its lines are printed: a run killed between the
+# two prints those changes again at the next run, a duplicate at worst, never a loss.
+# One stream per STATE, held by an flock on STATE.lock: a second -f run on the same
+# STATE while one runs prints that a watcher already runs, with its pid, and exits 0 --
+# arming again is safe. The lock goes with the process (its children do not hold it), so
+# a stream that died never answers so. Refused at start, with the one-shot form's
+# refusals: -f without -s, a PATTERN that is not an ERE, and no flock on PATH.
 usage() {
   echo "usage: inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE..." >&2
+  [ -z "$follow$pat" ] || echo "       inbox-wait -f -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE..." >&2
   exit 2
 }
 refuse() {
@@ -32,8 +54,17 @@ refuse() {
 lim=0
 alive=""
 sf=""
-while getopts t:a:s: o; do
+follow=""
+pat=""
+while getopts t:a:s:fi: o; do
   case "$o" in
+    f) follow=1 ;;
+    i)
+      [ -n "$OPTARG" ] || usage
+      printf '' | grep -Eq -- "$OPTARG" 2>/dev/null
+      [ $? -le 1 ] || refuse "-i $OPTARG: not an extended regular expression"
+      pat="${pat:+$pat|}($OPTARG)"
+      ;;
     t) lim="$OPTARG" ;;
     a) alive="$OPTARG" ;;
     s)
@@ -45,6 +76,9 @@ while getopts t:a:s: o; do
 done
 shift $((OPTIND - 1))
 [ $# -gt 0 ] || usage
+# -i is the stream's, and the stream needs STATE.
+[ -n "$follow" ] || [ -z "$pat" ] || usage
+[ -z "$follow" ] || [ -n "$sf" ] || usage
 case "$lim" in '' | *[!0-9]*) usage ;; esac
 # A FILE of digits alone is the old form's SECS (`FILE SECS [ALIVE]`), which would wait
 # for ever on a file named 0: refused.
@@ -108,11 +142,95 @@ if [ -n "$sf" ]; then
     fi
   done
 fi
+if [ -n "$follow" ]; then
+  command -v flock >/dev/null 2>&1 || refuse "-f needs flock (util-linux), which is not on PATH"
+  # One stream per STATE. The lock is on STATE.lock's open file, so it is released when
+  # this process ends; children run with it closed, so none keeps it after. Opened for
+  # appending, so a second run does not empty the pid the first wrote there; a second
+  # waits 2 s, as long as a stream that has just been killed can take to go.
+  exec 9>>"$sf.lock" || refuse "-s $sf: cannot open $sf.lock"
+  if ! flock -w 2 9; then
+    read -r holder <"$sf.lock" 2>/dev/null
+    printf 'inbox-wait: a watcher already runs on %s (pid %s)\n' "$sf" "${holder:-unknown}"
+    exit 0
+  fi
+  printf '%s\n' "$$" >"$sf.lock"
+fi
 m="" # each FILE's baseline, a line each, in order
 for f; do
   if [ -n "$sf" ] && saved "$f"; then s="$sv"; else s="$(st "$f")"; fi
   m="$m$s$nl"
 done
+# shown PATH -- the event line for PATH: the last of the lines appended since the
+# baseline ($bs bytes) up to the current size ($cs) that is not blank and does not match
+# PATTERN, cut and escaped; nothing when every one is. NUL bytes are dropped, and the
+# filter reads bytes (LC_ALL=C), so no byte makes grep call the text binary; a line is
+# cut at 160 bytes, back to the start of a UTF-8 character.
+shown() {
+  tail -c +"$((bs + 1))" "$1" 2>/dev/null | head -c "$((cs - bs))" | tr -d '\000' \
+    | LC_ALL=C grep -Ev -- "^[[:space:]]*\$${pat:+|$pat}" | tail -n 1 \
+    | LC_ALL=C awk -v p="$1" '
+      BEGIN { for (i = 1; i < 256; i++) ord[sprintf("%c", i)] = i }
+      {
+        s = $0; cut = 0
+        if (length(s) > 160) {
+          s = substr(s, 1, 160); cut = 1
+          # back off a UTF-8 character the cut split: drop continuation bytes, then
+          # the lead byte they belong to
+          k = length(s)
+          while (k > 0 && ord[substr(s, k, 1)] >= 128 && ord[substr(s, k, 1)] < 192) k--
+          if (k > 0 && ord[substr(s, k, 1)] >= 192) {
+            c = ord[substr(s, k, 1)]
+            need = c >= 240 ? 4 : c >= 224 ? 3 : 2
+            if (length(s) - k + 1 < need) s = substr(s, 1, k - 1)
+          }
+        }
+        o = ""
+        for (j = 1; j <= length(s); j++) {
+          ch = substr(s, j, 1); c = ord[ch]
+          if (c < 32) o = o "^" sprintf("%c", c + 64)
+          else if (c == 127) o = o "^?"
+          else o = o ch
+        }
+        printf "%s: %s%s\n", p, o, cut ? " ..." : ""
+      }'
+}
+if [ -n "$follow" ]; then
+  # The baseline is written at once, so a change made after this run ends is reported
+  # by the next even when this one saw none.
+  rep=""
+  save "$@" || printf 'inbox-wait: could not write %s; a change made before the next run may be missed\n' "$sf" >&2
+  # -t is seconds by the clock: a poll takes longer than its sleep (a stat per FILE),
+  # so a count of polls would outlast the deadline of the tool it is set inside.
+  end=$(($(date +%s) + lim))
+  while :; do
+    [ -n "$alive" ] && touch "$alive" 2>/dev/null
+    rest="$m" nm="" moved=""
+    for f; do
+      b="${rest%%"$nl"*}"
+      rest="${rest#*"$nl"}"
+      cur="$(st "$f")"
+      nm="$nm$cur$nl"
+      [ "$cur" != "$b" ] || continue
+      moved=1
+      # a stat line is "DATE TIME ZONE INODE SIZE"
+      bi="${b#* * * }" ci="${cur#* * * }"
+      bs="${bi#* }" cs="${ci#* }" bi="${bi% *}" ci="${ci% *}"
+      if [ -n "$b" ] && [ -n "$cur" ] && [ "$bi" = "$ci" ] && [ "$cs" -gt "$bs" ]; then
+        shown "$f"
+      else
+        printf '%s changed\n' "$f"
+      fi
+    done
+    m="$nm"
+    if [ -n "$moved" ]; then
+      rep=""
+      save "$@" || printf 'inbox-wait: could not write %s; the next run reports these changes again\n' "$sf" >&2
+    fi
+    sleep 1 9>&-
+    if [ "$lim" -gt 0 ] && [ "$(date +%s)" -ge "$end" ]; then exit 0; fi
+  done
+fi
 n=0
 while :; do
   [ -n "$alive" ] && touch "$alive" 2>/dev/null

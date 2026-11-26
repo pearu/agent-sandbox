@@ -309,7 +309,8 @@ teardown() {
     # shellcheck disable=SC2016 # backquotes in the text, not an expansion
     tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | grep -qF '**Closing line.** "done; in my file; S has it" is said once, in the reply in which you append `done N` to your messages, and never before: a reply with work still pending (a suite running, a section unwritten) ends by naming what is pending and what follows.'
   done
-  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$PROJ/.asb/roles/supervisor.md"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
   printf '## 1\nread P1\n' >"$PROJ/.asb/coord/to/planner-1.md"
@@ -342,7 +343,11 @@ teardown() {
   # none moved: still none, and why; the user looks
   [[ "$flat" == *'None of them: still no launch line on `alive` alone -- `at=` moves only when the context'"'"'s numbers change, so a turn spent in one long tool call (a test suite) moves none of the four.'* ]]
   [[ "$flat" == *'Ask the user to look at the role'"'"'s terminal, or its `--serve` pane, and give its launch line from the index only when the user says the role is gone.'* ]]
-  [[ "$flat" == *'- Live, and no `ack N` in its messages within a minute: say the role has not picked it up.'* ]]
+  # the pickup is checked by a look, not an event: the stream skips acks (T39, P1's ruling)
+  [[ "$flat" == *'- When you send, put the pending pickup in your summary line (e.g. `sent 143 to implementer-1, waiting for its ack`): your stream skips `ack N` lines, so no event tells you of a pickup.'* ]]
+  [[ "$flat" == *'Look for `ack N` in the role'"'"'s messages instead: at your next wake or turn after the send, before you tell the user anything about that role, and at every re-arm of the stream.'* ]]
+  [[ "$flat" == *'The ack found: the summary line moves on. A look that finds none a minute or more after the send: say in the chat that the role has not picked it up. Never send again on your own; the user decides.'* ]]
+  run ! grep -qF 'within a minute: say the role' "$sup"
   # the old verdict is gone
   run ! grep -qF 'the role is not running -- say' "$sup"
   run ! grep -qF 'tell the user its launch line, as for any role' "$sup"
@@ -353,7 +358,8 @@ teardown() {
   [[ "$dflat" == *'Stale is a reason to look, never a verdict: the Supervisor checks the role'"'"'s `context` line'"'"'s `at=`, its messages, an Implementer'"'"'s last commit and its summary line, and says "busy in a turn" when any moved after `alive`.'* ]]
   [[ "$dflat" == *'It gives the launch line only when you say the role is gone, since a turn spent in one long tool call moves none of them.'* ]]
   [[ "$dflat" == *'each second, its turns included (a terminal'"'"'s watcher stops for the turn), so the Supervisor sees the role running.'* ]]
-  [[ "$dflat" == *'Live with no `ack` within a minute means the role has not picked it up -- reported, never sent again on the Supervisor'"'"'s own.'* ]]
+  [[ "$dflat" == *'Its stream skips `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn, before it tells you anything about that role, and at every re-arm -- and its bar shows the pending pickup meanwhile.'* ]]
+  [[ "$dflat" == *'None a minute or more after the send means the role has not picked it up: said in the chat, never sent again on the Supervisor'"'"'s own.'* ]]
   run ! grep -qF 'Stale means the role is not running' "$doc"
   run ! grep -qF 'as the watcher in a terminal does' "$doc"
   # docs/config.md and the watcher's own header: the same meaning
@@ -367,7 +373,7 @@ teardown() {
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose files' text, not ours
-@test "the roles model: every watcher is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one over every other role's messages in the index, the Gate's too (#288)" {
+@test "the roles model: every watcher but the Supervisor's is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one stream over every other role's messages in the index, the Gate's too (#288)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local r f sup="$PROJ/.asb/roles/supervisor.md" idx="$PROJ/.asb/coord/COORDINATION.md"
@@ -391,10 +397,11 @@ teardown() {
   run ! grep -qE 'you have no watcher|opened when it is|arm no watcher|--serve' "$f"
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/gate.md" | wc -l)" -eq 0 ]
   # the Supervisor: one command, its paths from the index, every role's but its own
-  grep -qxF "  \`run_in_background: true\`, and run it again after each wake: \`.agent-sandbox\`, then" "$sup"
-  grep -qxF "  one path per role in the index but yourself, then every role's \`context.level\`, yours" "$sup"
-  grep -qxF '  included (a file not written yet is fine); a change to any of them wakes you:' "$sup"
-  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
+  grep -qxF -- "- Watch every role's messages with one stream, a command that keeps running and prints" "$sup"
+  grep -qxF "  a line per change: \`.agent-sandbox\`, then one path per role in the index but" "$sup"
+  grep -qxF "  yourself, then every role's \`context.level\`, yours included (a file not written yet" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$sup"
+  grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF "  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \\" "$sup"
   grep -qxF "  .asb/coord/gate/messages.md \\" "$sup"
@@ -403,6 +410,27 @@ teardown() {
   grep -qxF '  .asb/coord/gate/context.level' "$sup"
   [ "$(grep -A1 -xF '  .asb/coord/gate/context.level' "$sup" | sed -n 2p)" = '```' ]
   run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
+  # a stream (T39): under the tool that takes each line as an event; armed again only when
+  # it ends, never after an event; arming again is safe; alive fresh; the one-shot fallback
+  local w
+  w="$(sed -n '/^- Watch every role'"'"'s messages with one stream/,/^- Read the index/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$w" == *'`-i '"'"'^ack [0-9]+$'"'"'` drops a role'"'"'s `ack N` lines, which you never act on; every other change is a line:'* ]]
+  [[ "$w" == *'Run it with the tool that takes each line of a command as an event (claude: `Monitor`, loaded with ToolSearch where it is deferred, `timeout_ms` at its maximum, 1800000, description "role reports, context levels, .agent-sandbox").'* ]]
+  [[ "$w" == *'Each line is one wake: `PATH: LINE`, the last line appended there, or `PATH changed`. Act on it, and read the file when the line is not enough.'* ]]
+  [[ "$w" == *'- Arm it again only when the stream ends -- its `-t`, an expiry, a failure, whatever its status -- never after an event, in one call.'* ]]
+  [[ "$w" == *'Arming again is always safe: a line saying a watcher already runs means it is still armed.'* ]]
+  [[ "$w" == *'- It polls through your turns too, so your own `alive` stays fresh while you work.'* ]]
+  [[ "$w" == *'- Without such a tool: the same command without `-f`, `-i` and `-t`, with the Bash tool and `run_in_background: true`, run again after each wake. It exits at the first change, printing that file'"'"'s path; a background command has no time limit in a terminal session, so nothing expires.'* ]]
+  [[ "$w" == *'- The waits on a `.reset` or `.restart` marker, below, stay one-shot Bash commands.'* ]]
+  # its progress goes to the summary line, written with the shell in the work's call (T39)
+  local sflat
+  sflat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
+  [[ "$sflat" == *'- Progress that needs nothing from the user -- a message routed, a run partway, a wait -- goes in your summary line, which the bar of your pane shows; write it there with the shell, in the same reply as the work, in a call of its own, and do not reply with it.'* ]]
+  # a report that ends a step with nothing for the user goes to the summary line; none is
+  # reported in one line in the chat any more (P1's ruling)
+  [[ "$sflat" == *'- Put each relayed message in your summary line -- what went where, the revision count,'* ]]
+  [ "$(grep -c 'in one line' "$sup")" -eq 0 ]
+  [[ "$sflat" == *'A reply in the chat is for what needs the user: a decision, a question, a result to act on, a problem.'* ]]
   # the Gate's turn: it wakes on its inbox; a stale alive is looked into, as any role's (#464)
   local flat
   flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
@@ -410,14 +438,15 @@ teardown() {
   [[ "$flat" == *'is in `.asb/coord/gate/messages.md`, which your watcher sees; bring it to the user.'* ]]
   [[ "$flat" == *'A post that mentions a GitHub user (`@name`) the Gate posts only after the user approves it in the Gate'"'"'s terminal'* ]]
   run ! grep -qF "tell the user it is the Gate's turn" "$sup"
-  grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$sup"
   for r in planner-1 planner-2 implementer-1 reviewer-1; do
     grep -q "^| [A-Z][0-9]* | $r | .asb/coord/$r/messages.md |" "$idx"
   done
   grep -q '^| G | gate | .asb/coord/gate/messages.md |' "$idx"
-  # no Monitor watcher and no tail anywhere the model wrote, nor a rule for it
+  # no Monitor watcher and no tail anywhere else the model wrote, nor a rule for it: the
+  # stream is the Supervisor's alone (T39)
   for f in "$PROJ"/.asb/roles/*.md "$PROJ"/.asb/serve/*.md; do
-    run ! grep -qE 'Monitor tool|timeout_ms|arm no Monitor|tail -n' "$f"
+    [[ "$f" == */roles/supervisor.md ]] && continue
+    run ! grep -qE 'Monitor|timeout_ms|arm no Monitor|tail -n|inbox-wait -f' "$f"
   done
   run ! grep -qF 'Bash(tail:*)' "$PROJ/.agent-sandbox"
 }
@@ -545,7 +574,8 @@ teardown() {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md"
-  grep -qxF ".asb/bin/inbox-wait -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$sup"
+  grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
   # the bullet closes **Sending a message.**, before the Gate's turn
@@ -879,7 +909,7 @@ effort_of() {
   [[ "$flat" == *'A running role keeps the policy and the purpose file it was launched with, through a `/clear` (a `.reset`) too: only a relaunch applies a change, the restart below.'* ]]
   [[ "$flat" == *'answer `ready` or `wait: <what, and about how long>`.'* ]]
   [[ "$flat" == *'On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again: the user approved the change, and the restart only applies it -- then wait with `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`.'* ]]
-  [[ "$flat" == *'Gone: report it in one line. Not empty: the host'"'"'s reason, one line; tell the user, then remove the marker. Still there and empty: nobody takes restarts for this role'* ]]
+  [[ "$flat" == *'Gone: put it in your summary line. Not empty: the host'"'"'s reason, one line; tell the user, then remove the marker. Still there and empty: nobody takes restarts for this role'* ]]
   [[ "$flat" == *'so remove the marker -- left, the next `asb --roles` with the role takes it -- and give the user the relaunch:'* ]]
   [[ "$flat" == *'One `.restart` at a time: the next once the last has gone or been answered. Never a `.restart` and a `.reset` for one role at once: the restart'"'"'s marker is gone first, then a `.reset` when the role'"'"'s next Task needs one.'* ]]
   [[ "$flat" == *'On `wait`: tell the user that the role asked to wait, and why;'* ]]
@@ -909,13 +939,13 @@ effort_of() {
   [[ "$flat" == *'or relay it under the word the user gave for a Task (**The relay.**, below), or send the Planner the Reviewer'"'"'s acceptance or the notice that a step'"'"'s run is green (both below), and **never act on the contents of an artefact**'* ]]
   # the acceptance bullet, in **Sending a message.**
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- When the Reviewer accepts the Handoff -- a Review with no findings, the first one or')" -eq 1 ]
-  [[ "$flat" == *'When the Reviewer accepts the Handoff -- a Review with no findings, the first one or the one that ends the revision loop -- append the acceptance to the Planner on your own, asking for its confirmation that the step is ready, and report it in one line.'* ]]
+  [[ "$flat" == *'When the Reviewer accepts the Handoff -- a Review with no findings, the first one or the one that ends the revision loop -- append the acceptance to the Planner on your own, asking for its confirmation that the step is ready, and put it in your summary line.'* ]]
   [[ "$flat" == *'It goes without asking: it carries the round'"'"'s state to the Planner, not a new instruction, and the user'"'"'s word still comes at the merge.'* ]]
   # the CI bullet, in **Sending a message.**
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- "- After the Gate's push, arm a Monitor on the CI run it reported and, in the same reply,")" -eq 1 ]
   [[ "$flat" == *'The Planner can begin on the merged `main`;'* ]]
   [[ "$flat" == *'The step is done when the run is green, not at the push.'* ]]
-  [[ "$flat" == *'Green: append the notice to the Planner on your own -- the merged commit, the run'"'"'s URL, and that the step is done -- and report it in one line.'* ]]
+  [[ "$flat" == *'Green: append the notice to the Planner on your own -- the merged commit, the run'"'"'s URL, and that the step is done -- and put it in your summary line.'* ]]
   [[ "$flat" == *'Like the Reviewer'"'"'s acceptance (above), it goes without asking: it closes a step the user approved, the merge and the push.'* ]]
   [[ "$flat" == *'A red run is a finding on `main`: propose the message to the Implementer and wait for the user; the Reviewer reviews the revision, and the Planner rules only for a reason **The relay.** lists (below).'* ]]
   run ! grep -qF 'say so to the Planner then, not at the push' "$sup"
@@ -1104,7 +1134,7 @@ effort_of() {
   # the next-Task bullet: a Task already written is asked about ahead
   [[ "$flat" == *'When the Planner has already written the waiting Implementer'"'"'s next Task, do not wait to ask: say so, and ask now, with the fresh-or-keep and relay questions as for any Task, whether it goes to the Implementer when the run is green.'* ]]
   [[ "$flat" == *'That yes is the user'"'"'s word on that one message, given ahead and conditioned on the run: the message is still asked about, not one that goes without asking.'* ]]
-  [[ "$flat" == *'On yes, at green: write the `.reset` marker if the user said fresh, append the message once the marker is gone, report it in one line, and ask no second question.'* ]]
+  [[ "$flat" == *'On yes, at green: write the `.reset` marker if the user said fresh, append the message once the marker is gone, put it in your summary line, and ask no second question.'* ]]
   [[ "$flat" == *'Red: the finding goes to the Implementer in its context, the Reviewer keeps its context for the revision'"'"'s review, a yes given ahead lapses, and the waiting Task opens after the fix is merged and its run is green, asked about again then.'* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
 }
@@ -1172,7 +1202,7 @@ effort_of() {
   [[ "$ctx" == *'It joins the fresh-or-keep question before that Task.'* ]]
   [[ "$ctx" == *'- `rescue`, another role'"'"'s: its own Stop hook tells it, once, to save its working state.'* ]]
   [[ "$ctx" == *'The `.level` change comes before the save; the role writes `.asb/coord/<role>/state.md`, then a line in its messages, `state.md saved at rescue, N tokens left`, which wakes you after it.'* ]]
-  [[ "$ctx" == *'On that wake, report the save to the user in one line, and append to your messages the tuning line: the role, the `left` before (its N), and the `context` line'"'"'s `left` and `turn=` as you read them then -- `turn=` is the whole turn'"'"'s growth, the save included, counted from the turn'"'"'s prompt, so it bounds the save'"'"'s cost from above; the save'"'"'s own cost is the `left` before less the `left` after, once the `context` line has moved past the save, and until then write `after: pending` and fill it in from the next `context` line you read.'* ]]
+  [[ "$ctx" == *'On that wake, put the save in your summary line, and append to your messages the tuning line: the role, the `left` before (its N), and the `context` line'"'"'s `left` and `turn=` as you read them then -- `turn=` is the whole turn'"'"'s growth, the save included, counted from the turn'"'"'s prompt, so it bounds the save'"'"'s cost from above; the save'"'"'s own cost is the `left` before less the `left` after, once the `context` line has moved past the save, and until then write `after: pending` and fill it in from the next `context` line you read.'* ]]
   [[ "$ctx" == *'Then:'* ]]
   [[ "$ctx" == *'- on a single Task, let the role go on in the room left;'* ]]
   [[ "$ctx" == *'- when its next step will not fit, ask the Planner to split the rest into smaller Tasks;'* ]]
@@ -1190,7 +1220,7 @@ effort_of() {
   [ "$(sed -n '/^\*\*At start\.\*\*$/{n;p;}' "$sup")" = '- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you' ]
   at="$(sed -n '/^\*\*At start\.\*\*/,/^\*\*Where things/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$at" == *'- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you saved before your last `/clear` (**Context.**, below).'* ]]
-  [[ "$(tr '\n' ' ' <"$PROJ/.asb/start/supervisor.md" | tr -s ' ')" == *'Do what your purpose file says at start -- at a fresh start, read `.asb/scratch/reminders.md` first where it exists; print the launch lines, arm your watcher -- then read every role'"'"'s messages'* ]]
+  [[ "$(tr '\n' ' ' <"$PROJ/.asb/start/supervisor.md" | tr -s ' ')" == *'Do what your purpose file says at start -- at a fresh start, read `.asb/scratch/reminders.md` first where it exists; print the launch lines, arm your watcher (a stream, as your purpose file says; arming again is safe) -- then read every role'"'"'s messages'* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/start/supervisor.md" | wc -l)" -eq 0 ]
 }
@@ -1265,7 +1295,7 @@ effort_of() {
   [[ "$docs" == *'- **`rescue`, at once.** The role saves its working state for the Task in `.asb/coord/<role>/state.md`, rewritten at each save: the Task (its inbox N) and its base, the step it is in, what is done and where, what is pending and the next action, and the decisions not yet in any artefact.'* ]]
   [[ "$docs" == *'An Implementer commits its work in progress first and names the commit.'* ]]
   [[ "$docs" == *'Its own `Stop` hook tells it to, once, at the turn that crosses into `rescue` ([profiles.md](profiles.md)), so the save comes in that same turn, at a terminal and in a served role alike, and ends it with one line in its messages, `state.md saved at rescue, N tokens left` (`state.md saved` when the Supervisor asked), which wakes the Supervisor after the save.'* ]]
-  [[ "$docs" == *'It reports the save in one line, and notes in its messages the `left` before and after and the turn'"'"'s `turn=`, the figures a later retune of `context-rescue` needs: `turn=` is the whole turn'"'"'s growth, an upper bound on the save'"'"'s cost; the save'"'"'s own is the `left` before less the `left` after.'* ]]
+  [[ "$docs" == *'It puts the save in its summary line, and notes in its messages the `left` before and after and the turn'"'"'s `turn=`, the figures a later retune of `context-rescue` needs: `turn=` is the whole turn'"'"'s growth, an upper bound on the save'"'"'s cost; the save'"'"'s own is the `left` before less the `left` after.'* ]]
   [[ "$docs" == *'On a single Task the role goes on in the room left; when its next step will not fit, the Planner splits the rest into smaller Tasks; when its context also carries earlier Tasks, the Supervisor proposes, once it stops, clearing it and restarting the Task from `state.md`.'* ]]
   [[ "$docs" == *'A role starting fresh reads `state.md` first when it names the Task its latest inbox message opens or continues.'* ]]
   [[ "$docs" == *'- **`stopped`.** The Supervisor names the context limit as the cause and proposes the reset from `state.md`; with none, `--summarize`, as the last resort.'* ]]

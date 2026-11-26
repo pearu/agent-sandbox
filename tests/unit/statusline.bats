@@ -480,6 +480,83 @@ ST='{"id":"bsy1vrv0j","type":"shell","status":"running","description":"Sleep 90 
   [ "$(plain "$output" | wc -L)" -eq 76 ]
 }
 
+# sbar COLOUR NAME STATE SUMMARY COLUMNS -- the status line with a summary line after the
+# state, as statusline.sh prints it
+sbar() {
+  local rest=22 text=" $2  $3  $4 "
+  [[ "$3" == "NEEDS YOU" ]] && rest=1
+  printf '\e[%s;1m %s\e[%sm  %s \e[22m %s %*s\e[0m' "$1" "$2" "$rest" "$3" "$4" "$(($5 - 4 - ${#text}))" ""
+}
+
+@test "statusline.sh: AGENT_SANDBOX_SUMMARY's line follows the state, not bold, and a long one is cut so the row stays within COLUMNS - 4" {
+  local L="$BATS_TEST_TMPDIR/line"
+  printf 'waiting\n' >"$S"
+  printf 'routed done 4 to P1; R1 reviewing T39\n' >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=100 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(sbar "7;32" supervisor WAITING 'routed done 4 to P1; R1 reviewing T39' 100)" ]
+  [ "$(plain "$output" | wc -L)" -eq 96 ]
+  # needs you: the state bold, the summary not
+  printf 'needs you\n' >"$S"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=100 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [[ "$output" == *$'\e[1m  NEEDS YOU \e[22m routed done 4'* ]]
+  # longer than the room: cut, a ~ at the cut, the row exactly COLUMNS - 4 wide
+  printf 'working\n' >"$S"
+  printf 'x%.0s' {1..300} >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  local head=" supervisor  WORKING " room
+  room=$((80 - 4 - ${#head} - 2))
+  [ "$output" = "$(sbar "7;33" supervisor WORKING "$(printf 'x%.0s' $(seq $((room - 1))))~" 80)" ]
+  [ "$(plain "$output" | wc -L)" -eq 76 ]
+  # too narrow for even a cut summary: the bar as without it (room for 1 character, or none)
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=28 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(bar "7;33" supervisor WORKING 28)" ]
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=10 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$(plain "$output")" = " supervisor  WORKING " ]
+}
+
+@test "statusline.sh: the summary line's escape sequences and control characters are dropped, and only its first line is shown" {
+  local L="$BATS_TEST_TMPDIR/line"
+  printf 'waiting\n' >"$S"
+  printf 'a\e]0;owned\ab \e[2Jc\rd\nsecond line\n' >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(sbar "7;32" supervisor WAITING 'a]0;ownedb [2Jcd' 80)" ]
+  [[ "$output" != *second* ]]
+  [[ "$output" != *$'\e]'* ]]
+  [[ "$output" != *$'\e[2J'* ]]
+}
+
+@test "statusline.sh: a summary file missing, empty or unreadable, or none named, gives the bar as without it" {
+  local L="$BATS_TEST_TMPDIR/line"
+  printf 'idle\n' >"$S"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(bar "7;90" supervisor IDLE 80)" ]
+  : >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(bar "7;90" supervisor IDLE 80)" ]
+  printf 'hidden\n' >"$L"
+  chmod 000 "$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  chmod 644 "$L"
+  [ "$output" = "$(bar "7;90" supervisor IDLE 80)" ]
+  printf '\e\a\n' >"$L" # nothing printable left
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(bar "7;90" supervisor IDLE 80)" ]
+  COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "$(bar "7;90" supervisor IDLE 80)" ]
+}
+
+@test "statusline.sh: with no state file, the name, two spaces and the summary line, plain, cut within the width" {
+  local L="$BATS_TEST_TMPDIR/line" B=$'\e[1m' R=$'\e[0m'
+  printf 'starting up\n' >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=80 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "${B}supervisor${R}  starting up" ]
+  printf 'y%.0s' {1..300} >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" COLUMNS=40 run bash "$P/statusline.sh" supervisor "$S" </dev/null
+  [ "$output" = "${B}supervisor${R}  $(printf 'y%.0s' $(seq 23))~" ]
+  [ "$(plain "$output" | wc -L)" -eq 36 ]
+}
+
 @test "state-hook.sh: no terminal background by default; with BACKGROUND on, OSC 11 per state on Claude Code's stdout and OSC 111 to reset" {
   # off (the default): nothing reaches the terminal, for every event
   local e

@@ -20,6 +20,16 @@
 # the last response's context), context_window_size and session_id; PLAN and RESCUE are
 # the role's levels (context.sh). Nothing while used_percentage is null: no response
 # yet. Before the row is printed; silently.
+#
+# With AGENT_SANDBOX_SUMMARY (the session's summary line, #314; set in this command by
+# profile_briefing_args where the engine bound it), the row also shows that line, two
+# spaces after the state, in the state's colour, not bold: where the session stands, at
+# a glance. The file is the agent's own, and the row goes to the user's terminal, so
+# every non-printable character is dropped first; then it is cut (a ~ marks the cut) so
+# the row stays within COLUMNS - 4, cut here so that Claude Code's ellipsis never takes
+# the colour's reset. With no state file, the name, two spaces, the line, plain. A
+# missing, unreadable or empty file: the row as without it. One read, no fork: this
+# runs every second.
 set -u
 # This file's directory, where context.sh is.
 here="${BASH_SOURCE[0]%/*}"
@@ -70,6 +80,22 @@ name="${name//[^[:print:]]/}"
 
 state=""
 [[ -r "$statef" ]] && { read -r state <"$statef"; } 2>/dev/null
+sum=""
+sumf="${AGENT_SANDBOX_SUMMARY:-}"
+[[ -n "$sumf" && -r "$sumf" ]] && { read -r sum <"$sumf"; } 2>/dev/null
+sum="${sum//[^[:print:]]/}"
+cols="${COLUMNS:-}"
+[[ "$cols" =~ ^[1-9][0-9]{0,3}$ ]] || cols=80
+# fit ROOM -- the summary cut to ROOM characters, a ~ marking a cut; empty below 2.
+fit() {
+  if ((${#sum} <= $1)); then
+    :
+  elif (($1 >= 2)); then
+    sum="${sum:0:$1-1}~"
+  else
+    sum=""
+  fi
+}
 rest=22 # the state after the bold name: plain, or bold for needs you
 case "$state" in
   working | running) sgr='7;33' ;;
@@ -78,13 +104,18 @@ case "$state" in
   "needs you") sgr='7;34' rest=1 ;;
   idle) sgr='7;90' ;;
   *)
-    printf '\e[1m%s\e[0m\n' "$name"
+    [[ -z "$sum" ]] || fit $((cols - 4 - ${#name} - 2))
+    printf '\e[1m%s\e[0m%s\n' "$name" "${sum:+  $sum}"
     exit 0
     ;;
 esac
-cols="${COLUMNS:-}"
-[[ "$cols" =~ ^[1-9][0-9]{0,3}$ ]] || cols=80
 text=" $name  ${state^^} "
+[[ -z "$sum" ]] || fit $((cols - 4 - ${#text} - 2))
+[[ -z "$sum" ]] || text+=" $sum "
 pad=$((cols - 4 - ${#text}))
 ((pad > 0)) || pad=0
-printf '\e[%s;1m %s\e[%sm%s%*s\e[0m\n' "$sgr" "$name" "$rest" "  ${state^^} " "$pad" ""
+if [[ -z "$sum" ]]; then
+  printf '\e[%s;1m %s\e[%sm%s%*s\e[0m\n' "$sgr" "$name" "$rest" "  ${state^^} " "$pad" ""
+else
+  printf '\e[%s;1m %s\e[%sm%s\e[22m%s%*s\e[0m\n' "$sgr" "$name" "$rest" "  ${state^^} " " $sum " "$pad" ""
+fi
