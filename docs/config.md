@@ -373,12 +373,34 @@ Sections:
   `asb --init roles` writes `context = .asb/coord/{role}/context` in each role's
   `[briefing:...]` section. In a glob section (`[briefing:planner-*]`) `--init` leaves
   that `{role}` as it is, for the launch to read as each instance's name. That is for
-  the `context` line only: on every other line, and in every other section, `--init`
-  substitutes `{role}` as before.
+  the `context` and `asking` lines only: on every other line, and in every other
+  section, `--init` substitutes `{role}` as before.
 
   ```ini
   [briefing:planner-*]
   context = .asb/coord/{role}/context    # .asb/coord/planner-1/context, ...
+  ```
+
+  **The asking file** (#485): `asking = PATH`, in `[briefing]` or `[briefing:<glob>]`,
+  names a file in the project, as `context` does (relative to it, no `..`; `{role}` is
+  the role's name, and the latest line matching the role wins), that the role's agent's
+  profile writes when the role asks the user something in its pane, one line, `since=`
+  and the wait's start in UTC, and removes at the role's first hook event after the
+  answer ([roles.md](roles.md#the-asking-file)). It says the role asked the user
+  something at `since` and no hook has run since: Claude Code runs no hook at the
+  answer itself, so after an approval it stays until the approved command ends. The
+  engine only names it, and hands the path to the profile; the claude profile writes and
+  removes it from its state hooks, at a terminal only -- a print run, a served role's
+  turn among them, has no pane to ask in and writes none. It must be in a directory the
+  role writes through to the project, as the context file must; otherwise the launch
+  says why and goes on, with no file named. With the briefing off nothing is written.
+  No line, no file. It is not part of the approval, and the review and `--check` name
+  it. `asb --init roles` writes `asking = .asb/coord/{role}/asking` in every role's
+  `[briefing:...]` section but the Supervisor's, whose pane is where the user is.
+
+  ```ini
+  [briefing:planner-*]
+  asking = .asb/coord/{role}/asking      # there once planner-1, ... asks the user
   ```
 - **`[connect]`** — key/value lines, one per channel: `channel = mode [source] [scope]`.
   A **channel** is named by what it carries (`instructions`, `settings`, `skills`,

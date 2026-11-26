@@ -126,8 +126,9 @@ Implementer and its Reviewer within a Task you opted in to the relay (section 5)
 it writes on the word you gave when the Task opened, and puts each in its summary line,
 watching the loop for convergence: a loop that is not converging it stops, and proposes
 handing it to the Planner. So a line in a role's inbox is your word by construction,
-given per message or once for the Task. It watches every role's messages, and every
-role's context level (section 8, the context file); when a role reports done, it
+given per message or once for the Task. It watches every role's messages, every
+role's context level (section 8, the context file), and whether a role has asked you
+something in its pane (section 8, the asking file); when a role reports done, it
 proposes the next step and asks. At start it prints the launch line of every other
 role, from the index -- `asb --role NAME --resume`, which starts the
 role's session when it has none and resumes it when it has, its agent the one
@@ -426,21 +427,22 @@ goes when the run is green (section 4).
 - **Delivery.** A role's first act on waking is to append `ack N` to its messages,
   before it reads the instruction, so its messages show each one picked up (the
   Supervisor's stream skips the line: it acts on what follows); `done N` when it has
-  finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each
-  poll, so the file says a watcher is waiting for the next message; the Supervisor
-  reads its age before it sends and while it waits. At a terminal the watcher exits on
-  the message that wakes the role and runs again only once the role re-arms it -- at
-  the turn's end at the latest, where the Stop hook enforces it -- so `alive` can be
-  stale for as long as a turn lasts (#464); a served role's loop touches it every
-  second, its turns included. Stale is a reason to look, never a verdict: the
-  Supervisor checks the role's `context` line's `at=`, its messages, an Implementer's
-  last commit and its summary line, and says "busy in a turn" when any moved after
-  `alive`. It gives the launch line only when you say the role is gone, since a turn
-  spent in one long tool call moves none of them. Its stream skips `ack` lines, so
-  after a send it looks for the `ack` -- at its next wake or turn, before it tells you
-  anything about that role, and at every re-arm -- and its bar shows the pending pickup
-  meanwhile. None a minute or more after the send means the role has not picked it
-  up: said in the chat, never sent again on the Supervisor's own.
+  finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each poll, so the file
+  says a watcher is waiting for the next message; the Supervisor reads its age before it
+  sends and while it waits. At a terminal the watcher exits on the message that wakes
+  the role and runs again only once the role re-arms it -- at the turn's end at the
+  latest, where the Stop hook enforces it -- so `alive` can be stale for as long as a
+  turn lasts (#464); a served role's loop touches it every second, its turns included.
+  Stale is a reason to look, never a verdict: the Supervisor looks at the role's asking
+  file first (section 8) -- there, the role asked you something in its pane and no hook
+  has run since, and it says so -- then checks the role's `context` line's `at=`, its
+  messages, an Implementer's last commit and its summary line, and says "busy in a turn"
+  when any moved after `alive`. It gives the launch line only when you say the role is
+  gone, since a turn spent in one long tool call moves none of them. Its stream skips
+  `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn,
+  before it tells you anything about that role, and at every re-arm -- and its bar shows
+  the pending pickup meanwhile. None a minute or more after the send means the role has
+  not picked it up: said in the chat, never sent again on the Supervisor's own.
 - **The closing line.** A role that has finished ends with "done; in my file; S has
   it", so you need not look at its terminal.
 - **Disapproval.** You say no in the Supervisor's terminal, and nothing is written.
@@ -979,6 +981,7 @@ prompt = .asb/serve/planner-2.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -1011,6 +1014,7 @@ prompt = .asb/serve/implementer-2.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -1027,6 +1031,7 @@ prompt = .asb/serve/reviewer-1.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -1085,6 +1090,7 @@ watch = .asb/coord/to/gate.md
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 context = .asb/coord/gate/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/gate/asking # there once it asks the user in its pane: S reads it
 [agent:gate]
 effort = low                      # executes an approved message as written
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -1240,8 +1246,50 @@ messages, and reads each change with the role's `context` line (#456):
   steps, your standing words, what it waits on -- and suggests a `/clear` of its
   session, which you type. At a fresh start it reads `reminders.md` first.
 
-Add to it what a round turns out to need, when it does; `asb --trust` then reviews the
-change.
+### The asking file
+
+A role at a terminal can stop and wait for you: a permission dialog, a question dialog,
+a turn that ends on a question. Each role's `[briefing:...]` section but the
+Supervisor's names a file for it, `asking = .asb/coord/{role}/asking`
+([config.md](config.md#the-file), `[briefing]`; #485). The claude profile's state hooks
+write it when the role asks you something in its pane, one line, and remove it at the
+role's first hook event after your answer:
+
+```
+since=2026-11-26T10:00:00Z
+```
+
+It says the role asked you something at `since` and no hook has run since. Claude Code
+runs no hook at the answer itself (2.1.321, measured): after an approval it stays until
+the approved command ends -- a dialog approved at :08 was followed by the next event at
+:33, a 25 s command's end. A denial or a reply removes it at the next event.
+
+- **Written** (by a rename) when the role's state becomes `needs you` (a permission
+  dialog: `PermissionRequest`, or a `Notification` of a permission prompt, an
+  elicitation, or the agent needing input) or `asks you` (a `Stop` whose reply ends on
+  a question, and which the hook does not refuse: a refused one goes on working, and
+  removes the file; a question the role asked in that turn is then not flagged).
+  Already there, it is left as it is: `since` is the start of the wait. The question
+  dialog (AskUserQuestion) is a `PermissionRequest`, at once, in every permission mode
+  (Claude Code 2.1.321).
+- **Removed** at any other state -- a prompt, a tool that ran, a `Stop` that does not
+  ask, a session's start -- and at `SessionEnd`.
+- **A dialog you decline with Escape runs no hook** (2.1.321): the file stays until the
+  role's next turn, while the role sits at its prompt, yours. **A session killed with
+  the file there** runs none either: the role's next launch removes it.
+- **At a terminal only:** a served role's turn has no pane to ask in, so it writes
+  none, and neither does a print run.
+
+The Supervisor's stream watches every role's asking file but its own (its pane is where
+you already are). When one appears, it tells you in the chat, once per `since`: "<role>
+asked you something in its pane at <time>; go there if you have not answered it.", in
+your local time, and nothing more. When it goes, the wait has ended -- answered, or the
+role's session ended or started anew: its summary line may say so. A stale `alive` with
+the asking file there gets the same line, not "busy in a turn" and no launch line: the
+role waits in its pane, or runs what you approved there.
+
+Add to the dot-file what a round turns out to need, when it does; `asb --trust` then
+reviews the change.
 
 ## 9. One round, terminal by terminal
 

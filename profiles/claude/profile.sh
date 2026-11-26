@@ -125,7 +125,9 @@
 # engine did not bind its directory (the briefing off, a keeper without it), and
 # _context_path, _context_plan, _context_rescue: the role's context file (#456,
 # `[briefing] context`; absolute, empty when it has none or may not write it) and its
-# levels (a percent without its %, tokens; `-` for never). A
+# levels (a percent without its %, tokens; `-` for never), and _asking_path: the
+# role's asking file (#485, `[briefing] asking`; absolute, empty when it has none or
+# may not write it). A
 # profile must not touch the engine's bwrap argument list directly -- the
 # declarations above are the whole interface, so that the sandbox's isolation
 # guarantees stay reviewable in one place (the engine).
@@ -417,6 +419,14 @@ profile_telemetry_hosts() {
 # with the line missing or empty. Not in a print run either (_claude_watch_ok), a turn
 # of --serve included: its turn is the run, and its output is the user's.
 #
+# The asking file (#485): for a role with one (_asking_path, the engine's), every state
+# event's command -- SessionStart, UserPromptSubmit, PostToolUse(Failure),
+# PermissionRequest, Notification, Stop, and SessionEnd, which then runs whatever the
+# state-background -- carries AGENT_SANDBOX_ASKING=PATH, and state-hook.sh keeps the file
+# there from when the role asks the user something in its pane to its next hook event
+# after the answer. Not in a print run (_claude_watch_ok): a served role's turn has no
+# pane to ask in.
+#
 # `/start`: for a role with a `[briefing] start` text (_start_text, the engine's), a
 # command whose body is that text, so that after `/clear` at the role's terminal
 # `/start` runs it as a turn -- the watcher re-armed, the inbox read -- without a
@@ -450,6 +460,17 @@ profile_briefing_args() {
     }
   done
   local state="bash $_brief_out_inside/state-hook.sh"
+  # The asking file (#485, state-hook.sh): the role's `[briefing] asking` path, for every
+  # state event, at a terminal only: a print run, a served role's turn among them, has
+  # no pane to ask in.
+  local ask_env="" q
+  # shellcheck disable=SC2154 # _asking_path: the engine's, by dynamic scope
+  if [[ -n "${_asking_path:-}" ]] && _claude_watch_ok "$@"; then
+    printf -v q '%q' "$_asking_path"
+    q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
+    ask_env="AGENT_SANDBOX_ASKING=$q "
+  fi
+  state="$ask_env$state"
   # shellcheck disable=SC2154 # _df_profile_kv: the engine's, by dynamic scope
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
     [[ "${kv%%=*}" == state-background ]] || continue
@@ -466,9 +487,9 @@ profile_briefing_args() {
     ours+=",\"$ev\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$refusal $ev\"}]},{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
   done
   local -a state_events=(UserPromptSubmit Stop PermissionRequest Notification)
-  [[ "$bg" == on ]] && state_events+=(SessionEnd)
+  [[ "$bg" == on || -n "$ask_env" ]] && state_events+=(SessionEnd)
   # The watcher rule (state-hook.sh): the role's watch path, for its Stop hook only.
-  local watch_env="" q
+  local watch_env=""
   if [[ -n "${_watch_path:-}" ]] && _claude_watch_ok "$@"; then
     printf -v q '%q' "$_watch_path"
     q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
@@ -646,6 +667,9 @@ profile_check_notes() {
   # shellcheck disable=SC2154 # _context_path: the engine's, by dynamic scope
   [[ -z "${_context_path:-}" ]] \
     || printf 'context: the status line and the Stop hook keep %s current, and --serve after each turn\n' "$_context_path"
+  # shellcheck disable=SC2154 # _asking_path: the engine's, by dynamic scope
+  [[ -z "${_asking_path:-}" ]] \
+    || printf 'asking: the state hooks keep %s there from when the role asks the user something in its pane to its next hook event after the answer (at a terminal, not in a print run)\n' "$_asking_path"
   return 0
 }
 

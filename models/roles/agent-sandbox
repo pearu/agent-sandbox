@@ -44,6 +44,7 @@ prompt = .asb/serve/{role}.md
 [briefing:planner-*]              # reads .asb/roles/<role>.md, this instance's
 start = .asb/start/planner.md     # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:planner-*]
 effort = high                     # Statements and Tasks: the reasoning the round rests on
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -68,6 +69,7 @@ prompt = .asb/serve/{role}.md
 [briefing:implementer-*]          # reads .asb/roles/<role>.md
 start = .asb/start/implementer.md # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:implementer-*]
 effort = high                     # the code, its tests and its measurements
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -85,6 +87,7 @@ prompt = .asb/serve/{role}.md
 [briefing:reviewer-*]             # reads .asb/roles/<role>.md
 start = .asb/start/reviewer.md    # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:reviewer-*]
 effort = high                     # finds what the Implementer missed
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state
@@ -145,6 +148,7 @@ watch = .asb/coord/to/{role}.md
 file = .asb/roles/gate.md
 start = .asb/start/gate.md        # its first turn: arm the watcher, read the inbox
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level
+asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it
 [agent:gate]
 effort = low                      # executes an approved message as written
 auto-compact = off                # at its context limit a turn stops: /clear, from saved state

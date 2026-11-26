@@ -1670,3 +1670,123 @@ check_role() {
   run_engine -- asb --role planner-1 claude --version
   [ "$status" -eq 0 ]
 }
+
+# ----- the asking file (`[briefing] asking`, #485) ---------------------------------
+
+# ask_project [LINE...] -- planners with an asking file at .asb/coord/{role}/asking, and
+# LINEs after it; approved.
+ask_project() {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'Plan.\n' >"$PROJ/.asb/roles/planner-1.md"
+  printf 'Plan.\n' >"$PROJ/.asb/roles/planner-2.md"
+  printf '%s\n' '[briefing:planner-*]' 'asking = .asb/coord/{role}/asking' "$@" >"$PROJ/.agent-sandbox"
+  approve
+}
+
+@test "[briefing] asking (#485): every state event's command carries the role's file, {role} its name, SessionEnd's included; the later line wins; another role none of it" {
+  ask_project '[connect:*]'
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  local a="AGENT_SANDBOX_ASKING=$PROJ/.asb/coord/planner-1/asking" ev
+  for ev in SessionStart UserPromptSubmit PostToolUse PostToolUseFailure PermissionRequest Notification SessionEnd; do
+    [ "$(hook_cmd "$ev")" = "$a bash $IN/state-hook.sh $ev off" ]
+  done
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line $a bash $IN/state-hook.sh Stop off" ]
+  # and once each: the status line runs no hook
+  [ "$(grep -o 'AGENT_SANDBOX_ASKING=' "$OUT/settings.json" | wc -l)" -eq 8 ]
+  [[ "$(statusline_cmd)" != *AGENT_SANDBOX_ASKING* ]]
+  # with the background on, the one SessionEnd entry carries it
+  ask_project '[claude]' 'state-background = on' '[connect:*]'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd SessionEnd)" = "$a bash $IN/state-hook.sh SessionEnd on" ]
+  # of two lines that match the role, the later wins, suffixed or not (as for context)
+  ask_project '[briefing]' 'asking = .asb/ask/{role}' '[connect:*]'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Notification)" = "AGENT_SANDBOX_ASKING=$PROJ/.asb/ask/planner-2 bash $IN/state-hook.sh Notification off" ]
+  printf '%s\n' '[briefing]' 'asking = .asb/ask/{role}' '[briefing:planner-*]' 'asking = .asb/coord/{role}/asking' '[connect:*]' >"$PROJ/.agent-sandbox"
+  approve
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Notification)" = "AGENT_SANDBOX_ASKING=$PROJ/.asb/coord/planner-2/asking bash $IN/state-hook.sh Notification off" ]
+  # a role the line does not match: none, and no SessionEnd hook with the background off
+  ask_project '[connect:*]'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role other claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+  [ -z "$(hook_cmd SessionEnd)" ]
+  [[ "$output" != *"asking file"* ]]
+}
+
+@test "[briefing] asking: a print run gets none, a turn of --serve among them; a -p after a typed -- is no print run" {
+  ask_project '[connect:*]'
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude -p 'Reply ok.'
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Stop)" = "bash $IN/state-hook.sh Stop off" ]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+  [ -z "$(hook_cmd SessionEnd)" ]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" AGENT_SANDBOX_SERVE_TURN=1 -- asb --role planner-1 claude -p --resume 01234567-89ab-cdef-0123-456789abcdef 'Read your inbox.'
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Stop)" = "bash $IN/state-hook.sh Stop off" ]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+  # a typed -- ends Claude Code's options: a -p after it is not a print run
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version -- -p
+  [ "$status" -eq 0 ]
+  [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line AGENT_SANDBOX_ASKING=$PROJ/.asb/coord/planner-1/asking bash $IN/state-hook.sh Stop off" ]
+}
+
+@test "[briefing] asking in a directory the role does not write through to the project, or out of it: said at launch, no file named, the launch goes on" {
+  ask_project '[connect:planner-*]' 'project = read-only'
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'planner-1': [briefing] asking '.asb/coord/planner-1/asking' is in .asb/coord/planner-1/, which this role has read-only, not read-write; no asking file is written"* ]]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+  # a read-write declaration at or above it, in the read-only project: named
+  ask_project '[connect:planner-*]' 'project = read-only' '.asb/coord/ = read-write'
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no asking file is written"* ]]
+  grep -qF "AGENT_SANDBOX_ASKING=$PROJ/.asb/coord/planner-1/asking " "$OUT/settings.json"
+  # a path out of the project
+  printf '%s\n' '[briefing:planner-*]' 'asking = ../ask' >"$PROJ/.agent-sandbox"
+  approve
+  [[ "$output" == *"[briefing:planner-*] asking '../ask' is not a path in the project (relative to it, no '..'); a launch of the roles planner-* writes no asking file"* ]]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'planner-1': [briefing] asking '../ask' is not a path in the project (relative to it, no '..'); no asking file is written"* ]]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+  printf '%s\n' '[briefing:planner-*]' 'asking = .asb/../../ask' >"$PROJ/.agent-sandbox"
+  approve
+  [[ "$output" == *"[briefing:planner-*] asking '.asb/../../ask' is not a path in the project"* ]]
+  rm -rf "$OUT"
+  run_engine BWRAP_COPY="$OUT" -- asb --role planner-1 claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF AGENT_SANDBOX_ASKING "$OUT/settings.json"
+}
+
+@test "[briefing] asking: the review and --check name the file; --check says the briefing off writes none" {
+  ask_project
+  [[ "$output" == *"[briefing:planner-*] asking, for the roles planner-*: their agent's profile keeps .asb/coord/{role}/asking there from when the role asks the user something in its pane to its next hook event after the answer, where it can write. It widens nothing"* ]]
+  [[ "$output" != *"unknown [briefing] key"* ]]
+  check_role planner-1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  asking file: .asb/coord/planner-1/asking, there from when the role asks the user something in its pane to its next hook event after the answer"$'\n'* ]]
+  [[ "$output" == *$'\n'"  asking: the state hooks keep $PROJ/.asb/coord/planner-1/asking there from when the role asks the user something in its pane to its next hook event after the answer (at a terminal, not in a print run)"$'\n'* ]]
+  ask_project '[connect:planner-*]' 'project = read-only'
+  check_role planner-1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  asking file: none -- [briefing] asking '.asb/coord/planner-1/asking' is in .asb/coord/planner-1/, which this role has read-only, not read-write"$'\n'* ]]
+  [[ "$output" != *"  asking: the state hooks"* ]]
+  ask_project '[briefing]' 'mode = off'
+  check_role planner-1
+  [[ "$output" == *$'\n'"  asking file: .asb/coord/planner-1/asking -- NOT WRITTEN: its agent's profile writes it from the briefing's hooks, and the briefing is off"$'\n'* ]]
+}

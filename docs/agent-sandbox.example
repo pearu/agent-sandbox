@@ -248,6 +248,14 @@
 #        level alone, for a watcher; {role} is the role's name. Only where the role
 #        writes through to the project (read-write); not part of the approval.
 #context = .asb/coord/{role}/context
+#
+# asking : a file in the project that the role's agent's profile writes when the role
+#        asks the user something in its pane (a dialog, a question), one line,
+#        since=<UTC>, and removes at its first hook event after the answer (after an
+#        approval, the approved command's end), for the Supervisor; {role} is the
+#        role's name. At a terminal only, never in a print run. Only where the role writes through to
+#        the project (read-write); not part of the approval.
+#asking = .asb/coord/{role}/asking
 
 
 # ---- claude: options for the claude profile -------------------------------

@@ -82,7 +82,14 @@ The claude profile hands them to its hooks: `AGENT_SANDBOX_CONTEXT`,
 and `Stop` hooks' commands (a print run too), with `AGENT_SANDBOX_CONTEXT_SERVED=1` on a
 turn of `--serve`, and the same as arguments of its status-line command
 (`statusline.sh ROLE STATE CONTEXT PLAN RESCUE`); `context.sh`, beside them, writes the
-file. And, in `profile_briefing_args()`, the array `_permission_rules`: the trusted dot-file's
+file. And, in `profile_briefing_args()` and `profile_check_notes()`, the role's asking
+file (#485): `_asking_path`, absolute, empty when the role has none or may not write it
+(`[briefing] asking`); the claude profile hands it as `AGENT_SANDBOX_ASKING` in every
+state event's command, `SessionEnd`'s included, but not in a print run, and
+`state-hook.sh` writes the file when the role asks the user something in its pane and
+removes it at the role's first hook event after the answer (after an approval, the
+approved tool's end: no hook runs at the answer itself).
+And, in `profile_briefing_args()`, the array `_permission_rules`: the trusted dot-file's
 `[permissions]` rules for this launch's role, each once, in the agent's own syntax, for
 the profile to hand to the agent (claude: `permissions.allow` in its `--settings`). A
 profile that reads none leaves them unapplied. Before them, claude's `--settings`

@@ -181,7 +181,8 @@ settings_of() {
 # check_state_settings FILE ROLE BACKGROUND -- the statusLine names ROLE and redraws
 # every second; SessionStart, UserPromptSubmit, Stop, PermissionRequest, Notification,
 # PostToolUse and PostToolUseFailure each run state-hook.sh with BACKGROUND (the last two
-# for any tool, beside the refusal hook's Bash entry), and SessionEnd only when it is on.
+# for any tool, beside the refusal hook's Bash entry), and SessionEnd only when it is on
+# (for a role with no asking file, #485).
 check_state_settings() {
   python3 -I - "$@" <<'CHECK'
 import json, re, sys
