@@ -341,3 +341,244 @@ waited() {
   [ "$(cat "$T/err")" = "inbox-wait: could not write $T/st; the next run reports this change again" ]
   [ -z "$(find "$T" -maxdepth 1 -name 'st*')" ]
 }
+
+# ---- the stream (-f): the Supervisor's watch under a tool that takes each line as an
+# event. Each test runs it in the background with a short -t and asserts on its lines.
+
+# stream ARGS... -- start inbox-wait -f -s "$T/st" ARGS in the background, its output in
+# $T/out and its errors in $T/err; its pid in $spid. Returns once it has taken its
+# baseline: it writes STATE anew (a rename, so a new inode) right after, or says on
+# stderr that it could not -- not after a fixed sleep, which a loaded host outlasts.
+stream() {
+  local before _
+  before="$(stat -c %i "$T/st" 2>/dev/null)" || true
+  "$IW" -f -s "$T/st" "$@" >"$T/out" 2>"$T/err" &
+  spid=$!
+  for _ in $(seq 100); do
+    [ "$(stat -c %i "$T/st" 2>/dev/null)" = "$before" ] || break
+    [ ! -s "$T/err" ] || break
+    sleep 0.1
+  done
+}
+
+# line N -- line N of the stream's output.
+line() { sed -n "${1}p" "$T/out"; }
+
+# lines -- how many lines the stream has printed.
+lines() { wc -l <"$T/out"; }
+
+teardown() {
+  [ -z "${spid:-}" ] || kill "$spid" 2>/dev/null || true
+}
+
+@test "inbox-wait -f: an 'ack N' append prints nothing and its baseline advances, so a later 'done N' is one line" {
+  stream -i '^ack [0-9]+$' -t 6 "$T/inbox.md"
+  printf 'ack 1\n' >>"$T/inbox.md"
+  sleep 1.5
+  [ "$(lines)" -eq 0 ]
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: a 'done' and an 'ack' in one append print one line, the 'done'; several -i are alternatives" {
+  stream -i '^ack [0-9]+$' -i '^- note' -t 4 "$T/inbox.md"
+  printf 'done 1\nack 2\n- note on 2\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: without -i every append is an event, its last line shown" {
+  stream -t 4 "$T/inbox.md"
+  printf 'ack 1\nwork\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: work" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: a rename over a FILE, a FILE appearing, vanishing and shrinking each print 'PATH changed'" {
+  printf 'one\ntwo\n' >"$T/shrink.md"
+  : >"$T/gone.md"
+  stream -i '^ack [0-9]+$' -t 7 "$T/inbox.md" "$T/new.md" "$T/gone.md" "$T/shrink.md"
+  printf 'ack 1\n' >"$T/x"
+  mv -f "$T/x" "$T/inbox.md"
+  sleep 1.2
+  : >"$T/new.md"
+  sleep 1.2
+  rm "$T/gone.md"
+  sleep 1.2
+  printf 'one\n' >"$T/shrink.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md changed" ]
+  [ "$(line 2)" = "$T/new.md changed" ]
+  [ "$(line 3)" = "$T/gone.md changed" ]
+  [ "$(line 4)" = "$T/shrink.md changed" ]
+  [ "$(lines)" -eq 4 ]
+}
+
+@test "inbox-wait -f: two FILEs changed in one poll print two lines" {
+  : >"$T/b.md"
+  stream -t 4 "$T/inbox.md" "$T/b.md"
+  printf 'done 1\n' >>"$T/b.md"
+  printf 'done 2\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 2" ]
+  [ "$(line 2)" = "$T/b.md: done 1" ]
+  [ "$(lines)" -eq 2 ]
+}
+
+@test "inbox-wait -f: control characters in an append are shown escaped, and make no second line" {
+  stream -t 4 "$T/inbox.md"
+  printf 'done 1\033]0;x\007 \033[2J\rforged: done 9\177\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1^[]0;x^G ^[[2J^Mforged: done 9^?" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: a NUL byte or a byte that is not UTF-8 in an append is no 'binary file' line: the text is shown" {
+  LC_ALL=C.UTF-8 stream -i '^ack [0-9]+$' -t 5 "$T/inbox.md" # -i: through the filter
+  printf 'done 1\000 x\n' >>"$T/inbox.md"
+  sleep 1.2
+  printf 'done 2 \377 y\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1 x" ]
+  [ "$(line 2)" = "$T/inbox.md: done 2 "$'\377'" y" ]
+  [ "$(lines)" -eq 2 ]
+}
+
+@test "inbox-wait -f: a long line is cut at 160 bytes, back to a whole UTF-8 character, and marked" {
+  local long
+  long="$(printf '%0159d' 0)"
+  stream -t 4 "$T/inbox.md"
+  printf '%s—and more\n' "$long" >>"$T/inbox.md" # the dash's 3 bytes straddle byte 160
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: $long ..." ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: a change made while no stream ran is printed by the first poll (STATE)" {
+  stream -t 2 "$T/inbox.md"
+  waited "$spid"
+  [ "$(lines)" -eq 0 ]
+  printf 'done 1\n' >>"$T/inbox.md"
+  stream -t 2 "$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: STATE not written after a print (killed between, or mv failing): the next run prints that change again, once" {
+  mkdir "$T/bin"
+  printf '#!/bin/sh\nexit 1\n' >"$T/bin/mv"
+  chmod +x "$T/bin/mv"
+  "$IW" -f -s "$T/st" -t 4 "$T/inbox.md" >/dev/null 2>&1 # STATE has a baseline
+  PATH="$T/bin:$PATH" stream -t 4 "$T/inbox.md"
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ] # its own baseline advanced: printed once in this run
+  grep -qxF "inbox-wait: could not write $T/st; the next run reports these changes again" "$T/err"
+  stream -t 3 "$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+  stream -t 2 "$T/inbox.md"
+  waited "$spid"
+  [ "$(lines)" -eq 0 ]
+}
+
+@test "inbox-wait -f: the line is printed before STATE is written" {
+  local real
+  real="$(command -v mktemp)"
+  mkdir "$T/bin"
+  # a mktemp first on PATH runs as STATE is written: it records what was printed by then,
+  # in brackets, one pair per write
+  printf '#!/bin/sh\n{ printf "["; cat "%s"; printf "]"; } >>"%s"\nexec "%s" "$@"\n' "$T/out" "$T/seen" "$real" >"$T/bin/mktemp"
+  chmod +x "$T/bin/mktemp"
+  "$IW" -f -s "$T/st" -t 4 "$T/inbox.md" >/dev/null # STATE has a baseline
+  PATH="$T/bin:$PATH" stream -t 4 "$T/inbox.md"
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  # the write at start, before any line; then the one after the poll's line, and no other
+  [ "$(cat "$T/seen")" = "[][$T/inbox.md: done 1"$'\n'"]" ]
+}
+
+@test "inbox-wait -f: a second stream on the same STATE prints that one runs, with its pid, and exits 0, printing no event" {
+  stream -t 8 "$T/inbox.md"
+  local first=$spid
+  run "$IW" -f -s "$T/st" -t 8 "$T/inbox.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "inbox-wait: a watcher already runs on $T/st (pid $first)" ]
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$first"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: a stream that died holds nothing: the next one starts at once and reports" {
+  stream -t 30 "$T/inbox.md"
+  kill -9 "$spid"
+  waited "$spid"
+  printf 'done 1\n' >>"$T/inbox.md"
+  local t0
+  t0="$(usec)"
+  run "$IW" -f -s "$T/st" -t 2 "$T/inbox.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/inbox.md: done 1" ]
+  (($(usec) - t0 < 2500000)) # no wait on a lock: the first poll, then -t
+}
+
+@test "inbox-wait -f: -t ends it with status 0 and STATE saved; -a is touched while it runs" {
+  stream -t 4 -a "$T/alive" "$T/inbox.md"
+  printf 'done 1\n' >>"$T/inbox.md"
+  sleep 1.2
+  local a1
+  a1="$(stat -c %Y.%y "$T/alive")"
+  sleep 1.2
+  [ "$(stat -c %Y.%y "$T/alive")" != "$a1" ]
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(cut -f2 "$T/st")" = "$T/inbox.md" ]
+  [ "$(cut -d' ' -f5 "$T/st" | cut -f1)" = "$(stat -c %s "$T/inbox.md")" ]
+}
+
+@test "inbox-wait -f: refused (exit 2): -f without -s, -i without -f, an -i that is no ERE" {
+  run "$IW" -f -t 2 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  [[ "$output" == "usage: "* ]]
+  run "$IW" -i '^ack' -t 2 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  [[ "$output" == "usage: "* ]]
+  run "$IW" -f -s "$T/st" -i '(' -t 2 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  [ "$output" = "inbox-wait: -i (: not an extended regular expression" ]
+  [ ! -e "$T/st.lock" ]
+}
+
+@test "inbox-wait -f: a blank line is never the event's line: a blank and an 'ack' print nothing, and a report that ends blank shows its last line" {
+  stream -i '^ack [0-9]+$' -t 5 "$T/inbox.md"
+  printf '\nack 1\n' >>"$T/inbox.md"
+  sleep 1.5
+  [ "$(lines)" -eq 0 ]
+  printf '## To S\ndone 1\n\n \n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f: -t is seconds by the clock, not a count of polls" {
+  mkdir "$T/bin"
+  # each poll's sleep takes 2 s: 4 polls would be 8 s
+  printf '#!/bin/sh\nexec %s 2\n' "$(command -v sleep)" >"$T/bin/sleep"
+  chmod +x "$T/bin/sleep"
+  local t0
+  t0="$(usec)"
+  PATH="$T/bin:$PATH" run "$IW" -f -s "$T/st" -t 4 "$T/inbox.md"
+  [ "$status" -eq 0 ]
+  (($(usec) - t0 < 7000000))
+}

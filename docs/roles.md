@@ -123,7 +123,7 @@ last (section 5).
 the other roles their next step -- which artefact to read, what to do -- each message
 shown to you and written only when you approve it, but for the revisions between an
 Implementer and its Reviewer within a Task you opted in to the relay (section 5): those
-it writes on the word you gave when the Task opened, and reports in one line each,
+it writes on the word you gave when the Task opened, and puts each in its summary line,
 watching the loop for convergence: a loop that is not converging it stops, and proposes
 handing it to the Planner. So a line in a role's inbox is your word by construction,
 given per message or once for the Task. It watches every role's messages, and every
@@ -401,12 +401,32 @@ goes when the run is green (section 4).
     unreadable, and a STATE whose directory is missing or not writable.
     It lives in the role's own directory, which the Supervisor does not watch; the
     Supervisor's `-t 10 ….reset` wait has no `-s`.
+  - **The Supervisor's stream** (`-f`). You read the Supervisor's pane for decisions,
+    and each wake of a one-shot watcher put Claude Code's own notices there: the
+    command's completion, and its re-arm. So the Supervisor runs
+    `inbox-wait -f -s STATE [-i PATTERN]... [-t SECS]`, which keeps polling and prints
+    one line per changed FILE per poll -- `PATH: LINE`, the last line appended, or
+    `PATH changed` for a rename, a shrink, a file that appears or goes -- under Claude
+    Code's `Monitor`, which makes each line one event and is armed again only when the
+    stream ends (its `-t 1790`, inside `Monitor`'s 30-minute cap, exits 0).
+    `-i '^ack [0-9]+$'` drops the lines it never acts on, and blank lines are dropped
+    too: an append of nothing else is no event. Control characters are shown as
+    `cat -v` does, and a line is cut at 160 bytes. STATE is written after a poll's
+    lines are printed, so a kill costs a
+    duplicate, never a loss. An flock on `STATE.lock` keeps one stream per STATE:
+    arming again -- after a `/clear`, which a `Monitor` survives -- prints that a
+    watcher already runs, with its pid, and exits 0. Measured with Claude Code 2.1.321
+    and a stub API, for 16 changes, 5 of them `ack`s: Claude Code's notices went from
+    32 to 11, the wakes from 16 to 11. The stream polls through the Supervisor's turns,
+    so its `alive` stays fresh while it works. The other roles keep the one-shot form:
+    their panes are not where you decide.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
 - **Delivery.** A role's first act on waking is to append `ack N` to its messages,
-  before it reads the instruction, so the Supervisor's watcher sees each one picked up;
-  `done N` when it has finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each
+  before it reads the instruction, so its messages show each one picked up (the
+  Supervisor's stream skips the line: it acts on what follows); `done N` when it has
+  finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each
   poll, so the file says a watcher is waiting for the next message; the Supervisor
   reads its age before it sends and while it waits. At a terminal the watcher exits on
   the message that wakes the role and runs again only once the role re-arms it -- at
@@ -416,9 +436,11 @@ goes when the run is green (section 4).
   Supervisor checks the role's `context` line's `at=`, its messages, an Implementer's
   last commit and its summary line, and says "busy in a turn" when any moved after
   `alive`. It gives the launch line only when you say the role is gone, since a turn
-  spent in one long tool call moves none of them. Live with no `ack` within a minute
-  means the role has not picked it up -- reported, never sent again on the
-  Supervisor's own.
+  spent in one long tool call moves none of them. Its stream skips `ack` lines, so
+  after a send it looks for the `ack` -- at its next wake or turn, before it tells you
+  anything about that role, and at every re-arm -- and its bar shows the pending pickup
+  meanwhile. None a minute or more after the send means the role has not picked it
+  up: said in the chat, never sent again on the Supervisor's own.
 - **The closing line.** A role that has finished ends with "done; in my file; S has
   it", so you need not look at its terminal.
 - **Disapproval.** You say no in the Supervisor's terminal, and nothing is written.
@@ -438,20 +460,20 @@ a Task can run its loop without a question per message, if you say so:
   approval: the message that opens a Task, an Objection (it comes to you, by design),
   the merge proposal, every message to a Planner or the Gate, and the reset question
   before a new Task. Two messages to the Planner outside the relay go without asking,
-  each reported in one line: the Reviewer's acceptance, with the request to confirm that
-  the step is ready -- it carries the round's state, and your word still comes at the
-  merge -- and the notice that a merged step's run is green (section 4), which closes a
-  step you approved.
+  each put in the Supervisor's summary line: the Reviewer's acceptance, with the
+  request to confirm that the step is ready -- it carries the round's state, and your
+  word still comes at the merge -- and the notice that a merged step's run is green
+  (section 4), which closes a step you approved.
 - **Opt-in, per Task.** When the Supervisor proposes the message that opens a Task, it
   asks, with "Send it?" and the fresh-or-keep question (below), whether the messages
   between I1 and R1 are relayed automatically for this Task. Without a yes, every
   message is shown and approved as before.
-- **Progress.** While it runs, the Supervisor reports each relayed message in one line
-  -- what went where, the revision count, what the Reviewer still holds open, counted by
-  kind ("R1 holds 2 factual, 3 prose"), whether its findings are new or follow-ups to
-  the last fix, and how much the change (its diff against `main`) and the Handoff grew
-  since the last round -- and asks nothing. When the loop ends it asks again, with the
-  next step of the round.
+- **Progress.** While it runs, the Supervisor puts each relayed message in its summary
+  line -- what went where, the revision count, what the Reviewer still holds open,
+  counted by kind ("R1 holds 2 factual, 3 prose"), whether its findings are new or
+  follow-ups to the last fix, and how much the change (its diff against `main`) and
+  the Handoff grew since the last round -- and asks nothing. When the loop ends it asks
+  again, with the next step of the round.
 - **Convergence** (#459). A loop can fail to converge: in another project the Reviewer
   found something new in every round, the document under review grew to about three
   times its size, and the relay went on until you stopped it by hand. The cause was
@@ -1197,8 +1219,8 @@ messages, and reads each change with the role's `context` line (#456):
   crosses into `rescue` ([profiles.md](profiles.md)), so the save comes in that same
   turn, at a terminal and in a served role alike, and ends it with one line in its
   messages, `state.md saved at rescue, N tokens left` (`state.md saved` when the
-  Supervisor asked), which wakes the Supervisor after the save. It reports the save in
-  one line, and notes in its messages the `left` before and after and the turn's
+  Supervisor asked), which wakes the Supervisor after the save. It puts the save in its
+  summary line, and notes in its messages the `left` before and after and the turn's
   `turn=`, the figures a later retune of `context-rescue` needs: `turn=` is the whole
   turn's growth, an upper bound on the save's cost; the save's own is the `left` before
   less the `left` after. On a single Task the role goes on in the room left; when its

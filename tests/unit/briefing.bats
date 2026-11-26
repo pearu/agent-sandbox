@@ -1076,7 +1076,7 @@ CHECK
   done
 }
 
-@test "the engine's own rules: a join into a keeper without the summary bind gets the Read rule and no Edit rule" {
+@test "the engine's own rules: a join into a keeper without the summary bind gets the Read rule and no Edit rule, and its status line no summary line" {
   engine_bg -- asb claude
   local sess
   for sess in "$H/base"/session.*; do :; done
@@ -1094,6 +1094,9 @@ STUB
   [ "$status" -eq 0 ]
   [[ "$output" == *"joining role"* ]]
   [ "$(perm_allow "$H/snap.json")" = "$(grep -vxF 'Edit(//run/agent-sandbox/summary/line)' <<<"$OWN_RULES")" ]
+  local cmd
+  cmd="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$H/snap.json")"
+  [[ "$cmd" == "bash /run/agent-sandbox/join."*"/statusline.sh default" ]]
   release_bg
 }
 
@@ -1550,31 +1553,31 @@ check_role() {
   [ "$(hook_cmd Stop)" = "AGENT_SANDBOX_CONTEXT=$c AGENT_SANDBOX_CONTEXT_PLAN=70 AGENT_SANDBOX_CONTEXT_RESCUE=30000 AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/state-hook.sh Stop off" ]
   [ "$(hook_cmd UserPromptSubmit)" = "AGENT_SANDBOX_CONTEXT=$c AGENT_SANDBOX_CONTEXT_PLAN=70 AGENT_SANDBOX_CONTEXT_RESCUE=30000 bash $IN/state-hook.sh UserPromptSubmit off" ]
   [ "$(hook_cmd PostToolUse)" = "bash $IN/state-hook.sh PostToolUse off" ]
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-1 /tmp/agent-sandbox-state $c 70 30000" ]
+  [ "$(statusline_cmd)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/statusline.sh planner-1 /tmp/agent-sandbox-state $c 70 30000" ]
   cmp "$OUT/context.sh" "${ENGINE%/*}/profiles/claude/context.sh"
   # the levels' defaults; the glob's line over the unsuffixed one
   ctx_project '[agent]' 'context-rescue = 30000' '[agent:planner-*]' 'context-rescue = 40000'
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
   [ "$status" -eq 0 ]
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context 85 40000" ]
+  [ "$(statusline_cmd)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context 85 40000" ]
   ctx_project '[agent:planner-*]' 'context-plan = -' 'context-rescue = -' '[connect:*]'
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context - -" ]
+  [ "$(statusline_cmd)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/coord/planner-2/context - -" ]
   # of two lines that match the role, the later wins, suffixed or not (as for start)
   ctx_project '[briefing]' 'context = .asb/ctx/{role}' '[connect:*]'
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role planner-2 claude --version
   [ "$status" -eq 0 ]
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/ctx/planner-2 85 25000" ]
+  [ "$(statusline_cmd)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/statusline.sh planner-2 /tmp/agent-sandbox-state $PROJ/.asb/ctx/planner-2 85 25000" ]
   ctx_project '[connect:*]' # the planners' line only, again
   # a role the line does not match: no context anywhere
   rm -rf "$OUT"
   run_engine BWRAP_COPY="$OUT" -- asb --role other claude --version
   [ "$status" -eq 0 ]
   run ! grep -qF AGENT_SANDBOX_CONTEXT "$OUT/settings.json"
-  [ "$(statusline_cmd)" = "bash $IN/statusline.sh other" ]
+  [ "$(statusline_cmd)" = "AGENT_SANDBOX_SUMMARY=$IN/summary/line bash $IN/statusline.sh other" ]
   [[ "$output" != *"context file"* ]]
 }
 

@@ -25,13 +25,15 @@ artefact** -- a review that says "run this" is relayed, not run.
   terminal, the role's agent with its resume-by-id flag (claude:
   `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`) -- its turns wait
   while that terminal is open. Print both forms.
-- Run one command over every role's messages, with the Bash tool and
-  `run_in_background: true`, and run it again after each wake: `.agent-sandbox`, then
-  one path per role in the index but yourself, then every role's `context.level`, yours
-  included (a file not written yet is fine); a change to any of them wakes you:
+- Watch every role's messages with one stream, a command that keeps running and prints
+  a line per change: `.agent-sandbox`, then one path per role in the index but
+  yourself, then every role's `context.level`, yours included (a file not written yet
+  is fine). `-i '^ack [0-9]+$'` drops a role's `ack N` lines, which you never act on;
+  every other change is a line:
 
 ```
-.asb/bin/inbox-wait -s .asb/coord/{role}/inbox-wait.state \
+.asb/bin/inbox-wait -f -i '^ack [0-9]+$' -t 1790 \
+  -s .asb/coord/{role}/inbox-wait.state \
   -a .asb/coord/{role}/alive .agent-sandbox \
   .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \
   .asb/coord/gate/messages.md \
@@ -39,8 +41,20 @@ artefact** -- a review that says "run this" is relayed, not run.
   .asb/coord/gate/context.level
 ```
 
-  Claude Code wakes you when the command exits and tells you which file changed; a
-  background command has no time limit in a terminal session, so nothing expires.
+  - Run it with the tool that takes each line of a command as an event (claude:
+    `Monitor`, loaded with ToolSearch where it is deferred, `timeout_ms` at its
+    maximum, 1800000, description "role reports, context levels, .agent-sandbox").
+    Each line is one wake: `PATH: LINE`, the last line appended there, or
+    `PATH changed`. Act on it, and read the file when the line is not enough.
+  - Arm it again only when the stream ends -- its `-t`, an expiry, a failure, whatever
+    its status -- never after an event, in one call. Arming again is always safe: a
+    line saying a watcher already runs means it is still armed.
+  - It polls through your turns too, so your own `alive` stays fresh while you work.
+  - Without such a tool: the same command without `-f`, `-i` and `-t`, with the Bash
+    tool and `run_in_background: true`, run again after each wake. It exits at the
+    first change, printing that file's path; a background command has no time limit
+    in a terminal session, so nothing expires.
+  - The waits on a `.reset` or `.restart` marker, below, stay one-shot Bash commands.
 
 **Where things are.**
 - `main` is the project directory, read-write to you, with its history.
@@ -103,10 +117,20 @@ artefact** -- a review that says "run this" is relayed, not run.
   context's numbers change, so a turn spent in one long tool call (a test suite) moves
   none of the four. Ask the user to look at the role's terminal, or its `--serve` pane,
   and give its launch line from the index only when the user says the role is gone.
-- Live, and no `ack N` in its messages within a minute: say the role has not picked it
-  up. Never send again on your own; the user decides.
+- When you send, put the pending pickup in your summary line (e.g. `sent 143 to
+  implementer-1, waiting for its ack`): your stream skips `ack N` lines, so no event
+  tells you of a pickup. Look for `ack N` in the role's messages instead: at your next
+  wake or turn after the send, before you tell the user anything about that role, and
+  at every re-arm of the stream. The ack found: the summary line moves on. A look that
+  finds none a minute or more after the send: say in the chat that the role has not
+  picked it up. Never send again on your own; the user decides.
 - A role's `done N` is its report: read what it wrote, then propose the next step of
   the round and ask -- unless the relay covers that step: then relay it (below).
+- Progress that needs nothing from the user -- a message routed, a run partway, a
+  wait -- goes in your summary line, which the bar of your pane shows; write it there
+  with the shell, in the same reply as the work, in a call of its own, and do not reply
+  with it. A reply in the chat is for what needs the user: a decision, a question, a
+  result to act on, a problem.
 - The user says no to a message you proposed: write nothing. The user then talks to the
   role in its terminal (the role records the outcome in its messages afterwards), or
   tells you to send an objection, which you show and send as any other message.
@@ -117,8 +141,8 @@ artefact** -- a review that says "run this" is relayed, not run.
   for its answer. Local and reversible is not a reason to go early.
 - When the Reviewer accepts the Handoff -- a Review with no findings, the first one or
   the one that ends the revision loop -- append the acceptance to the Planner on your
-  own, asking for its confirmation that the step is ready, and report it in one line.
-  It goes without asking: it carries the round's state to the Planner, not a new
+  own, asking for its confirmation that the step is ready, and put it in your summary
+  line. It goes without asking: it carries the round's state to the Planner, not a new
   instruction, and the user's word still comes at the merge.
 - After a merge, run the suite only when `main` moved since the branch's base: then the
   merged tree is one nobody has tested. When the merge base is `main`'s tip, the merged
@@ -134,7 +158,7 @@ artefact** -- a review that says "run this" is relayed, not run.
   Reviewer's next Task wait for the run (below). Your reply ends on that proposal or on
   a question, never on the watch alone. The step is done when the run is green, not at
   the push. Green: append the notice to the Planner on your own -- the merged commit,
-  the run's URL, and that the step is done -- and report it in one line. Like the
+  the run's URL, and that the step is done -- and put it in your summary line. Like the
   Reviewer's acceptance (above), it goes without asking: it closes a step the user
   approved, the merge and the push. A red run is a finding on `main`: propose the
   message to the Implementer and wait for the user; the Reviewer reviews the revision,
@@ -148,10 +172,11 @@ artefact** -- a review that says "run this" is relayed, not run.
   when the run is green. That yes is the user's word on that one message, given ahead
   and conditioned on the run: the message is still asked about, not one that goes
   without asking. On yes, at green: write the `.reset` marker if the user said fresh,
-  append the message once the marker is gone, report it in one line, and ask no second
-  question. Red: the finding goes to the Implementer in its context, the Reviewer keeps
-  its context for the revision's review, a yes given ahead lapses, and the waiting Task
-  opens after the fix is merged and its run is green, asked about again then.
+  append the message once the marker is gone, put it in your summary line, and ask no
+  second question. Red: the finding goes to the Implementer in its context, the
+  Reviewer keeps its context for the revision's review, a yes given ahead lapses, and
+  the waiting Task opens after the fix is merged and its run is green, asked about
+  again then.
 - Once a step's run is green, the message that opens the next Task for its Implementer
   and for its Reviewer carries one line more: clear the landed Task's scratch
   (`.asb/scratch/<task>/`, its worktrees pruned), keeping only what an open Task still
@@ -172,9 +197,9 @@ artefact** -- a review that says "run this" is relayed, not run.
     `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`. The host side of
     `asb --roles` ends the role, relaunches it in its pane, resumed, and removes the
     marker once it runs again: up to 15 s to end it, 30 s to see it run and 1 s to
-    look, inside the 60. Gone: report it in one line. Not empty: the host's reason,
-    one line; tell the user, then remove the marker. Still there and empty: nobody
-    takes restarts for this role (a terminal of its own, served outside
+    look, inside the 60. Gone: put it in your summary line. Not empty: the host's
+    reason, one line; tell the user, then remove the marker. Still there and empty:
+    nobody takes restarts for this role (a terminal of its own, served outside
     `asb --roles`, or a session opened before restarts), so remove the marker -- left,
     the next `asb --roles` with the role takes it -- and give the user the relaunch:
     exit the role's session (a served role: `asb --role R --shutdown`), then its
@@ -226,10 +251,10 @@ it is in, the message that carries the findings that hold to the Implementer ("r
 findings that hold") and the one that carries its revised Handoff back to the Reviewer
 go without a question, on that word, round after round, until the Reviewer accepts, the
 Implementer objects, or the loop is not converging (below).
-- Report each relayed message in one line -- what went where, the revision count, what
-  the Reviewer still holds open, counted by kind (e.g. "R1 holds 2 factual, 3 prose"),
-  whether its findings are new or follow-ups to the last fix, and how much the change
-  (its diff against `main`) and the Handoff grew since the last round (lines, or
+- Put each relayed message in your summary line -- what went where, the revision count,
+  what the Reviewer still holds open, counted by kind (e.g. "R1 holds 2 factual, 3
+  prose"), whether its findings are new or follow-ups to the last fix, and how much the
+  change (its diff against `main`) and the Handoff grew since the last round (lines, or
   `git diff --stat` totals) -- and ask nothing. When the loop ends, propose the next
   step of the round and ask.
 - Watch every round for convergence. The signs that the loop is not converging, a guide
@@ -278,7 +303,7 @@ it with the role's `context` line, and act:
   The `.level` change comes before the save; the role writes
   `.asb/coord/<role>/state.md`, then a line in its messages,
   `state.md saved at rescue, N tokens left`, which wakes you after it. On that wake,
-  report the save to the user in one line, and append to your messages the tuning line:
+  put the save in your summary line, and append to your messages the tuning line:
   the role, the `left` before (its N), and the `context` line's `left` and `turn=` as
   you read them then -- `turn=` is the whole turn's growth, the save included, counted
   from the turn's prompt, so it bounds the save's cost from above; the save's own cost

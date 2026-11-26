@@ -264,7 +264,9 @@ Sections:
   role's own is running; it wakes when that ends -- the suite it started in the
   background, not its watcher -- else `WAITING` (green) when a watcher runs -- a process
   named `inbox-wait`, the roles model's, so a message will wake it -- else `IDLE`
-  (grey). Hooks on `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
+  (grey). After the state, the session's summary line (#314), where the engine bound
+  it: where the session stands, in the same colour, not bold, its control characters
+  dropped, cut so the bar keeps its width. Hooks on `SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`,
   `Notification` and after any tool (`PostToolUse`, `PostToolUseFailure`) record it in
   the sandbox's `/tmp`, redrawn every second. `briefing.md` also says that what a
   session hands you to run is one line or a file -- the CLI prefixes every line of a

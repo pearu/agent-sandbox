@@ -1099,6 +1099,31 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The Supervisor watches with one stream, and its progress goes to the status line.**
+  Claude Code's own notices filled the Supervisor's pane, the one you read for
+  decisions. Each wake of its one-shot watcher showed a completion and a re-arm, and
+  every role's `ack N` was a wake it never acted on. Now:
+  - **`inbox-wait -f`** keeps polling and prints one line per changed file per poll:
+    `PATH: LINE`, the last line appended, or `PATH changed`. Blank lines, and appended
+    lines matching `-i PATTERN`, are dropped, and an append of nothing else is no event.
+    Control characters are escaped, and a line is cut at 160 bytes. STATE is written
+    after the lines, and an flock keeps one stream per STATE, so arming again is safe: a
+    second stream says a watcher already runs, with its pid, and exits 0. A planned end
+    (`-t`) exits 0. The one-shot form is unchanged.
+  - **The Supervisor runs it under `Monitor`** with `-i '^ack [0-9]+$'`, and arms it
+    again only when the stream ends. Without such a tool, it keeps the one-shot form.
+    Measured with Claude Code 2.1.321 and a stub API, for 16 changes, 5 of them
+    `ack`s: Claude Code's notices went from 32 to 11, and the wakes from 16 to 11.
+  - **The claude profile's status line shows the session's summary line** after the
+    state, in every role's pane. It is sanitized and cut to the bar's width. The
+    Supervisor writes its progress there, with the shell in the same reply as the work
+    and in a call of its own, and keeps the chat for what needs you. A report that ends
+    a step with nothing for you -- the Reviewer's acceptance routed, a green run's
+    notice, a restart that went through, a relayed round, a rescue save -- goes there
+    too. Since the stream skips `ack` lines, the Supervisor looks for a role's `ack`
+    after a send, and says in the chat when none came within a minute.
+  - The other roles' watchers are unchanged.
+
 - **`[agent] context-plan` defaults to 85 % of the stop, not 60 % (#456).** At 60 %
   the planning level came far too early: in use, saving what mattered worked with only
   2 % of the context left. The engine's default for a role with a context file and no

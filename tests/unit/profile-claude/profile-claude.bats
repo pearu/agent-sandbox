@@ -188,7 +188,9 @@ import json, re, sys
 path, role, bg = sys.argv[1:4]
 IN = "/run/agent-sandbox"
 m = json.load(open(path))
-assert m["statusLine"] == {"type": "command", "command": f"bash {IN}/statusline.sh {role}", "refreshInterval": 1}, m["statusLine"]
+# the status line's command may set the summary line's path before it (T39)
+sl = dict(m["statusLine"], command=re.sub(r"^AGENT_SANDBOX_SUMMARY=\S+ ", "", m["statusLine"]["command"]))
+assert sl == {"type": "command", "command": f"bash {IN}/statusline.sh {role}", "refreshInterval": 1}, m["statusLine"]
 hooks = m["hooks"]
 def cmds(ev):
     return [h["command"] for g in hooks.get(ev, []) for h in g["hooks"]]
@@ -482,13 +484,14 @@ stop_cmds() {
   [ "$(bash -c "${c%% bash *} bash -c 'printf %s \"\$AGENT_SANDBOX_WATCH\"'")" = '.asb/in "box.md' ]
 }
 
-@test "the summary rule (#314): every session's Stop hook carries AGENT_SANDBOX_SUMMARY, the line's path inside; not a print run, nor with the briefing off" {
+@test "the summary rule (#314): every session's Stop hook carries AGENT_SANDBOX_SUMMARY, the line's path inside, and its status line too (T39); not a print run, nor with the briefing off" {
   local want="AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/state-hook.sh Stop off"
   settings_of asb claude --continue
   [ "$status" -eq 0 ]
   [ "$(stop_cmds "$OUT/settings.json")" = "$want" ]
-  # only the Stop hook carries it
-  [ "$(grep -o AGENT_SANDBOX_SUMMARY "$OUT/settings.json" | wc -l)" -eq 1 ]
+  # the Stop hook and the status line carry it, and nothing else
+  [ "$(grep -o AGENT_SANDBOX_SUMMARY "$OUT/settings.json" | wc -l)" -eq 2 ]
+  [ "$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$OUT/settings.json")" = "AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/statusline.sh default" ]
   settings_of asb --role planner-1 claude
   [ "$(stop_cmds "$OUT/settings.json")" = "$want" ]
   # a print run: its turn is the run, its output the user's

@@ -166,7 +166,9 @@ which the status line and the `--serve` loop rewrite between `Stop`s; not with
 `stop_hook_active`, and then at the next `Stop`; a print run too, so a served role from
 its second turn, once the loop has given the window; a `Stop` that fails more than one
 of the three gets one refusal naming each, the save first) and `statusline.sh` (the
-`statusLine`: a bar of the state's colour with the role and that state, padded to
+`statusLine`: a bar of the state's colour with the role and that state, then the
+session's summary line where there is one (`AGENT_SANDBOX_SUMMARY` in its command; its
+non-printable characters dropped, cut to fit), padded to
 `COLUMNS` less 4, the most Claude Code shows of the line without cutting it,
 `refreshInterval` 1, the role written into its command since neither its stdin nor the
 sandbox's environment carries it; a `statusLine` in the user's `--settings` wins)

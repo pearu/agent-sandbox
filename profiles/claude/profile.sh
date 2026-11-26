@@ -505,8 +505,16 @@ profile_briefing_args() {
       ours+=",\"$ev\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$state $ev $bg\"}]}]"
     fi
   done
+  # The status line shows the summary line too (statusline.sh), where the Stop hook gets
+  # it: not in a print run, which shows no status line.
+  local sl_env=""
+  if [[ -n "${_summary_line:-}" ]] && _claude_watch_ok "$@"; then
+    printf -v q '%q' "$_summary_line"
+    q="${q//\\/\\\\}" q="${q//\"/\\\"}" # a JSON string
+    sl_env="AGENT_SANDBOX_SUMMARY=$q "
+  fi
   # shellcheck disable=SC2154 # _role: the engine's, by dynamic scope
-  ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"bash $_brief_out_inside/statusline.sh ${_role:-default}$ctx_args\",\"refreshInterval\":1}"
+  ours+="},\"statusLine\":{\"type\":\"command\",\"command\":\"${sl_env}bash $_brief_out_inside/statusline.sh ${_role:-default}$ctx_args\",\"refreshInterval\":1}"
   # The engine's own two rules first: reading the briefing directory, and writing the
   # summary line where the engine bound it. A leading // is an absolute path in a
   # Read/Edit rule (a single / is relative to the settings file), and Edit covers
