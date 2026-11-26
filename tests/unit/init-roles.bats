@@ -553,7 +553,7 @@ teardown() {
   grep -qF 'line from the index with `--resume`' "$sup"
   grep -qF "not when it joins one still running" "$sup"
   grep -qF '(a served role: `asb --role R --shutdown`)' "$sup"
-  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 30 ]
+  [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | wc -l)" -eq 52 ] # 30 before #482, which adds 2 and its own bullet of 20
   [ "$(sed -n '/^- Watch `.agent-sandbox` too/,/relaunches you\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
 }
 
@@ -803,6 +803,42 @@ effort_of() {
   # the Gate has no **Protocol.**: the bullet closes **Executing a message.**
   [ "$(sed -n '/^\*\*Executing a message\.\*\*/,/^\*\*Closing line/p' "$PROJ/.asb/roles/gate.md" | grep -cxF -- '- A turn cut short (a lost connection, an interruption) is resumed at your next wake or')" -eq 1 ]
   grep -qxF '  prompt without asking: nothing in your inbox changed, so the message is still yours' "$PROJ/.asb/roles/gate.md"
+}
+
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: a move to another account (#482) -- the Supervisor moves a role only on the user's word, per role, through the handshake, by a rename; [agent] accounts restarts nobody; a move lasts the session; the watching roles' start texts say their account in their messages" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local sup="$PROJ/.asb/roles/supervisor.md" m r flat
+  m="$(dirname "$ENGINE")/models/roles"
+  flat="$(sed -n '/^- Watch `.agent-sandbox` too/,/^\*\*The Gate/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$flat" == *'a change to `[agent] accounts` alone names none: the host reads it only at a move to another account (below), so it restarts nobody.'* ]]
+  [[ "$flat" == *'**Moving a role to another account:** only on the user'"'"'s word, naming the role or roles and the account;'* ]]
+  [[ "$flat" == *'never because you were moved, nor because a role reports a usage limit: tell the user, and ask.'* ]]
+  [[ "$flat" == *'Roles the user did not name stay where they are.'* ]]
+  [[ "$flat" == *'Each named role goes through the handshake above, one at a time: its `ready`, then the marker,'* ]]
+  [[ "$flat" == *'`account=NAME` on one line (NAME the account, or `-` for the user'"'"'s own login), written in one step, by a rename, so that the host never reads it half written:'* ]]
+  grep -qxF "    printf 'account=%s\n' NAME >.asb/coord/to/ROLE.restart.new \\" "$sup"
+  grep -qxF '      && mv -T .asb/coord/to/ROLE.restart.new .asb/coord/to/ROLE.restart' "$sup"
+  [[ "$flat" == *'Then as for any restart: gone means relaunched; a reason means refused: tell the user, then remove the marker.'* ]]
+  [[ "$flat" == *'A reason naming `[agent] accounts` is the user'"'"'s to fix, with the `asb --apply` line it gives;'* ]]
+  [[ "$flat" == *'"not logged in" or "expired", with the login line it gives.'* ]]
+  [[ "$flat" == *'Check that the move took: the role'"'"'s line in its messages, `launched on the account '"'"'NAME'"'"'`, names it; a served role writes none, so ask it which account its briefing names.'* ]]
+  [[ "$flat" == *'A move lasts for this `asb --roles` session; for a lasting one, the user puts the account on the line or in the file.'* ]]
+  # among the restart's bullets, before "never your own", which stands for a move too
+  [[ "$flat" == *'**Moving a role to another account:**'*'Never your own `.restart`'* ]]
+  # the marker it writes is the one the engine takes (_as_roles_restart_kind)
+  [ "$(grep -c 'account=' "$sup")" -ge 2 ]
+  # the four watching roles' start texts: the line, as the briefing's "Your agent" says
+  # (`You run as AGENT on the account 'NAME'`, or `on the user's own login`); none in S's
+  for r in planner implementer reviewer gate; do
+    flat="$(tr '\n' ' ' <"$m/start/$r.md" | tr -s ' ')"
+    [[ "$flat" == *'Arm your watcher as your purpose file says, unless one is already running (a background shell of yours). Then append one line to your messages, as your briefing'"'"'s "Your agent" says: `launched on the account '"'"'NAME'"'"'`, or `launched on the user'"'"'s own login`. Then read your inbox from your cursor'* ]]
+    [ "$(awk 'length > 88' "$m/start/$r.md" | wc -l)" -eq 0 ]
+  done
+  run ! grep -qF 'launched on the' "$m/start/supervisor.md"
+  grep -qF "on the user's own login." "$(dirname "$ENGINE")/agent-sandbox"
+  grep -qF "on the account '\$n'." "$(dirname "$ENGINE")/agent-sandbox"
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours

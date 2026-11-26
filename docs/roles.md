@@ -728,7 +728,8 @@ only a relaunch applies the change. It does not cover the Supervisor's own: a re
 an end and a launch at once, with no room for the `--init` you run on the host in
 between, and the Supervisor is the one that writes the markers and waits for them, in a
 turn its own restart would end. So the Supervisor's relaunch stays yours, as above: shut
-it down, run `--init`, launch it again.
+it down, run `--init`, launch it again. Moving it to another account is yours too, and
+moves no other role: the Supervisor moves those one by one, on your word (section 9).
 
 **This project's part: addenda (#353).** Write what a role does in this project -- its
 subject, the commands, the conventions -- in an addendum, not in its purpose file:
@@ -1278,6 +1279,24 @@ it under the policy and purpose files you approved since it was launched, which 
   while what had scrolled above it stays in the pane's history -- and respawns the pane
   with the line it was opened with, `--resume` added for a role at a terminal;
 - it waits up to 30 s for the role's keeper to be live, then removes the marker.
+
+A marker holding `account=NAME` on one line (#482) is a restart onto the account NAME
+(`-`: your own login). The Supervisor writes it only on your word, naming the role and
+the account -- never because it was moved itself, nor because a role reports a usage
+limit: it tells you, and asks -- one role at a time, by a rename, so the host never
+reads it half written. Before ending anything the host also checks that NAME is the
+role's launch account (what the `--roles` line or the approved file gave it; going back
+is always allowed) or one `[agent] accounts` lists for it, and that the account can run
+it: its directory, its login file and the login's expiry
+([config.md](config.md#accounts)). The pane's line then gets `--account NAME`, once, in
+place of the account the line named, and the log's line names the account. A later
+empty marker keeps NAME for as long as the session runs; a fresh `asb --roles` starts
+from the line and the file again, so a lasting change goes there. A change to
+`[agent] accounts` alone restarts nobody. Every role that runs a watcher writes
+`launched on the account 'NAME'` (or `launched on the user's own login`) in its
+messages at each launch, as its briefing says, so the Supervisor sees that a move took;
+a served role writes none, and the Supervisor asks it.
+Any other text in a marker is the host's answer, which never begins with `account=`.
 
 On a failure it writes the reason into the marker, one line, and takes it no more while
 it is not empty; the Supervisor tells you the reason and removes it. It takes one marker

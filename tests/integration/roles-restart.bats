@@ -24,6 +24,8 @@ seen=no
 [[ -e "${SHARED:?}/flag" ]] && seen=yes
 printf 'args=%s seen=%s\n' "$*" "$seen" >>launches
 date +%s.%N >>started
+# the login it runs on (#482): the base's, or an account's, bound where the base is
+{ cat "$HOME/.probe-base/.login" 2>/dev/null || echo none; } >>logins
 until [ -e release ]; do sleep 0.1; done
 PROBE
   # the probe's profile, saying how it resumes a session
@@ -130,4 +132,46 @@ lines() {
   done
   run kill -0 "$other"
   [ "$status" -ne 0 ]
+}
+
+@test "a restart marker account=NAME moves a role of asb --roles to the account NAME that [agent] accounts lists: relaunched in its pane, resumed, its account's directory where the base is; a later empty marker keeps it there (#482)" {
+  [[ -z "${AGENT_SANDBOX_KCOV:-}" ]] || skip "under kcov, asb --roles returns only once the tmux server and the watcher it starts have ended: they hold kcov's trace pipe (#469)"
+  # the probe's accounts: ~/.probe-base is its base, .login its login
+  printf '[agent]\nbase = ~/.probe-base\naccount-paths = .login\n' >>"$IPROFILES/probe/agent-sandbox"
+  local acct="$IHOME/.local/state/agent-sandbox/probe/accounts/work" i
+  mkdir -p "$IHOME/.probe-base" "$acct"
+  echo base >"$IHOME/.probe-base/.login"
+  echo work >"$acct/.login"
+  approve '[agent]' 'command = probe' 'accounts = work' '[env]' 'SHARED'
+  run asb --roles a
+  [ "$status" -eq 0 ]
+  lines 1
+  [ "$(sed -n 1p "$IWORK/logins")" = base ]
+  printf 'account=%s\n' work >"$IWORK/.asb/coord/to/a.restart.new"
+  mv -T "$IWORK/.asb/coord/to/a.restart.new" "$IWORK/.asb/coord/to/a.restart"
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$IWORK/.asb/coord/to/a.restart" ]] || break
+    sleep 0.1
+  done
+  [ ! -e "$IWORK/.asb/coord/to/a.restart" ] || {
+    echo "marker: $(cat "$IWORK/.asb/coord/to/a.restart")" >&2
+    return 1
+  }
+  lines 2
+  [ "$(sed -n 2p "$IWORK/launches")" = "args=--resumed seen=no" ]
+  [ "$(sed -n 2p "$IWORK/logins")" = work ]
+  local log
+  log="$IHOME/.local/state/agent-sandbox/.roles-resets/$(state_slug "$WD").log"
+  grep -qF "role 'a': a restart marker -- ended it, relaunched it in pane " "$log"
+  grep -qF " on the account 'work', its keeper is live, and removed the marker" "$log"
+  # an empty marker: still on work
+  : >"$IWORK/.asb/coord/to/a.restart"
+  for ((i = 0; i < 600; i++)); do
+    [[ -e "$IWORK/.asb/coord/to/a.restart" ]] || break
+    sleep 0.1
+  done
+  [ ! -e "$IWORK/.asb/coord/to/a.restart" ]
+  lines 3
+  [ "$(sed -n 3p "$IWORK/logins")" = work ]
+  [ "$(grep -c " on the account 'work', its keeper is live" "$log")" -eq 2 ]
 }

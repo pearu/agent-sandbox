@@ -761,7 +761,23 @@ sd() {
   printf '%s' "${l% }"
 }
 
-@test "--roles starts the host side that takes resets and restarts once the session is made: setsid -f, the engine with __roles-resets, tmux, the session, the project and ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>RELAUNCH per role; stdin /dev/null, its output to <state>/.roles-resets/<slug>.log" {
+# relaunch HEAD... -- TAIL... -- the relaunch's parts the host side gets for a role (#482):
+# its HEAD, the engine and those words, its account word ($ACCT), the TAIL words, its
+# launch account ($LAUNCH, default -), its profile ($PROF, default claude) and the line's
+# --preset ($PRESET), tab-separated; each word as %q gives it, followed by a blank.
+relaunch() {
+  local h t=""
+  printf -v h '%q ' "$SELF"
+  while (($#)) && [[ "$1" != -- ]]; do
+    printf -v h '%s%q ' "$h" "$1"
+    shift
+  done
+  shift
+  (($# == 0)) || printf -v t '%q ' "$@"
+  printf '%s\t%s\t%s\t%s\t%s\t%s' "$h" "${ACCT:-}" "$t" "${LAUNCH:--}" "${PROF:-claude}" "${PRESET:-}"
+}
+
+@test "--roles starts the host side that takes resets and restarts once the session is made: setsid -f, the engine with __roles-resets, tmux, the session, the project and ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>HEAD<TAB>ACCOUNT<TAB>TAIL<TAB>LAUNCH<TAB>PROFILE<TAB>PRESET per role; stdin /dev/null, its output to <state>/.roles-resets/<slug>.log" {
   stub_setsid
   mkdir -p "$PROJ/.asb/coord/to"
   local log
@@ -770,12 +786,12 @@ sd() {
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
   local -a want=(-f "$SELF" __roles-resets "$H/bin/tmux" proj "$PROJ"
-    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --resume)"
-    "b.2"$'\t'"/clear"$'\t'"$(sd b.2)"$'\t'"$(window --role b.2 --resume)")
+    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(relaunch --role a -- --resume)"
+    "b.2"$'\t'"/clear"$'\t'"$(sd b.2)"$'\t'"$(relaunch --role b.2 -- --resume)")
   [ "$(printf '%s\n' "${S[@]}")" = "$(printf '%s\n' "${want[@]}")" ]
   [ "$(cat "$H/setsid.fds")" = "$(printf '/dev/null\n%s\nmade' "$log")" ]
   [[ "$output" == *"the host takes resets: an empty .asb/coord/to/ROLE.reset types the role's fresh start (/clear) in that role's pane, then goes (log: $log)"* ]]
-  [[ "$output" == *"the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; on a failure its reason is written into it (log: $log)"* ]]
+  [[ "$output" == *"the host takes restarts: an empty .asb/coord/to/ROLE.restart ends the role and runs its pane's line again, resumed, under the approved .agent-sandbox, then goes; one holding account=NAME does it on the account NAME (- the base), its launch account or one .agent-sandbox's [agent] accounts lists for it; on a failure its reason is written into it (log: $log)"* ]]
   [[ "$output" != *"no reset taken"* ]]
   [[ "$output" == *"To attach to it: tmux attach -t proj"* ]]
   # the log's directory is not a profile's: --list reads every profile's stores, and finds none
@@ -787,7 +803,7 @@ sd() {
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a --allow pypi.org
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  [ "${S[6]}" = "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --allow pypi.org --resume)" ]
+  [ "${S[6]}" = "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(relaunch --role a -- --allow pypi.org --resume)" ]
   [ "${#S[@]}" -eq 7 ]
   # served roles: watched for restarts only (their loop takes the reset), the line as it
   # is (the loop resumes its own session); no reset said, and none lacking
@@ -795,7 +811,7 @@ sd() {
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b --serve
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  want=("a"$'\t\t'"$(sd a)"$'\t'"$(window --role a --serve)" "b"$'\t\t'"$(sd b)"$'\t'"$(window --role b --serve)")
+  want=("a"$'\t\t'"$(sd a)"$'\t'"$(relaunch --role a -- --serve)" "b"$'\t\t'"$(sd b)"$'\t'"$(relaunch --role b -- --serve)")
   [ "$(printf '%s\n' "${S[@]:6}")" = "$(printf '%s\n' "${want[@]}")" ]
   [[ "$output" != *"takes resets"* ]]
   [[ "$output" != *"no reset taken"* ]]
@@ -818,9 +834,9 @@ sd() {
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
   local -a want=("$PROJ"
-    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(window --role a --resume)"
-    "b"$'\t\t'"$(sd b codex)"$'\t'"$(window --role b --agent codex --resume)"
-    "c"$'\t'"/clear"$'\t'"$(sd c)"$'\t'"$(window --role c --resume)")
+    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(relaunch --role a -- --resume)"
+    "b"$'\t\t'"$(sd b codex)"$'\t'"$(PROF=codex relaunch --role b --agent codex -- --resume)"
+    "c"$'\t'"/clear"$'\t'"$(sd c)"$'\t'"$(relaunch --role c -- --resume)")
   [ "$(printf '%s\n' "${S[@]:5}")" = "$(printf '%s\n' "${want[@]}")" ]
   [[ "$output" == *"no reset taken for b: their agent's profile says nothing of a fresh start ([agent] clear); a fresh start there is yours to give"* ]]
   [[ "$output" == *"types the role's fresh start (/clear) in that role's pane"* ]]
@@ -840,7 +856,7 @@ sd() {
   run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" "$P2" -- asb --roles a b --agent codex
   [ "$status" -eq 0 ]
   mapfile -t S <"$H/setsid"
-  want=("a"$'\t\t'"$(sd a codex)"$'\t' "b"$'\t\t'"$(sd b codex)"$'\t')
+  want=("a"$'\t\t'"$(sd a codex)"$'\t\t\t\t-\tcodex\t' "b"$'\t\t'"$(sd b codex)"$'\t\t\t\t-\tcodex\t')
   [ "$(printf '%s\n' "${S[@]:6}")" = "$(printf '%s\n' "${want[@]}")" ]
   [[ "$output" == *"no reset taken for a b:"* ]]
   [[ "$output" != *"takes resets"* ]]
@@ -995,6 +1011,7 @@ STUB
   printf '%%1 a\n%%2 b\n' >"$H/panes"
   LIVE_A="$H/home/.local/state/agent-sandbox/claude/$(printf '%s' "$PROJ" | sed 's:[^A-Za-z0-9-]:-:g')/a"
   RL='asb --role a --resume; exec "${SHELL:-bash}"'
+  RL_PARTS="asb --role a "$'\t\t'"--resume "$'\t-\tclaude\t'
 }
 
 teardown() {
@@ -1005,11 +1022,13 @@ teardown() {
 }
 
 # restarts [VAR=VALUE...] -- run the watcher for session `sess` and role a, as --roles
-# starts it: a's entry is ROLE<TAB>KEYS<TAB>SHUTDOWN<TAB>RELAUNCH, RELAUNCH being $RL
+# starts it: a's entry is ROLE<TAB>KEYS<TAB>SHUTDOWN, then its relaunch's parts, $RL_PARTS
+# (its relaunch line is $RL); the profile directory is $PDIR when set
 restarts() {
   run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" CALLS="$H/calls" PANES="$H/panes" HAS_N="${HAS_N:-1}" \
-    MARK="$TO/a.restart" KEEPERS="$H/keepers" AGENT_SANDBOX_RESTART_WAIT="${WAIT:-5}" "$@" \
-    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t'"/clear"$'\t'"$H/shutdown --role a"$'\t'"$RL" </dev/null
+    MARK="$TO/a.restart" KEEPERS="$H/keepers" AGENT_SANDBOX_RESTART_WAIT="${WAIT:-5}" \
+    ${PDIR:+AGENT_SANDBOX_PROFILE_DIR="$PDIR"} "$@" \
+    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t'"/clear"$'\t'"$H/shutdown --role a"$'\t'"$RL_PARTS" </dev/null
 }
 
 # calls_are LINE... -- the tmux calls, in order, are these
@@ -1040,7 +1059,7 @@ calls_are() {
   [ ! -s "$H/calls.kids" ]             # respawned once the old launch had gone
   [ "$(cat "$H/calls.live")" = there ] # the marker stayed until the keeper was live
   [ ! -e "$TO/a.restart" ]
-  [[ "$output" == *"role 'a': a restart marker -- ended it, relaunched it in pane %1, its keeper is live, and removed the marker"* ]]
+  [[ "$output" == *"role 'a': a restart marker -- ended it, relaunched it in pane %1 on the base, its keeper is live, and removed the marker"* ]]
   # a link as the marker: removed, never followed
   rm -f "$H/calls" "$H/calls.n" "$H/calls.live"
   rm -rf "${LIVE_A:?}/keeper"
@@ -1085,7 +1104,7 @@ calls_are() {
   rm -f "$H/calls" "$H/calls.n" "$TO/a.restart"
   echo keep >"$H/victim"
   ln -s "$H/victim" "$TO/a.restart"
-  RL="" HAS_N=3 restarts LIVE="$LIVE_A"
+  RL_PARTS=$'\t\t\t-\tclaude\t' HAS_N=3 restarts LIVE="$LIVE_A"
   [ "$status" -eq 0 ]
   [ ! -L "$TO/a.restart" ]
   [ "$(cat "$H/victim")" = keep ]
@@ -1183,11 +1202,313 @@ calls_are() {
   : >"$TO/a.reset"
   run env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" CALLS="$H/calls" PANES="$H/panes" HAS_N=2 \
     MARK="$TO/a.restart" KEEPERS="$H/keepers" LIVE="$LIVE_A" AGENT_SANDBOX_RESTART_WAIT=5 \
-    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t\t'"$H/shutdown --role a"$'\t'"$RL" </dev/null
+    "$ENGINE" __roles-resets "$H/bin/tmux" sess "$PROJ" "a"$'\t\t'"$H/shutdown --role a"$'\t'"$RL_PARTS" </dev/null
   [ "$status" -eq 0 ]
   [ ! -e "$TO/a.restart" ]
   [ -e "$TO/a.reset" ]
   [ "$(grep -c '^send-keys' "$H/calls")" -eq 0 ]
+}
+
+# A MOVE TO ANOTHER ACCOUNT (#482). A restart marker holding `account=NAME` relaunches the
+# role on the account NAME (`-`, the base), when NAME is its launch account or one the
+# approved .agent-sandbox lists for it ([agent] accounts), and the account can run it --
+# all checked before anything ends. The claude profile's account files: its login is
+# .credentials.json, its expiry the refresh token's (epoch ms).
+
+# login NAME [DAYS] -- the claude account NAME's directory, logged in, its login's expiry
+# DAYS days from now (default 30; negative: past); NAME `-` is the base, ~/.claude.
+login() {
+  local d="$H/home/.local/state/agent-sandbox/claude/accounts/$1" ms
+  [[ "$1" != - ]] || d="$H/home/.claude"
+  mkdir -p "$d"
+  ms=$((($(date +%s) + ${2:-30} * 86400) * 1000))
+  printf '{"claudeAiOauth": {"refreshTokenExpiresAt": %s}}\n' "$ms" >"$d/.credentials.json"
+}
+
+# parts [ACCOUNT [LAUNCH [PROFILE [PRESET]]]] -- role a's relaunch parts, as `restarts`
+# hands them (RL_PARTS): the line's account word ACCOUNT, its launch account LAUNCH
+# (default -), its agent's PROFILE (default claude) and the line's --preset PRESET.
+parts() {
+  printf '%s' "asb --role a "$'\t'"${1:-}"$'\t'"--resume "$'\t'"${2:--}"$'\t'"${3:-claude}"$'\t'"${4:-}"
+}
+
+# mark TEXT -- role a's restart marker holds TEXT, as is.
+mark() { printf '%s' "$1" >"$TO/a.restart"; }
+
+# refused WHY -- the marker took nothing: the role was not ended (no shutdown ran, no pane
+# was respawned), and the marker holds WHY, one line: an answer, never a request.
+refused() {
+  [ ! -e "$H/calls.shutdowns" ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 0 ]
+  [ "$(cat "$TO/a.restart")" = "$1" ]
+  [ "$(wc -l <"$TO/a.restart")" -eq 1 ]
+  [[ "$(cat "$TO/a.restart")" != account=* ]]
+  rm -f "$H/calls" "$H/calls.n" "$TO/a.restart"
+}
+
+# respawned N -- the line of the Nth respawn of a's pane
+respawned() { grep '^respawn-pane' "$H/calls" | sed -n "${1}p" | sed "s:^respawn-pane -k -t %1 -c $PROJ bash -c ::"; }
+
+@test "a restart marker account=NAME (#482): NAME listed in [agent] accounts and logged in -- a's line again with exactly one --account NAME and --resume, the marker removed, the log naming the account; an empty marker after it keeps NAME, a fresh look at the file's account none of it" {
+  stub_tmux_restart
+  agents '[agent]' 'command = claude' 'accounts = team-b'
+  login team-b
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" HAS_N=2 restarts LIVE="$LIVE_A" AGAIN=1
+  [ "$status" -eq 0 ]
+  [ -e "$H/calls.again" ]
+  [ ! -e "$TO/a.restart" ]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 2 ]
+  [ "$(respawned 1)" = 'asb --role a --account team-b --resume; exec "${SHELL:-bash}"' ]
+  # the empty marker written after it: still on team-b
+  [ "$(respawned 2)" = 'asb --role a --account team-b --resume; exec "${SHELL:-bash}"' ]
+  [[ "$output" == *"role 'a': a restart marker -- ended it, relaunched it in pane %1 on the account 'team-b', its keeper is live, and removed the marker"* ]]
+  [ "$(grep -c "on the account 'team-b', its keeper is live" <<<"$output")" -eq 2 ]
+  # a newline after NAME is the same request
+  rm -f "$H/calls" "$H/calls.n" "$H/calls.shutdowns" "${LIVE_A:?}/keeper/id"
+  mark $'account=team-b\n'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account team-b --resume; exec "${SHELL:-bash}"' ]
+}
+
+@test "a restart marker account=NAME (#482): the pane's line named the role's account (--account a=team-a): its line again with the new account in its place, no second --account; back to the launch account with no [agent] accounts line; the base (-) when listed, or when it is the launch account" {
+  stub_tmux_restart
+  login team-a
+  login team-b
+  login -
+  agents '[agent]' 'command = claude' 'accounts = team-b -'
+  mark 'account=team-b'
+  RL_PARTS="$(parts team-a team-a)" restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account team-b --resume; exec "${SHELL:-bash}"' ]
+  [[ "$(respawned 1)" != *team-a* ]]
+  # the base, listed: --account -, which beats the file's account
+  rm -f "$H/calls" "$H/calls.n" "${LIVE_A:?}/keeper/id"
+  mark 'account=-'
+  RL_PARTS="$(parts team-a team-a)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account - --resume; exec "${SHELL:-bash}"' ]
+  [[ "$output" == *"relaunched it in pane %1 on the base, its keeper is live"* ]]
+  # back to the launch account, which no accounts line names: always allowed
+  agents '[agent]' 'command = claude'
+  rm -f "$H/calls" "$H/calls.n" "${LIVE_A:?}/keeper/id"
+  mark 'account=team-a'
+  RL_PARTS="$(parts - team-a)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account team-a --resume; exec "${SHELL:-bash}"' ]
+  # the base, the launch account: allowed with no accounts line
+  rm -f "$H/calls" "$H/calls.n" "${LIVE_A:?}/keeper/id"
+  mark 'account=-'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account - --resume; exec "${SHELL:-bash}"' ]
+  # an empty marker with no account on the line: the file's account, said in the log
+  agents '[agent]' 'command = claude' 'account = team-a'
+  rm -f "$H/calls" "$H/calls.n" "${LIVE_A:?}/keeper/id"
+  mark ''
+  RL_PARTS="$(parts '' team-a)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --resume; exec "${SHELL:-bash}"' ]
+  [[ "$output" == *"relaunched it in pane %1 on the account 'team-a', its keeper is live"* ]]
+}
+
+@test "a restart marker account=NAME (#482) that may not move the role ends nothing: NAME neither its launch account nor listed in [agent] accounts -- no accounts line, a list without it, a role section's list over [agent]'s; the reason written, naming the key and the --apply line" {
+  stub_tmux_restart
+  login team-b
+  login team-c
+  mark 'account=team-b'
+  RL_PARTS="$(parts '' team-a)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' is not one .agent-sandbox lists for role 'a' (no [agent] accounts line), nor its launch account ('team-a'); the user allows it on the host: agent-sandbox --apply '[agent]' 'accounts = team-b'; it runs on as it was"
+  agents '[agent]' 'command = claude' 'accounts = team-c -'
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' is not one .agent-sandbox lists for role 'a' ([agent] accounts = team-c -), nor its launch account (the base); the user allows it on the host: agent-sandbox --apply '[agent]' 'accounts = team-c - team-b'; it runs on as it was"
+  # a role's own section is the one that counts, over [agent]'s
+  agents '[agent]' 'command = claude' 'accounts = team-b' '[agent:a]' 'accounts = team-c'
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' is not one .agent-sandbox lists for role 'a' ([agent:a] accounts = team-c), nor its launch account (the base); the user allows it on the host: agent-sandbox --apply '[agent:a]' 'accounts = team-c team-b'; it runs on as it was"
+  # the base, listed nowhere and not the launch account
+  login -
+  mark 'account=-'
+  RL_PARTS="$(parts team-c team-c)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the base, the user's own login is not one .agent-sandbox lists for role 'a' ([agent:a] accounts = team-c), nor its launch account ('team-c'); the user allows it on the host: agent-sandbox --apply '[agent:a]' 'accounts = team-c -'; it runs on as it was"
+  # the file not approved as it is: that first, as for any restart
+  agents '[agent]' 'command = claude' 'accounts = team-b'
+  echo '# an edit not approved' >>"$PROJ/.agent-sandbox"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: .agent-sandbox is not approved as it is now (review it on the host: agent-sandbox --trust); it runs on as it was"
+}
+
+@test "a restart marker that begins with account= and asks for nothing it can take (#482) ends nothing: no name, not an account name, more than one line, not text -- the reason written; one that begins with anything else is an answer, never taken; a FIFO is not read" {
+  stub_tmux_restart
+  agents '[agent]' 'command = claude' 'accounts = a b'
+  login a
+  login b
+  mark 'account='
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account= names no account; write account=NAME, one line, or account=- for the base; it runs on as it was"
+  mark 'account=a b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=a b is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters -- nor '-', the base; it runs on as it was"
+  mark $'account=a\naccount=b\n'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=... is more than one line; write account=NAME, one line; it runs on as it was"
+  mark $'account=a\n\n'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=... is more than one line; write account=NAME, one line; it runs on as it was"
+  mark $'account=a\tb'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=... is not printable text; write account=NAME, one line; it runs on as it was"
+  mark "account=$(printf 'a%.0s' {1..4089})"
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=... is longer than 4 KiB; write account=NAME, one line; it runs on as it was"
+  # a name too long to be one is not said whole
+  mark "account=$(printf 'a%.0s' {1..201})"
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the marker's account=$(printf 'a%.0s' {1..40})... is not an account name -- a letter or digit, then letters, digits, '.', '_' or '-', at most 200 characters -- nor '-', the base; it runs on as it was"
+  # an answer (any text but account=...): not taken, left as it is
+  mark ' account=a'
+  RL_PARTS="$(parts)" HAS_N=2 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/calls.shutdowns" ]
+  [ "$(cat "$TO/a.restart")" = ' account=a' ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 0 ]
+  # nor is one that begins with `account` but not `account=`
+  rm -f "$H/calls" "$H/calls.n"
+  mark 'accounts=a'
+  RL_PARTS="$(parts)" HAS_N=2 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TO/a.restart")" = 'accounts=a' ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 0 ]
+  # a FIFO: never opened (a read would wait for a writer), never taken
+  rm -f "$H/calls" "$H/calls.n" "$TO/a.restart"
+  mkfifo "$TO/a.restart"
+  RL_PARTS="$(parts)" HAS_N=2 restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ -p "$TO/a.restart" ]
+  [ "$(grep -c '^list-panes' "$H/calls")" -eq 0 ]
+}
+
+@test "a restart marker account=NAME (#482) for an account that cannot run the role ends nothing: its directory missing or a symlink, its login file missing or a link, its login expired; a login due within 7 days goes on and is said in the log" {
+  stub_tmux_restart
+  agents '[agent]' 'command = claude' 'accounts = team-b -'
+  local acc="$H/home/.local/state/agent-sandbox/claude/accounts"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' (a restart marker): there is no $acc/team-b for the agent claude: log it in with agent-sandbox --agent claude --account team-b --login; it runs on as it was"
+  mkdir -p "$H/elsewhere" "$acc"
+  ln -s "$H/elsewhere" "$acc/team-b"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' (a restart marker): $acc/team-b is a symlink; an account is a directory of its own, its login's one home. Refusing to follow it; it runs on as it was"
+  rm "$acc/team-b"
+  mkdir "$acc/team-b"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' is not logged in: its login file .credentials.json is not a file in ~/.local/state/agent-sandbox/claude/accounts/team-b; agent-sandbox --agent claude --account team-b --login; it runs on as it was"
+  login team-a
+  ln -s "$acc/team-a/.credentials.json" "$acc/team-b/.credentials.json"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b' is not logged in: its login file .credentials.json is not a file in ~/.local/state/agent-sandbox/claude/accounts/team-b; agent-sandbox --agent claude --account team-b --login; it runs on as it was"
+  # the base: its login file in ~/.claude, renewed in the session
+  mark 'account=-'
+  RL_PARTS="$(parts team-a team-a)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the base, the user's own login is not logged in: its login file .credentials.json is not a file in ~/.claude; run /login; it runs on as it was"
+  # expired: its day, in local time, and the login line
+  rm "$acc/team-b/.credentials.json"
+  login team-b -2
+  local ms day
+  ms="$(sed 's/[^0-9]//g' "$acc/team-b/.credentials.json")"
+  day="$(date -d "@$((ms / 1000))" +%F)"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the login of the account 'team-b' expired on $day; agent-sandbox --agent claude --account team-b --login; it runs on as it was"
+  # due within 7 days: taken, and said
+  login team-b 3
+  ms="$(sed 's/[^0-9]//g' "$acc/team-b/.credentials.json")"
+  day="$(date -d "@$((ms / 1000))" +%F)"
+  mark 'account=team-b'
+  RL_PARTS="$(parts)" restarts LIVE="$LIVE_A"
+  [ "$status" -eq 0 ]
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account team-b --resume; exec "${SHELL:-bash}"' ]
+  [[ "$output" == *"role 'a': a restart marker -- the login of the account 'team-b' is due on $day (in 3 days); agent-sandbox --agent claude --account team-b --login"* ]]
+}
+
+@test "a restart marker account=NAME (#482) for a role that cannot run on an account ends nothing: its agent's profile has no [agent] account-paths, or the line's --preset is native or none; the base (-) is no account, and goes" {
+  stub_tmux_restart
+  two_profiles
+  login team-b
+  agents '[agent]' 'command = claude' 'accounts = team-b -'
+  mark 'account=team-b'
+  PDIR="$H/profiles2" RL_PARTS="$(parts '' - codex)" restarts LIVE="$LIVE_A"
+  refused "not restarted: the account 'team-b': profile 'codex' says nothing of which of its agent's files are an account's ([agent] account-paths), so it has no accounts; account=- runs it on its base; it runs on as it was"
+  local p
+  for p in native none; do
+    mark 'account=team-b'
+    RL_PARTS="$(parts '' - claude "$p")" restarts LIVE="$LIVE_A"
+    refused "not restarted: the account 'team-b': its line's --preset $p binds no account's directory; account=- runs it on the base; it runs on as it was"
+  done
+  # the base under --preset native: no account's directory to bind, and it goes
+  login -
+  rm -f "$H/calls" "$H/calls.n"
+  mark 'account=-'
+  RL_PARTS="$(parts team-b team-b claude native)" restarts LIVE="$LIVE_A"
+  [ ! -e "$TO/a.restart" ]
+  [ "$(respawned 1)" = 'asb --role a --account - --resume; exec "${SHELL:-bash}"' ]
+}
+
+@test "a restart marker account=NAME (#482) whose shutdown fails leaves the role on its account: a later empty marker relaunches it with its pane's line's account, not NAME" {
+  stub_tmux_restart
+  agents '[agent]' 'command = claude' 'accounts = team-b'
+  login team-a
+  login team-b
+  # the role's --shutdown fails once, then succeeds
+  cat >"$H/shutdown" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CALLS.shutdowns"
+[[ ! -e "$CALLS.failed" ]] || exit 0
+: >"$CALLS.failed"
+exit 3
+STUB
+  mark 'account=team-b'
+  # once the move is answered, an empty marker
+  (
+    for ((i = 0; i < 200; i++)); do
+      [[ ! -s "$TO/a.restart" || "$(cat "$TO/a.restart")" == account=* ]] || break
+      sleep 0.05
+    done
+    : >"$TO/a.restart"
+  ) &
+  RL_PARTS="$(parts team-a team-a)" HAS_N=4 restarts LIVE="$LIVE_A"
+  wait "$!"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role 'a': a restart marker -- not relaunched: its shutdown failed (status 3; see the log), so its pane was left as it was"* ]]
+  [ "$(wc -l <"$H/calls.shutdowns")" -eq 2 ]
+  [ ! -e "$TO/a.restart" ]
+  [ "$(grep -c '^respawn-pane' "$H/calls")" -eq 1 ]
+  [ "$(respawned 1)" = 'asb --role a --account team-a --resume; exec "${SHELL:-bash}"' ]
+}
+
+@test "--roles hands the host side each role's launch account (#482): the line's --account form (ACCOUNT and LAUNCH), the file's account (LAUNCH alone), the base (-), and the line's --preset" {
+  stub_setsid
+  mkdir -p "$PROJ/.asb/coord/to"
+  login team-a
+  login team-b
+  agents '[agent]' 'command = claude' '[agent:b]' 'account = team-b' '[connect:*]'
+  run_engine TMUX_DUMP="$TM" SETSID_DUMP="$H/setsid" -- asb --roles a b c --account a=team-a --preset shared --resume
+  [ "$status" -eq 0 ]
+  mapfile -t S <"$H/setsid"
+  local -a want=(
+    "a"$'\t'"/clear"$'\t'"$(sd a)"$'\t'"$(ACCT=team-a LAUNCH=team-a PRESET=shared relaunch --role a -- --preset shared --resume)"
+    "b"$'\t'"/clear"$'\t'"$(sd b)"$'\t'"$(LAUNCH=team-b PRESET=shared relaunch --role b -- --preset shared --resume)"
+    "c"$'\t'"/clear"$'\t'"$(sd c)"$'\t'"$(PRESET=shared relaunch --role c -- --preset shared --resume)")
+  [ "$(printf '%s\n' "${S[@]:6}")" = "$(printf '%s\n' "${want[@]}")" ]
 }
 
 @test "--roles without a terminal: a pending link already approved needs no review, the panes open (#401)" {
