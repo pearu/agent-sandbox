@@ -10567,9 +10567,12 @@ _as_trust_prompt() {
   return "$rc"
 }
 
-# _as_trust_prompt_file CWD -- _as_trust_prompt's question on the dot-file.
+# _as_trust_prompt_file CWD -- _as_trust_prompt's question on the dot-file. _tp_no := 1
+# when its question was asked and declined, else 0.
+_tp_no=0
 _as_trust_prompt_file() {
   local cwd="$1" file rec ans
+  _tp_no=0
   file="$cwd/.agent-sandbox"
   rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")")"
   if [[ ! -f "$file" ]]; then
@@ -10604,7 +10607,10 @@ _as_trust_prompt_file() {
   read -r ans || true
   case "$ans" in
     y | Y | yes | YES) ;;
-    *) return 1 ;;
+    *)
+      _tp_no=1
+      return 1
+      ;;
   esac
   _as_trust_record "$cwd" "$file" || return 1
   _as_msg "approved."
@@ -16261,11 +16267,18 @@ _as_trust_review() {
     return 1
   fi
   if ! _as_trust_prompt "$cwd"; then
-    if [[ -f "$file" ]]; then
-      _as_msg "not approved; launches from here refuse until it is."
-    else
+    if [[ ! -f "$file" ]]; then
       _as_msg "kept; launches from here stay refused until the file is restored or the approval forgotten."
+    elif ! _as_dotfile_trusted "$cwd" "$file"; then
+      _as_msg "not approved; launches from here refuse until it is."
+    elif ((_tp_no)); then
+      # A no to the file's question when it is approved as it is: a no records
+      # nothing, so the approval stands (#484).
+      _as_msg "left as it was: this exact content stays approved."
     fi
+    # Approved here, then failed (a link's record could not be written; a declined link
+    # fails nothing): the "approved." above stands, and nothing is added to it. Not
+    # asked (a launch refuses the file as it is): that line says it all.
     return 0
   fi
   [[ -f "$file" ]] || return 0

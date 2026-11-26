@@ -875,8 +875,102 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   run_trust 'n\n'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"not approved"* ]]
+  [[ "$output" == *"agent-sandbox: not approved; launches from here refuse until it is."* ]]
   [ ! -d "$CFG/trust" ] || [ -z "$(ls -A "$CFG/trust")" ]
+}
+
+# The approval record's files and their sha256, to compare before and after a review.
+trust_sums() { (cd "$CFG/trust" && find . -type f -print0 | sort -z | xargs -0 sha256sum); }
+
+# A link a launch found and could not ask about, pending for the review (#401): $PROJ/x
+# to $H/ext, read-write.
+pending_link() {
+  mkdir -p "$H/ext" "$CFG/trust"
+  ln -s "$H/ext" "$PROJ/x"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write \
+    >"$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.pending.r"
+}
+
+@test "--trust declined on a file approved as it is: left as it was, and launches still run (#484)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local before
+  before="$(trust_sums)"
+  run_trust 'n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: left as it was: this exact content stays approved."* ]]
+  [[ "$output" != *"launches from here refuse"* ]]
+  [ "$(trust_sums)" = "$before" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+}
+
+@test "--trust declined on a file changed since it was approved: not approved, and launches refuse (#484)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  printf '[allow]\npypi.org\ngithub.com\n' >"$PROJ/.agent-sandbox"
+  run_trust 'n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"agent-sandbox: not approved; launches from here refuse until it is."* ]]
+  [[ "$output" != *"stays approved"* ]]
+  run_engine -- asb claude --version
+  [ "$status" -eq 1 ]
+  [ ! -s "$H/argv" ]
+}
+
+@test "--trust: the file approved, then a link declined: the file's approved. stands, and nothing more is said (#484)" {
+  pending_link
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\nn\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" != *"launches from here refuse"* ]]
+  [[ "$output" != *"stays approved"* ]]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] " ]] # the declined link is the last word
+  [ ! -e "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+}
+
+@test "--trust: the file approved, then a link's record cannot be written: no line says the file is unapproved (#484)" {
+  pending_link
+  mkdir "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.lock" # the record's lock cannot be opened
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\ny\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" != *"launches from here refuse"* ]]
+  [[ "$output" != *"stays approved"* ]]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+}
+
+@test "--trust on a file approved as it is that a launch now refuses: nothing asked, and no line says it stays approved (#484)" {
+  printf '[agent]\neffort = bogus\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG/trust"
+  sha256sum "$PROJ/.agent-sandbox" | cut -d' ' -f1 | tr -d '\n' >"$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)" # approved before the effort check
+  run_trust 'n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" == *"agent-sandbox: a launch refuses this file as it is, so it cannot be approved." ]] # the last word
+  [[ "$output" != *"stays approved"* ]]
+}
+
+@test "--trust: a file approved as it is, approved again, then a link's record cannot be written: nothing after its approved. (#484)" {
+  pending_link
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\nn\n'
+  [ "$status" -eq 0 ]
+  mkdir "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.lock" # the record's lock cannot be opened
+  run_trust 'y\ny\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"this exact content is already approved."* ]]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" != *"stays approved"* ]]
+  [[ "$output" != *"launches from here refuse"* ]]
 }
 
 @test "--apply creates a missing file with the section and the line, then runs --trust's review" {
