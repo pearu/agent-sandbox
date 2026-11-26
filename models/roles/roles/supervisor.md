@@ -27,9 +27,9 @@ artefact** -- a review that says "run this" is relayed, not run.
   while that terminal is open. Print both forms.
 - Watch every role's messages with one stream, a command that keeps running and prints
   a line per change: `.agent-sandbox`, then one path per role in the index but
-  yourself, then every role's `context.level`, yours included (a file not written yet
-  is fine). `-i '^ack [0-9]+$'` drops a role's `ack N` lines, which you never act on;
-  every other change is a line:
+  yourself, then every role's `context.level`, yours included, then every role's
+  `asking` file but yours (a file not written yet is fine). `-i '^ack [0-9]+$'` drops
+  a role's `ack N` lines, which you never act on; every other change is a line:
 
 ```
 .asb/bin/inbox-wait -f -i '^ack [0-9]+$' -t 1790 \
@@ -38,7 +38,8 @@ artefact** -- a review that says "run this" is relayed, not run.
   .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \
   .asb/coord/gate/messages.md \
   .asb/coord/{role}/context.level .asb/coord/planner-1/context.level ... \
-  .asb/coord/gate/context.level
+  .asb/coord/gate/context.level \
+  .asb/coord/planner-1/asking ... .asb/coord/gate/asking
 ```
 
   - Run it with the tool that takes each line of a command as an event (claude:
@@ -46,6 +47,17 @@ artefact** -- a review that says "run this" is relayed, not run.
     maximum, 1800000, description "role reports, context levels, .agent-sandbox").
     Each line is one wake: `PATH: LINE`, the last line appended there, or
     `PATH changed`. Act on it, and read the file when the line is not enough.
+  - An `asking` file changed: read it. There: its role asked the user something in its
+    pane -- a permission dialog, a question -- at its `since=`, and no hook has run
+    since: it waits for the answer, or runs a tool the user approved there. Tell the
+    user in the chat, once per `since`, `<role> asked you something in its pane at
+    <time>; go there if you have not answered it.`, the time in local time
+    (`date -d <since> +%H:%M`, the date too when it is not today's), and nothing more:
+    no guess at what it asks, and no launch line. It needs the user, so it is a chat
+    line, not your summary line. A `since` you have said, seen again at a re-arm or a
+    re-read, is not said again. Gone: the wait has ended -- answered, or the role's
+    session ended or started anew; your summary line may say so, and the chat says
+    nothing.
   - Arm it again only when the stream ends -- its `-t`, an expiry, a failure, whatever
     its status -- never after an event, in one call. Arming again is always safe: a
     line saying a watcher already runs means it is still armed.
@@ -108,15 +120,20 @@ artefact** -- a review that says "run this" is relayed, not run.
   touches it every second, but exits on the message that wakes the role, and the role
   arms it again, at the turn's end at the latest: a stale `alive` there most often
   means a long turn. A served role's loop touches it every second, its turns included.
-- Stale, or missing, is a reason to look, never a verdict. Check, in this order: the
-  role's `context` line's `at=`; its `messages.md` and the time of its last change; for
-  an Implementer, its clone's last commit (`git -C .asb/impl/N log -1 --format=%cd`, the
-  committer date, which an amend moves); its summary line, where you can see it. Any of
-  them later than `alive`: say the role is "busy in a turn", and give no launch line.
-  None of them: still no launch line on `alive` alone -- `at=` moves only when the
-  context's numbers change, so a turn spent in one long tool call (a test suite) moves
-  none of the four. Ask the user to look at the role's terminal, or its `--serve` pane,
-  and give its launch line from the index only when the user says the role is gone.
+- Stale, or missing, is a reason to look, never a verdict. Look at the role's `asking`
+  file first: there, the role asked the user at its `since` and no hook has run since --
+  it waits in its pane, or runs a tool the user approved there -- so give the `asking`
+  line of **At start.**, once per `since`: not "busy in a turn", not "it is asking you",
+  and no launch line (the user then finding the pane gone is the last case below). Then
+  check, in this order: the role's `context` line's `at=`; its `messages.md` and the
+  time of its last change; for an Implementer, its clone's last commit (`git -C
+  .asb/impl/N log -1 --format=%cd`, the committer date, which an amend moves); its
+  summary line, where you can see it. Any of them later than `alive`: say the role is
+  "busy in a turn", and give no launch line. None of them: still no launch line on
+  `alive` alone -- `at=` moves only when the context's numbers change, so a turn spent
+  in one long tool call (a test suite) moves none of the four. Ask the user to look at
+  the role's terminal, or its `--serve` pane, and give its launch line from the index
+  only when the user says the role is gone.
 - When you send, put the pending pickup in your summary line (e.g. `sent 143 to
   implementer-1, waiting for its ack`): your stream skips `ack N` lines, so no event
   tells you of a pickup. Look for `ack N` in the role's messages instead: at your next

@@ -46,9 +46,9 @@ teardown() {
     '[connect:implementer-2]' '[connect:reviewer-1]' '[connect:supervisor]' '[net:supervisor]' '[briefing:supervisor]'; do
     has_section "$s" "$df"
   done
-  # every placeholder substituted, but a glob section's {role}, the launch's (#456)
+  # every placeholder substituted, but a glob section's {role}, the launch's (#456, #485)
   run grep -F '{' "$df"
-  [ "$output" = "$(printf 'context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level\n%.0s' 1 2 3)" ]
+  [ "$output" = "$(printf 'context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level\nasking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it\n%.0s' 1 2 3)" ]
   grep -qx '# \[conda:implementer-1\].*' "$df" # no --env: the conda sections commented out
   grep -qx '\.asb/impl/2/ = read-write.*' "$df"
   # purpose files, one per instance, named and handled
@@ -337,7 +337,7 @@ teardown() {
   [[ "$flat" == *'At a terminal, the role'"'"'s watcher touches it every second, but exits on the message that wakes the role, and the role arms it again, at the turn'"'"'s end at the latest: a stale `alive` there most often means a long turn.'* ]]
   [[ "$flat" == *'A served role'"'"'s loop touches it every second, its turns included.'* ]]
   # a reason to look; the four checks, in order
-  [[ "$flat" == *'- Stale, or missing, is a reason to look, never a verdict. Check, in this order: the role'"'"'s `context` line'"'"'s `at=`; its `messages.md` and the time of its last change; for an Implementer, its clone'"'"'s last commit (`git -C .asb/impl/N log -1 --format=%cd`, the committer date, which an amend moves); its summary line, where you can see it.'* ]]
+  [[ "$flat" == *'- Stale, or missing, is a reason to look, never a verdict. Look at the role'"'"'s `asking` file first: there, the role asked the user at its `since` and no hook has run since -- it waits in its pane, or runs a tool the user approved there -- so give the `asking` line of **At start.**, once per `since`: not "busy in a turn", not "it is asking you", and no launch line (the user then finding the pane gone is the last case below). Then check, in this order: the role'"'"'s `context` line'"'"'s `at=`; its `messages.md` and the time of its last change; for an Implementer, its clone'"'"'s last commit (`git -C .asb/impl/N log -1 --format=%cd`, the committer date, which an amend moves); its summary line, where you can see it.'* ]]
   # any moved: busy in a turn, no launch line
   [[ "$flat" == *'Any of them later than `alive`: say the role is "busy in a turn", and give no launch line.'* ]]
   # none moved: still none, and why; the user looks
@@ -355,7 +355,7 @@ teardown() {
   # docs/roles.md: the same
   [[ "$dflat" == *'so the file says a watcher is waiting for the next message;'* ]]
   [[ "$dflat" == *'At a terminal the watcher exits on the message that wakes the role and runs again only once the role re-arms it -- at the turn'"'"'s end at the latest, where the Stop hook enforces it -- so `alive` can be stale for as long as a turn lasts (#464); a served role'"'"'s loop touches it every second, its turns included.'* ]]
-  [[ "$dflat" == *'Stale is a reason to look, never a verdict: the Supervisor checks the role'"'"'s `context` line'"'"'s `at=`, its messages, an Implementer'"'"'s last commit and its summary line, and says "busy in a turn" when any moved after `alive`.'* ]]
+  [[ "$dflat" == *'Stale is a reason to look, never a verdict: the Supervisor looks at the role'"'"'s asking file first (section 8) -- there, the role asked you something in its pane and no hook has run since, and it says so -- then checks the role'"'"'s `context` line'"'"'s `at=`, its messages, an Implementer'"'"'s last commit and its summary line, and says "busy in a turn" when any moved after `alive`.'* ]]
   [[ "$dflat" == *'It gives the launch line only when you say the role is gone, since a turn spent in one long tool call moves none of them.'* ]]
   [[ "$dflat" == *'each second, its turns included (a terminal'"'"'s watcher stops for the turn), so the Supervisor sees the role running.'* ]]
   [[ "$dflat" == *'Its stream skips `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn, before it tells you anything about that role, and at every re-arm -- and its bar shows the pending pickup meanwhile.'* ]]
@@ -399,7 +399,7 @@ teardown() {
   # the Supervisor: one command, its paths from the index, every role's but its own
   grep -qxF -- "- Watch every role's messages with one stream, a command that keeps running and prints" "$sup"
   grep -qxF "  a line per change: \`.agent-sandbox\`, then one path per role in the index but" "$sup"
-  grep -qxF "  yourself, then every role's \`context.level\`, yours included (a file not written yet" "$sup"
+  grep -qxF "  yourself, then every role's \`context.level\`, yours included, then every role's" "$sup"
   grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$sup"
   grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
@@ -407,8 +407,10 @@ teardown() {
   grep -qxF "  .asb/coord/gate/messages.md \\" "$sup"
   # and every role's context level, its own first (#456)
   grep -qxF "  .asb/coord/supervisor/context.level .asb/coord/planner-1/context.level ... \\" "$sup"
-  grep -qxF '  .asb/coord/gate/context.level' "$sup"
-  [ "$(grep -A1 -xF '  .asb/coord/gate/context.level' "$sup" | sed -n 2p)" = '```' ]
+  grep -qxF "  .asb/coord/gate/context.level \\" "$sup"
+  # and every role's asking file but its own, last (#485)
+  grep -qxF '  .asb/coord/planner-1/asking ... .asb/coord/gate/asking' "$sup"
+  [ "$(grep -A1 -xF '  .asb/coord/planner-1/asking ... .asb/coord/gate/asking' "$sup" | sed -n 2p)" = '```' ]
   run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
   # a stream (T39): under the tool that takes each line as an event; armed again only when
   # it ends, never after an event; arming again is safe; alive fresh; the one-shot fallback
@@ -737,7 +739,68 @@ effort_of() {
   done
 }
 
-@test "--init keeps {role} for the launch in a glob section's context line only: another key's {role} there is substituted as before (#456)" {
+# shellcheck disable=SC2016 # backquotes are the purpose file's text, not ours
+@test "the roles model: every role's [briefing:...] section but the Supervisor's names its asking file; the Supervisor watches them, says each since once, in local time, and looks at the file first for a stale alive (#485); a file from before gets the lines as --apply lines" {
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox" h sup="$PROJ/.asb/roles/supervisor.md" w flat
+  for h in '[briefing:planner-*]' '[briefing:implementer-*]' '[briefing:reviewer-*]'; do
+    sed -n "/^$(printf '%s' "$h" | sed 's/[][*.]/\\&/g')/,/^\[/p" "$df" >"$H/sec"
+    grep -qxF 'asking = .asb/coord/{role}/asking # there once it asks the user in its pane: S reads it' "$H/sec"
+  done
+  sed -n '/^\[briefing:gate\]/,/^\[/p' "$df" >"$H/sec"
+  grep -qxF 'asking = .asb/coord/gate/asking # there once it asks the user in its pane: S reads it' "$H/sec"
+  sed -n '/^\[briefing:supervisor\]/,/^\[/p' "$df" >"$H/sec"
+  grep -q '^context = ' "$H/sec" # the range is the section
+  run ! grep -q '^asking' "$H/sec"
+  [ "$(grep -c '^asking = ' "$df")" -eq 4 ]
+  run_review
+  [[ "$output" == *"[briefing:planner-*] asking, for the roles planner-*: their agent's profile keeps .asb/coord/{role}/asking there from when the role asks the user something in its pane to its next hook event after the answer, where it can write. It widens nothing"* ]]
+  [[ "$output" == *"[briefing:gate] asking, for the roles gate: their agent's profile keeps .asb/coord/gate/asking there"* ]]
+  [[ "$output" != *"unknown [briefing] key"* ]]
+  # the Supervisor's stream: every role's asking file but its own, last
+  grep -qxF "  \`asking\` file but yours (a file not written yet is fine). \`-i '^ack [0-9]+\$'\` drops" "$sup"
+  run ! grep -qF '.asb/coord/supervisor/asking' "$sup"
+  # an asking event: read it; there, the chat line once per since, in local time; gone, no chat
+  w="$(sed -n '/^- Watch every role'"'"'s messages with one stream/,/^- Read the index/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$w" == *'- An `asking` file changed: read it.'* ]]
+  [[ "$w" == *'There: its role asked the user something in its pane -- a permission dialog, a question -- at its `since=`, and no hook has run since: it waits for the answer, or runs a tool the user approved there.'* ]]
+  [[ "$w" == *'Tell the user in the chat, once per `since`, `<role> asked you something in its pane at <time>; go there if you have not answered it.`,'* ]]
+  run ! grep -qF 'it is asking you something' "$sup"
+  [[ "$w" == *'the time in local time (`date -d <since> +%H:%M`, the date too when it is not today'"'"'s), and nothing more: no guess at what it asks, and no launch line.'* ]]
+  [[ "$w" == *'It needs the user, so it is a chat line, not your summary line.'* ]]
+  [[ "$w" == *'A `since` you have said, seen again at a re-arm or a re-read, is not said again.'* ]]
+  [[ "$w" == *'Gone: the wait has ended -- answered, or the role'"'"'s session ended or started anew; your summary line may say so, and the chat says nothing.'* ]]
+  run ! grep -qF 'moved on' "$sup"
+  # a stale alive: the asking file first, then the four checks
+  flat="$(sed -n '/^- Stale, or missing, is a reason to look/,/^- When you send/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$flat" == *'is a reason to look, never a verdict. Look at the role'"'"'s `asking` file first: there, the role asked the user at its `since` and no hook has run since -- it waits in its pane, or runs a tool the user approved there -- so give the `asking` line of **At start.**, once per `since`: not "busy in a turn", not "it is asking you", and no launch line (the user then finding the pane gone is the last case below). Then check, in this order:'* ]]
+  # docs/roles.md: what the file says, the measured gap, and S's line
+  local d
+  d="$(sed -n '/^### The asking file$/,/^Add to the dot-file/p' "$(dirname "$ENGINE")/docs/roles.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$d" == *'It says the role asked you something at `since` and no hook has run since.'* ]]
+  [[ "$d" == *'Claude Code runs no hook at the answer itself (2.1.321, measured): after an approval it stays until the approved command ends'* ]]
+  [[ "$d" == *'A denial or a reply removes it at the next event.'* ]]
+  [[ "$d" == *'once per `since`: "<role> asked you something in its pane at <time>; go there if you have not answered it.", in your local time, and nothing more.'* ]]
+  [[ "$d" == *'When it goes, the wait has ended -- answered, or the role'"'"'s session ended or started anew: its summary line may say so.'* ]]
+  [[ "$d" == *'a refused one goes on working, and removes the file; a question the role asked in that turn is then not flagged).'* ]]
+  run ! grep -qF 'the role has moved on' "$(dirname "$ENGINE")/docs/roles.md"
+  run ! grep -qiE 'exactly while the role waits|it is asking you something' "$(dirname "$ENGINE")/docs/roles.md"
+  [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
+  # a file from before #485: the lines, per role, as --apply lines; the file unchanged
+  sed -i '/^asking = /d' "$df"
+  cp "$df" "$H/before"
+  init -- roles planner=2 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  cmp "$df" "$H/before"
+  for h in planner-\* implementer-\* reviewer-\*; do
+    grep -qxF "    agent-sandbox --apply '[briefing:$h]' 'asking = .asb/coord/{role}/asking'" <<<"$output"
+  done
+  grep -qxF "    agent-sandbox --apply '[briefing:gate]' 'asking = .asb/coord/gate/asking'" <<<"$output"
+  [[ "$output" != *"'[briefing:supervisor]' 'asking"* ]]
+}
+
+@test "--init keeps {role} for the launch in a glob section's context and asking lines only: another key's {role} there is substituted as before (#456, #485)" {
   cp -rL "$(dirname "$ENGINE")/models" "$H/models"
   sed -i 's|^start = \.asb/start/planner\.md |start = .asb/start/{role}.md |' "$H/models/roles/agent-sandbox"
   grep -q '^start = \.asb/start/{role}\.md ' "$H/models/roles/agent-sandbox"
@@ -746,6 +809,7 @@ effort_of() {
   sed -n '/^\[briefing:planner-\*\]/,/^\[/p' "$PROJ/.agent-sandbox" >"$H/sec"
   grep -q '^start = \.asb/start/planner\.md ' "$H/sec"
   grep -q '^context = \.asb/coord/{role}/context ' "$H/sec"
+  grep -q '^asking = \.asb/coord/{role}/asking ' "$H/sec"
 }
 
 @test "the roles model on a file written before the effort levels: --init adds the [agent:...] sections it lacks, and an existing [agent:ROLE] section without effort gets its --apply line" {
@@ -1303,7 +1367,7 @@ effort_of() {
   [[ "$docs" == *'- **No compaction.** `/compact` is never the remedy; a role'"'"'s context is saved by the role, in its own words, then cleared.'* ]]
   [[ "$docs" == *'- **The Supervisor'"'"'s own context.** At `plan`, at a quiet moment (no step of a round in flight, nothing awaiting your word), and at once at `rescue`, it brings `.asb/scratch/reminders.md` up to date -- the round'"'"'s state, the open Tasks and their steps, your standing words, what it waits on -- and suggests a `/clear` of its session, which you type.'* ]]
   [[ "$docs" == *'At a fresh start it reads `reminders.md` first.'* ]]
-  [[ "$docs" == *'Add to it what a round turns out to need, when it does; `asb --trust` then reviews the change.'* ]]
+  [[ "$docs" == *'Add to the dot-file what a round turns out to need, when it does; `asb --trust` then reviews the change.'* ]]
   [[ "$docs" == *'- **The branch under review is in the clone.** The Implementer checks it out in `.asb/impl/N/`, the tree the Reviewer reads, before the Handoff, and keeps it there while the review runs; only throwaway worktrees go to `.asb/scratch/<task>/`.'* ]]
   [[ "$docs" == *'The Handoff carries the commit message, verbatim, since the Reviewer sees no history.'* ]]
   [[ "$docs" == *'A Reviewer that finds the clone'"'"'s tree is not `main` plus the Handoff'"'"'s diff says so and stops, rather than review `main` plus the diff.'* ]]

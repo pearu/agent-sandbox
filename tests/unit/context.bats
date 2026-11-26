@@ -294,6 +294,31 @@ save() {
   [ "$(level)" = rescue ]
 }
 
+@test "a Stop the save prompt refuses is no wait, though its reply ends on a question: it writes no asking file, and removes one there (#485)" {
+  local t="$BATS_TEST_TMPDIR/t.jsonl" A="$BATS_TEST_TMPDIR/coord/r1/asking" q='Shall I go on?'
+  sl 900000
+  prompt s1
+  TXT="$q" transcript "$t" 960000 # rescue
+  hook Stop "{\"session_id\":\"s1\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"$q\"}" AGENT_SANDBOX_ASKING="$A"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(save 17000)" ]
+  [ "$(cat "$S")" = "asks you" ]
+  [ ! -e "$A" ]
+  # another session rearms the prompt: its refused Stop removes a file that is there
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  prompt s2
+  TXT="$q" transcript "$t" 960000
+  hook Stop "{\"session_id\":\"s2\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"$q\"}" AGENT_SANDBOX_ASKING="$A"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(save 17000)" ]
+  [ ! -e "$A" ]
+  # the Stop after it (stop_hook_active) is not refused: a question there is a wait
+  hook Stop "{\"session_id\":\"s2\",\"transcript_path\":\"$t\",\"prompt_id\":\"p1\",\"last_assistant_message\":\"$q\",\"stop_hook_active\":true}" AGENT_SANDBOX_ASKING="$A"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$(cat "$A")" =~ ^since=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+}
+
 @test "the Stop hook's crossing is its own record, not the file's previous level: the status line put the file at rescue first, and the Stop still prompts (#456)" {
   local t="$BATS_TEST_TMPDIR/t.jsonl"
   sl 900000

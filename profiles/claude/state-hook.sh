@@ -17,7 +17,8 @@
 #                             idle        else: the prompt is the user's
 #   SessionStart              waiting     a watcher runs (a resumed session's)
 #                             idle        else
-#   SessionEnd                (nothing)   only the background reset below
+#   SessionEnd                (nothing)   only the background reset and the asking file
+#                                         below
 #
 # The reply is the stdin JSON's last_assistant_message, which Stop carries; without
 # it, the last assistant text in the tail of transcript_path (the hooks reference says
@@ -78,6 +79,26 @@
 # written then, so the next Stop prompts. A served role's first turn has no window yet
 # (level ?): it prompts from its second turn on. It combines with the two refusals
 # above in one reason.
+#
+# THE ASKING FILE (#485). With AGENT_SANDBOX_ASKING set -- the profile sets it in every
+# state event's command to the role's `[briefing] asking` path, not in a print run (a
+# served turn has no pane to ask in) -- the file is written when the role starts waiting
+# for the user (`since=`, when it began), and removed at the first hook event after the
+# user's answer, for the Supervisor, whose watch has it. Claude Code (2.1.321, measured)
+# runs no hook at the answer itself: after a permission approved, that event is the
+# approved tool's end (PostToolUse), so the file outlasts the dialog by the tool's run.
+# A denial or a reply ends it at the next event. A new state of `needs you` or `asks
+# you` writes it, one line `since=<UTC, ISO 8601, seconds, Z>`, by rename, unless it is
+# already there: a PermissionRequest and then its Notification, or `asks you` and then
+# `needs you`, are one wait, and its `since` stays the wait's start. Any other new state
+# (working, running, waiting, idle) removes it, and so does SessionEnd. An event that
+# sets no state (a Notification of another type) leaves it. A Stop that the hook refuses
+# (the rules above) is not an end: the turn goes on, so it removes the file, as working
+# does, whatever its reply ends on. AskUserQuestion, the question dialog, is a
+# PermissionRequest, at once, in every permission mode (measured, 2.1.321). A dialog
+# declined with Escape fires no hook (measured): the file stays until the next turn's
+# first event, while the role sits at its prompt, the user's. A session killed with the
+# file there runs no hook either: the next launch's SessionStart removes it.
 #
 # STATE (default /tmp/agent-sandbox-state; /tmp is the sandbox's own tmpfs) is
 # written by rename, so the status line never reads half a file.
@@ -406,6 +427,23 @@ esac
 if [[ -n "$state" ]]; then
   tmp="$statef.$$"
   { printf '%s\n' "$state" >"$tmp" && mv -f -- "$tmp" "$statef"; } 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+fi
+
+# The asking file (#485), above. A refused Stop goes on working.
+ask="${AGENT_SANDBOX_ASKING:-}"
+if [[ -n "$ask" ]]; then
+  ast="$state"
+  ((block || bsum || bsave)) && ast=working
+  case "$event:$ast" in
+    *:"needs you" | *:"asks you")
+      if [[ ! -e "$ask" && ! -L "$ask" ]]; then
+        tmp="$ask.$$"
+        { printf 'since=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp" && mv -f -- "$tmp" "$ask"; } 2>/dev/null \
+          || rm -f -- "$tmp" 2>/dev/null
+      fi
+      ;;
+    SessionEnd:* | *:?*) rm -f -- "$ask" 2>/dev/null ;;
+  esac
 fi
 
 ((block || bsum || bsave)) && refuse "$block" "$bsum" "$bsave"

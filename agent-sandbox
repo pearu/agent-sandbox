@@ -7762,6 +7762,74 @@ _as_context_resolve() {
   return 0
 }
 
+# ----- the asking file (`[briefing] asking = PATH`, #485) ---------------------------
+# Whether a role has asked the user something in its pane, where the Supervisor reads
+# it: `asking = PATH` in `[briefing]` or `[briefing:<glob>]` names a file in the project
+# (relative to it, no `..`; `{role}` is the role's name), which the role's agent's
+# profile keeps there from when the role asks to its next hook event after the answer
+# -- the claude profile from its state hooks, at a terminal: a served turn has no pane
+# to ask in. After an approval that is the approved tool's end: no hook runs at the
+# answer itself (#485). The engine only names it,
+# as it names the context file: the path, inside (the project's own), is handed to the
+# profile as _asking_path, by dynamic scope. It must be in a directory the role writes
+# through to the project (read-write); else the launch says so and no file is named. No
+# line, no file. Information: the review says it, and it widens nothing.
+
+# _as_briefing_asking_resolve ROLE -- set _asking_as to the asking file for ROLE, as
+# written with `{role}` substituted, or empty: the latest `asking` line whose section
+# matches.
+_as_briefing_asking_resolve() {
+  local e g
+  _asking_as=""
+  for e in ${_df_briefing_asking[@]+"${_df_briefing_asking[@]}"}; do
+    g="${e%%$'\t'*}"
+    # shellcheck disable=SC2053 # the glob is the pattern
+    [[ "$g" == "*" || "$1" == $g ]] && _asking_as="${e#*$'\t'}"
+  done
+  _asking_as="${_asking_as//\{role\}/$1}"
+  return 0
+}
+
+# _as_briefing_asking_notes -- the review's lines for the `asking` keys
+# (_as_trust_notes): information; a path outside the project is said, and a launch names
+# no file for it.
+_as_briefing_asking_notes() {
+  local e g v sec n
+  for e in ${_df_briefing_asking[@]+"${_df_briefing_asking[@]}"}; do
+    g="${e%%$'\t'*}" v="${e#*$'\t'}"
+    if [[ "$g" == "*" ]]; then sec="[briefing]" n="every role"; else sec="[briefing:$g]" n="the roles $g"; fi
+    if _as_serve_path_ok "$v"; then
+      _as_msg ".agent-sandbox: $sec asking, for $n: their agent's profile keeps $v there from when the role asks the user something in its pane to its next hook event after the answer, where it can write. It widens nothing"
+    else
+      _as_msg ".agent-sandbox: $sec asking '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no asking file"
+    fi
+  done
+  return 0
+}
+
+# _as_asking_resolve ROLE -- for a launch of ROLE: set _asking_as (the `asking` line's
+# path, as resolved), _asking_path (the file, absolute, where the role may write it;
+# empty when it may not or there is none) and _asking_why (why not, for a message).
+_as_asking_resolve() {
+  local dir mode
+  _asking_path="" _asking_why=""
+  _as_briefing_asking_resolve "$1"
+  [[ -n "$_asking_as" ]] || return 0
+  if ! _as_serve_path_ok "$_asking_as"; then
+    _asking_why="[briefing] asking '$_asking_as' is not a path in the project (relative to it, no '..')"
+    return 0
+  fi
+  dir="$(realpath -m -s -- "$_proj/$_asking_as")"
+  dir="${dir%/*}"
+  mode="$(_as_context_mode "$dir")"
+  if [[ "$mode" != read-write ]]; then
+    _asking_why="[briefing] asking '$_asking_as' is in ${dir#"$_proj"/}/, which this role has $mode, not read-write"
+    return 0
+  fi
+  _asking_path="$(realpath -m -s -- "$_proj/$_asking_as")"
+  return 0
+}
+
 # _as_briefing_files PROJECT [unread] -- every purpose file the parsed dot-file can
 # name, for any role: each pattern with `{role}` read as the section's glob, expanded
 # against the files there now; and every addendum a role can read (#353) beside them:
@@ -7817,7 +7885,7 @@ _as_trust_digest() {
   }
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8292,7 +8360,7 @@ _as_links_ask() {
 _as_dotfile_briefing_files() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8367,7 +8435,7 @@ _as_profile_dotfile() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local profile=agent # the section the parse hands over as the profile's
   _as_dotfile_parse "$file"
   for kv in ${_df_profile_kv[@]+"${_df_profile_kv[@]}"}; do
@@ -8835,7 +8903,7 @@ _as_agent_flag_split() {
 _as_dotfile_agent() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8851,7 +8919,7 @@ _as_dotfile_agent() {
 _as_dotfile_role_globs() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -8867,7 +8935,7 @@ _as_dotfile_role_globs() {
 _as_dotfile_role_envpath() {
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -10270,8 +10338,8 @@ _as_accounts_said() {
 #   - each [remote:ALIAS] in full (_as_remote_notes, #344);
 #   - each [agent] line: the roles, the agent, its fixed arguments, the account, the
 #     accounts a restart may move them to, the effort level, the auto-compact value, the context levels (_as_agent_notes, #355);
-#   - each [briefing] start and context line (_as_briefing_start_notes,
-#     _as_briefing_context_notes).
+#   - each [briefing] start, context and asking line (_as_briefing_start_notes,
+#     _as_briefing_context_notes, _as_briefing_asking_notes).
 # Fails when a launch refuses the file whatever the answer: a [remote:ALIAS] written twice,
 # an [agent] effort, auto-compact or context level that is not a value.
 # Every profile is read, not only a launch's: `asb --trust` has none, and a dot-file
@@ -10287,7 +10355,7 @@ _as_trust_notes() {
   local -a _df_gpu_devices=()
   local -a _df_remote=()
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode="" _df_overlay_mode="" _df_preset="" _df_role=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   for f in "${profile_dir:-}"/*/profile.sh; do
     [[ -r "$f" ]] || continue
     [[ "$f" != */agent/profile.sh ]] || continue # reserved (#355): [agent] is the project's
@@ -10352,6 +10420,7 @@ _as_trust_notes() {
   _as_serve_notes
   _as_briefing_start_notes
   _as_briefing_context_notes
+  _as_briefing_asking_notes
   _as_agent_notes || remote_rc=1
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
     _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
@@ -10968,6 +11037,9 @@ _as_dotfile_line() {
           # The context file (#456): a file in the project, `{role}` the role's name; the
           # latest line matching the role wins (_as_briefing_context_resolve).
           context) _df_briefing_context+=("$sglob"$'\t'"$cv") ;;
+          # The asking file (#485): a file in the project, `{role}` the role's name; the
+          # latest line matching the role wins (_as_briefing_asking_resolve).
+          asking) _df_briefing_asking+=("$sglob"$'\t'"$cv") ;;
           *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
         esac
       fi
@@ -11343,7 +11415,7 @@ _as_check_remotes() {
   [[ -f "$1" ]] || return 0
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -11626,7 +11698,7 @@ _as_setup_remote() {
   fi
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -11740,7 +11812,7 @@ _as_setup_remote_alias() {
   local p="remote $alias:"
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -13246,6 +13318,16 @@ _as_check_plan() {
         printf '  context file: %s (and %s.level); levels: %s\n' "$_context_as" "$_context_as" "$_cx_lv"
       fi
     fi
+    # The asking file (#485): where, and whether it is written.
+    if [[ -n "$_asking_as" ]]; then
+      if [[ -z "$_asking_path" ]]; then
+        printf '  asking file: none -- %s\n' "$_asking_why"
+      elif [[ "${_knob_briefing:-on}" =~ ^(off|0)$ ]]; then
+        printf "  asking file: %s -- NOT WRITTEN: its agent's profile writes it from the briefing's hooks, and the briefing is off\n" "$_asking_as"
+      else
+        printf '  asking file: %s, there from when the role asks the user something in its pane to its next hook event after the answer\n' "$_asking_as"
+      fi
+    fi
     if ((${#_perm_df[@]})); then
       local _pe _pl=""
       for _pe in "${_perm_df[@]}"; do
@@ -14008,7 +14090,7 @@ _as_init_conda_base() {
   _icb_base=""
   local -a _df_allow=() _df_share=() _df_forward=() _df_env_set=() _df_env_set_by=() _df_env_refuse=() _df_channel_lines=() _df_preset_lines=() _df_net_host_port=() _df_net_agent_port=()
   local -a _df_connect=() _df_preset_by=() _df_role_globs=() _df_profile_kv=() _df_profile_pairs=() _df_profile_vals=() _df_deny=() _df_role_lines=()
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local _df_net_git="" _df_net_retrieve_only="" _df_net_hosts="" _df_hosts_seen="" _df_net_mode="" _df_share_set=0 _df_conda_name="" _df_conda_prefix="" _df_conda_write="" _df_conda_pkgs="" _df_conda_base=""
   local -a _df_gpu_devices=()
   local -a _df_remote=()
@@ -14416,13 +14498,14 @@ _as_init() {
   # _init_render HEADER BODY INSTANCE N HANDLE -- the section for one instance.
   _init_render() {
     local txt="$1"$'\n'"$2" h="${1%%]*}" lead="${6:-}"
-    # A glob section's `context = ...{role}...` ([briefing:planner-*], #456) keeps its
-    # {role} for the launch, which reads it as each role's own name: no one instance's
-    # name fits the section. Every other line has it substituted, as before.
+    # A glob section's `context = ...{role}...` ([briefing:planner-*], #456) and
+    # `asking = ...{role}...` (#485) keep their {role} for the launch, which reads it as
+    # each role's own name: no one instance's name fits the section. Every other line has
+    # it substituted, as before.
     if [[ "$h" == \[*:*[*?]* && "$txt" == *'{role}'* ]]; then
       local _rl _rt=""
       while IFS= read -r _rl; do
-        if [[ "$_rl" =~ ^[[:space:]]*context[[:space:]]*= ]]; then
+        if [[ "$_rl" =~ ^[[:space:]]*(context|asking)[[:space:]]*= ]]; then
           _rt+="$_rl"$'\n'
         else
           _rt+="${_rl//\{role\}/$3}"$'\n'
@@ -20487,7 +20570,7 @@ agent_sandbox() (
   local -a _df_gpu_devices=() # [gpu] devices (#335): one `glob<TAB>entries` per line, in the order applied
   local -a _df_remote=()      # [remote:ALIAS] (#344): `ALIAS<TAB>` per header, `ALIAS<TAB>line` per line
   local _df_gpu_mode="" _df_seccomp_mode="" _df_briefing_mode=""
-  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
+  local -a _df_briefing_globs=() _df_briefing_files=() _df_briefing_start=() _df_briefing_context=() _df_briefing_asking=() _df_ssh=() _df_perm=() _df_serve=() _df_agent=()
   local -a _df_connect=()
   local _df_overlay_mode="" _df_preset="" _df_role=""
   local -a _df_preset_by=() _df_role_globs=()
@@ -21091,6 +21174,16 @@ agent_sandbox() (
   if [[ -n "$_context_why" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]] \
     && ((! _check_plan && ! _do_exec && ! _do_verb && ! _do_status && ! _do_shutdown && ! _do_delete && ! _do_summarize && ! _do_trust)); then
     _as_msg "role '${_role:-default}': $_context_why; no context file is written"
+  fi
+  # The asking file (#485), handed to the profile by dynamic scope as _asking_path
+  # (profile_briefing_args, profile_check_notes): empty when the role has none, or may not
+  # write it (_asking_why, said once, as the context file's is). The profile writes it
+  # only at a terminal.
+  local _asking_as="" _asking_path="" _asking_why=""
+  _as_asking_resolve "${_role:-default}"
+  if [[ -n "$_asking_why" && -z "${AGENT_SANDBOX_SERVE_TURN:-}" ]] \
+    && ((! _check_plan && ! _do_exec && ! _do_verb && ! _do_status && ! _do_shutdown && ! _do_delete && ! _do_summarize && ! _do_trust)); then
+    _as_msg "role '${_role:-default}': $_asking_why; no asking file is written"
   fi
   # The role's inbox ([serve] watch), handed to the profile by dynamic scope as
   # _watch_path (profile_briefing_args, profile_check_notes). Not on a turn of --serve:

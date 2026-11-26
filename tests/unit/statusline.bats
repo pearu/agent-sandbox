@@ -604,3 +604,184 @@ sbar() {
   [ ! -s "$f" ]
   [ "$(cat "$S")" = working ] # the state is written either way
 }
+
+# ----- the asking file (#485) ----------------------------------------------------
+
+# ahook EVENT [STDIN] -- hook, with AGENT_SANDBOX_ASKING naming $A, the asking file
+ahook() {
+  AGENT_SANDBOX_ASKING="$A" CLAUDE_PID=$$ run bash "$P/state-hook.sh" "$1" off "$S" <<<"${2:-{\}}"
+}
+
+# ASK_RE -- the asking file's one line
+ASK_RE='^since=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+
+@test "state-hook.sh: the asking file (#485) -- needs you and asks you write it, one line since=<now, UTC>, by rename; idle and other notifications do not" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}"
+  local before t
+  before="$(date +%s)"
+  TZ=Asia/Tokyo ahook PermissionRequest # UTC whatever the zone
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(wc -l <"$A")" -eq 1 ]
+  [[ "$(cat "$A")" =~ $ASK_RE ]]
+  t="$(date -d "$(sed 's/^since=//' "$A")" +%s)"
+  [ "$t" -ge "$before" ]
+  [ "$t" -le "$(date +%s)" ]
+  [ "$(cat "$S")" = "needs you" ]
+  for t in permission_prompt elicitation agent_needs_input; do
+    rm -f "$A"
+    ahook Notification "{\"hook_event_name\":\"Notification\",\"notification_type\": \"$t\"}"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$(cat "$A")" =~ $ASK_RE ]]
+  done
+  for t in idle_prompt auth_success; do
+    rm -f "$A"
+    ahook Notification "{\"notification_type\":\"$t\"}"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$A" ]
+  done
+  rm -f "$A"
+  ahook Stop '{"last_assistant_message":"Send it?"}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = "asks you" ]
+  [[ "$(cat "$A")" =~ $ASK_RE ]]
+  # by rename: nothing else beside it
+  [ "$(ls -A "${A%/*}")" = asking ]
+}
+
+@test "state-hook.sh: the asking file's since is the wait's start -- a second needs you or asks you leaves the file as it is" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}"
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  local ino
+  ino="$(stat -c %i "$A")"
+  ahook PermissionRequest
+  [ "$status" -eq 0 ]
+  [ "$(cat "$A")" = since=2026-01-02T03:04:05Z ]
+  [ "$(stat -c %i "$A")" = "$ino" ]
+  ahook Notification '{"notification_type":"permission_prompt"}'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$A")" = since=2026-01-02T03:04:05Z ]
+  [ "$(stat -c %i "$A")" = "$ino" ]
+  ahook Stop '{"last_assistant_message":"Send it?"}'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$A")" = since=2026-01-02T03:04:05Z ]
+  [ "$(stat -c %i "$A")" = "$ino" ]
+}
+
+@test "state-hook.sh: an asking path already taken, by a link that leads nowhere too, is a wait already there: left as it is, never replaced; removed as a file is" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}"
+  ln -s "$BATS_TEST_TMPDIR/nowhere" "$A"
+  ahook PermissionRequest
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -L "$A" ]
+  [ "$(readlink "$A")" = "$BATS_TEST_TMPDIR/nowhere" ]
+  [ ! -e "$BATS_TEST_TMPDIR/nowhere" ]
+  ahook UserPromptSubmit
+  [ "$status" -eq 0 ]
+  [ ! -L "$A" ]
+}
+
+@test "state-hook.sh: the asking file is removed by every other state and by SessionEnd; an event that sets no state leaves it" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}"
+  local ev
+  for ev in UserPromptSubmit PostToolUse PostToolUseFailure SessionStart SessionEnd; do
+    printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+    ahook "$ev"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -e "$A" ]
+  done
+  # a Stop that is not asks you: idle here, and waiting with a watcher
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  ahook Stop '{"last_assistant_message":"Done."}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$S")" = idle ]
+  [ ! -e "$A" ]
+  watcher
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  ahook Stop '{"last_assistant_message":"Done."}'
+  kill "$W"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$S")" = waiting ]
+  [ ! -e "$A" ]
+  # running: a background command of the session's own
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  ahook Stop "$(tasks "$ST")"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$S")" = running ]
+  [ ! -e "$A" ]
+  # no state set: the wait goes on
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  ahook Notification '{"notification_type":"idle_prompt"}'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$A")" = since=2026-01-02T03:04:05Z ]
+  ahook PreCompact
+  [ "$status" -eq 0 ]
+  [ "$(cat "$A")" = since=2026-01-02T03:04:05Z ]
+}
+
+@test "state-hook.sh: a Stop the hook refuses is no wait, whatever its reply ends on: it writes no asking file, and removes one there" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}"
+  local L="$BATS_TEST_TMPDIR/line"
+  : >"$L"
+  AGENT_SANDBOX_SUMMARY="$L" ahook Stop '{"last_assistant_message":"Send it?"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"decision":"block"'* ]]
+  [ "$(cat "$S")" = "asks you" ]
+  [ ! -e "$A" ]
+  printf 'since=2026-01-02T03:04:05Z\n' >"$A"
+  AGENT_SANDBOX_WATCH=.asb/coord/to/planner-1.md ahook Stop '{"last_assistant_message":"Send it?"}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"decision":"block"'* ]]
+  [ ! -e "$A" ]
+  # the Stop after it (stop_hook_active) is not refused: a question there is a wait
+  AGENT_SANDBOX_SUMMARY="$L" ahook Stop '{"last_assistant_message":"Send it?","stop_hook_active":true}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$(cat "$A")" =~ $ASK_RE ]]
+}
+
+@test "state-hook.sh: without AGENT_SANDBOX_ASKING no asking file is written anywhere" {
+  mkdir -p "$BATS_TEST_TMPDIR/cwd"
+  cd "$BATS_TEST_TMPDIR/cwd"
+  hook PermissionRequest
+  [ "$status" -eq 0 ]
+  hook Notification off '{"notification_type":"permission_prompt"}'
+  [ "$status" -eq 0 ]
+  hook Stop off '{"last_assistant_message":"Send it?"}'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$S")" = "asks you" ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/cwd")" ]
+  [ "$(ls -A "$BATS_TEST_TMPDIR")" = "$(printf 'cwd\nstate')" ]
+}
+
+@test "state-hook.sh: an asking file that cannot be written leaves nothing behind, and never fails the hook" {
+  A="$BATS_TEST_TMPDIR/coord/asking"
+  mkdir -p "${A%/*}" "$BATS_TEST_TMPDIR/bin"
+  # the rename fails: no file, and no temporary file beside it
+  printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/bin/mv"
+  chmod +x "$BATS_TEST_TMPDIR/bin/mv"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" ahook PermissionRequest
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -z "$(ls -A "${A%/*}")" ]
+  # no such directory
+  A="$BATS_TEST_TMPDIR/no/such/asking"
+  ahook PermissionRequest
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$BATS_TEST_TMPDIR/no" ]
+  ahook UserPromptSubmit
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

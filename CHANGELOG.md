@@ -153,6 +153,27 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Added
 
+- **The Supervisor tells you when a role has asked you something in its pane (#485).** A
+  role at a terminal stopped at a permission dialog, a question dialog or a turn that
+  ends on a question, and nothing outside its pane said so: the Supervisor's stream saw
+  no change, and the work stalled until someone looked. Now `[briefing] asking = PATH`
+  (`{role}` its name; in the project, where the role writes) names an `asking` file,
+  written when a role asks the user something in its pane (a dialog, an input request,
+  a reply ending on a question) and removed at its next hook event after the answer:
+  one line, `since=` the wait's start in UTC, written by the claude profile's state
+  hooks when the state becomes `needs you` or `asks you` (a second one keeps it, a Stop
+  the hook refuses is none), removed at any other state and at `SessionEnd`; at a
+  terminal only, never in a print run. Claude Code runs no hook at the answer itself
+  (2.1.321, measured: a dialog approved at :08, the next event at :33, a 25 s command's
+  end), so after an approval the file stays until the approved command ends. The
+  question dialog (AskUserQuestion) is a `PermissionRequest` in every permission mode;
+  a dialog declined with Escape runs no hook, so the file stays until the next turn,
+  the role at its prompt. `asb --init roles` writes the line for every role but the
+  Supervisor, whose stream watches the files and says, once per `since`, "<role> asked
+  you something in its pane at <time>; go there if you have not answered it.", in local
+  time; a stale `alive` with the file there gets that line, not "busy in a turn". The
+  review and `--check` name it. A role gets the file at its relaunch under the new
+  model, the Supervisor the rules at its own.
 - **The Supervisor moves a role of `asb --roles` to another account, on your word
   (#482).** Usage limits are per account, and a role could only be moved by ending the
   whole session and opening it again with `--account`. Now a restart marker holding
