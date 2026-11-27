@@ -106,6 +106,29 @@ settings_of() {
   [ ! -s "$H/argv" ]
 }
 
+@test "[serve:supervisor] with watch = .agent-sandbox, as the roles model writes it: the Supervisor's Stop hook carries the watch, and a Stop with no watcher is refused once, as the Gate's" {
+  printf '%s\n' '[serve:supervisor]' 'watch = .agent-sandbox' >"$PROJ/.agent-sandbox"
+  check_role supervisor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"  --serve: watch only -- the watcher on .agent-sandbox is enforced, the role is not served"$'\n'* ]]
+  [[ "$output" == *$'\n'"  watcher: a turn does not end while .agent-sandbox has no watcher running (the Stop hook refuses once)"$'\n'* ]]
+  trust
+  settings_of asb --role supervisor claude --continue
+  [ "$status" -eq 0 ]
+  python3 -I -c 'import json, sys; [print(h["command"]) for g in json.load(open(sys.argv[1]))["hooks"]["Stop"] for h in g["hooks"]]' "$OUT/settings.json" >"$H/stop"
+  [ "$(cat "$H/stop")" = "AGENT_SANDBOX_WATCH=.agent-sandbox AGENT_SANDBOX_SUMMARY=/run/agent-sandbox/summary/line bash /run/agent-sandbox/state-hook.sh Stop off" ]
+  # that command, run here: the hook from the tree, a summary line that is written, and
+  # Claude Code this test (no inbox-wait under it)
+  printf 'routed 143\n' >"$H/line"
+  sed -e "s|/run/agent-sandbox/summary/line|$H/line|" -e "s|/run/agent-sandbox/state-hook.sh|$REPO_ROOT/profiles/claude/state-hook.sh|" "$H/stop" >"$H/stop.sh"
+  CLAUDE_PID=$$ run bash -c "$(cat "$H/stop.sh") \"$H/state\"" <<<'{"stop_hook_active":false,"last_assistant_message":"ok","background_tasks":[]}'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"decision":"block","reason":"agent-sandbox: your watcher on .agent-sandbox is not running; arm it as your purpose file says (the Bash tool, run_in_background: true), then end your turn."}' ]
+  CLAUDE_PID=$$ run bash -c "$(cat "$H/stop.sh") \"$H/state\"" <<<'{"stop_hook_active":true,"last_assistant_message":"ok","background_tasks":[]}'
+  [ "$status" -eq 0 ]
+  [ -z "$output" ] # once
+}
+
 @test "[serve]: --apply adds a [serve:ROLE] section, and the review names it" {
   printf '[connect:planner-1]\n' >"$PROJ/.agent-sandbox"
   run_apply 'y\n' '[serve:planner-1]' 'watch = inbox.md' 'prompt = p.md'

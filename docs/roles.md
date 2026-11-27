@@ -377,7 +377,8 @@ goes when the run is green (section 4).
   roles' `[permissions]` lines let the watcher run without a prompt under any permission
   mode. A reply that ends with no watcher running is refused once by the claude
   profile's `Stop` hook, for every role whose `[serve:<role>]` names its inbox -- the
-  Gate's with `watch` alone, since it is never served: the model is told to arm it, and
+  Gate's with `watch` alone, since it is never served, and the Supervisor's, which names
+  `.agent-sandbox`, its watcher's first file: the model is told to arm it, and
   then ends its turn.
   - **Nothing is missed between two runs** (#339). A run compares each FILE with a
     baseline. Without `-s` that is the FILE as the run finds it, so a change made
@@ -386,59 +387,77 @@ goes when the run is green (section 4).
     role waiting on the Supervisor for 8 minutes. With `-s STATE`, a FILE that STATE
     has an entry for is compared with the state saved there, so the next run reports
     such a change at once; a FILE with no entry (a missing or empty STATE: every FILE)
-    starts from now. At exit 0 the run writes STATE anew, by a rename: the reported
-    FILE's entry advances to the state it saw, every other FILE keeps its baseline (two
-    changed at once are reported by two runs, the second at once), and entries for
-    paths it was not given are kept. At exit 1 it is left as it was.
+    starts from now. The run writes STATE anew, by a rename, first at its start, from
+    the baseline: a run that cannot write it refuses (exit 2) and reports nothing, so a
+    STATE that cannot be written (a full disk) ends each run at its start, never in a
+    loop of runs that each report the same change. At exit 0 it writes it again: the
+    reported FILE's entry advances to the state it saw, every other FILE keeps its
+    baseline (two changed at once are reported by two runs, the second at once), and
+    entries for paths it was not given are kept. At exit 1 it holds the baseline the
+    run started from.
   - **At worst one extra wake.** A watcher killed (`TaskStop`, the session's end) does
-    not advance STATE, so the next run may report a change the role has already read;
-    the role reads from its cursor, finds nothing new and runs it again. Likewise,
-    each watched file that changed while the role worked wakes the next run once, even
-    if the role read it then: after a long turn the Supervisor may get a few short
-    "nothing new" wakes, the price of never missing one.
+    not advance STATE past its baseline, so the next run may report a change the role
+    has already read; the role reads from its cursor, finds nothing new and runs it
+    again. Likewise, each watched file that changed while the role worked wakes the next
+    run once, even if the role read it then: after a long turn the Supervisor may get a
+    few short "nothing new" wakes, the price of never missing one.
   - STATE is one line per FILE, its state, a tab and its path as given; `-s` refuses
     (exit 2) a FILE whose path holds a newline, STATE among the FILEs by any spelling
     (by device and inode once STATE exists), a STATE that is a directory or
     unreadable, and a STATE whose directory is missing or not writable.
     It lives in the role's own directory, which the Supervisor does not watch; the
     Supervisor's `-t 10 ….reset` wait has no `-s`.
-  - **The Supervisor's stream** (`-f`). You read the Supervisor's pane for decisions,
-    and each wake of a one-shot watcher put Claude Code's own notices there: the
-    command's completion, and its re-arm. So the Supervisor runs
-    `inbox-wait -f -s STATE [-i PATTERN]... [-t SECS]`, which keeps polling and prints
+  - **The Supervisor's watcher** (`-f -1`). You read the Supervisor's pane for
+    decisions, so its watcher is built to say as little there as it can. The stream
+    form, `inbox-wait -f -s STATE [-i PATTERN]... [-t SECS]`, keeps polling and prints
     one line per changed FILE per poll -- `PATH: LINE`, the last line appended, or
-    `PATH changed` for a rename, a shrink, a file that appears or goes -- under Claude
-    Code's `Monitor`, which makes each line one event and is armed again only when the
-    stream ends (its `-t 1790`, inside `Monitor`'s 30-minute cap, exits 0).
+    `PATH changed` for a rename, a shrink, a file that appears or goes.
     `-i '^ack [0-9]+$'` drops the lines it never acts on, and blank lines are dropped
-    too: an append of nothing else is no event. Control characters are shown as
-    `cat -v` does, and a line is cut at 160 bytes. STATE is written after a poll's
-    lines are printed, so a kill costs a
-    duplicate, never a loss. An flock on `STATE.lock` keeps one stream per STATE:
-    arming again -- after a `/clear`, which a `Monitor` survives -- prints that a
-    watcher already runs, with its pid, and exits 0. Measured with Claude Code 2.1.321
-    and a stub API, for 16 changes, 5 of them `ack`s: Claude Code's notices went from
-    32 to 11, the wakes from 16 to 11. The stream polls through the Supervisor's turns,
-    so its `alive` stays fresh while it works. The other roles keep the one-shot form:
-    their panes are not where you decide.
+    too: an append of nothing else is no event. Control characters are shown as `cat -v`
+    does, and a line is cut at 160 bytes. STATE is written after a poll's lines are
+    printed, so a kill costs a duplicate, never a loss. With `-1` it ends after the
+    first poll that printed a line, exit 0, and the Supervisor runs it as a background
+    Bash command, which has no time limit: each end is one wake, it reads the lines from
+    the command's output file, and it arms the watcher again in the same reply as the
+    work. A change made in between is printed by the next run's first poll, through
+    STATE. An flock on `STATE.lock` keeps one watcher per STATE: arming again while one
+    runs -- after a `/clear`, which a background command survives -- prints that a
+    watcher already runs, with its pid, and exits 0, and the Supervisor does not arm
+    again on that line. Its `[serve:supervisor]` has `watch = .agent-sandbox`, its
+    watcher's first file, so the Stop hook refuses once a turn that ends with none
+    running. A turn you interrupt, or one an API error ends, runs no Stop hook: the
+    Supervisor is then deaf until its next turn, whose end the hook refuses, and what
+    changed meanwhile comes at that re-arm's first poll. Measured with Claude Code
+    2.1.321 and a stub API: in a quiet hour, no line in the pane and no model request
+    (the stream under Claude Code's `Monitor`, capped at 30 minutes, cost about 10 rows
+    an hour, about 240 a day); for 16 changes, 5 of them `ack`s, 11 wakes and 44 rows,
+    as under `Monitor`. An agent with no background command runs the stream form,
+    without `-1`, under a tool that takes each line as an event, and arms it again when
+    it ends. The other roles keep the one-shot form: their panes are not where you
+    decide.
 - **The cursor.** A role reads its inbox whole from a cursor it keeps in its scratch,
   `.asb/scratch/inbox-cursor` (the last N it handled), at every wake and at every
   start, so a lost notification costs nothing.
 - **Delivery.** A role's first act on waking is to append `ack N` to its messages,
   before it reads the instruction, so its messages show each one picked up (the
-  Supervisor's stream skips the line: it acts on what follows); `done N` when it has
+  Supervisor's watcher skips the line: it acts on what follows); `done N` when it has
   finished. `inbox-wait` touches `.asb/coord/<role>/alive` at each poll, so the file
   says a watcher is waiting for the next message; the Supervisor reads its age before it
   sends and while it waits. At a terminal the watcher exits on the message that wakes
   the role and runs again only once the role re-arms it -- at the turn's end at the
   latest, where the Stop hook enforces it -- so `alive` can be stale for as long as a
   turn lasts (#464); a served role's loop touches it every second, its turns included.
+  A watcher that refuses at its start (exit 2) is armed again once; if that one refuses
+  too, the role tells the Supervisor in its messages that it cannot watch (the
+  Supervisor, the user in the chat), and arms it no more -- not at the Stop hook's
+  refusal either -- until told it is fixed. The hook refuses once per turn, so the
+  role's next reply ends there, with nothing to wake it.
   Stale is a reason to look, never a verdict: the Supervisor looks at the role's asking
   file first (section 8) -- there, the role asked you something in its pane and no hook
   has run since, and it says so -- then checks the role's `context` line's `at=`, its
   messages, an Implementer's last commit and its summary line, and says "busy in a turn"
   when any moved after `alive`. It gives the launch line only when you say the role is
-  gone, since a turn spent in one long tool call moves none of them. Its stream skips
+  gone, since a turn spent in one long tool call moves none of them. Its watcher skips
   `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn,
   before it tells you anything about that role, and at every re-arm -- and its bar shows
   the pending pickup meanwhile. None a minute or more after the send means the role has
@@ -828,11 +847,11 @@ Supervisor sees the role running.
   shows it serving, with its session id. A message written while no loop ran is a turn
   as soon as the next one starts.
 
-The Supervisor and the Gate are never served this way: they are where you work, and
-the Gate publishes. A `[serve:ROLE]` section with `watch` alone, as `[serve:gate]` is,
-keeps the Stop hook's watch path for the role at its terminal and serves nothing:
-`--serve` refuses it ("its [serve] names no prompt"), and the review and `asb --check`
-say "watch only".
+The Supervisor and the Gate are never served this way: they are where you work, and the
+Gate publishes. A `[serve:ROLE]` section with `watch` alone, as `[serve:gate]` and
+`[serve:supervisor]` are, keeps the Stop hook's watch path for the role at its terminal
+and serves nothing: `--serve` refuses it ("its [serve] names no prompt"), and the review
+and `asb --check` say "watch only".
 
 ## 7. GitHub: reading for everyone, publishing for the Gate
 
@@ -1053,6 +1072,8 @@ Bash(git fetch:*)
 Bash(git merge:*)
 Bash(conda env update:*)
 Bash(micromamba env update:*)
+[serve:supervisor]                # watch only: the watcher is enforced; the Supervisor is never served
+watch = .agent-sandbox
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 context = .asb/coord/supervisor/context # how full its context is: S reads it, and watches .level
@@ -1280,7 +1301,7 @@ the approved command ends -- a dialog approved at :08 was followed by the next e
 - **At a terminal only:** a served role's turn has no pane to ask in, so it writes
   none, and neither does a print run.
 
-The Supervisor's stream watches every role's asking file but its own (its pane is where
+The Supervisor's watcher watches every role's asking file but its own (its pane is where
 you already are). When one appears, it tells you in the chat, once per `since`: "<role>
 asked you something in its pane at <time>; go there if you have not answered it.", in
 your local time, and nothing more. When it goes, the wait has ended -- answered, or the

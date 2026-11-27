@@ -40,7 +40,10 @@ wakes you:
 ```
 
 Claude Code wakes you when the command exits and tells you which file changed; a
-background command has no time limit in a terminal session, so nothing expires.
+background command has no time limit in a terminal session, so nothing expires. If it
+ends naming no file -- it refused at its start, exit 2 -- run it again once. If that
+one ends so too, tell S in your messages that you cannot watch, and arm it no more --
+not at the Stop hook's refusal either -- until told it is fixed.
 
 Under `--serve` (no terminal) each message is a turn of your own, started for you when
 it arrives: arm no watcher, read and act as below, and end the turn when done.

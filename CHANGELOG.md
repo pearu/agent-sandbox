@@ -1120,6 +1120,48 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **The Supervisor's watcher says nothing while nothing happens.** Under `Monitor`, its
+  stream ended every 30 minutes, the tool's cap, and each end put about 5 rows in the
+  Supervisor's pane -- the end, the re-arm, a reply -- about 240 a day of nothing, in
+  the pane you read for decisions. Now:
+  - **`inbox-wait -f -1`** is the stream that ends after the first poll that printed a
+    line: that poll's lines, STATE saved, exit 0. A poll whose changes were all dropped
+    (`-i`, blank lines) does not end it. The lock is the stream's: a second run says a
+    watcher already runs and exits 0. `-1` without `-f` is refused.
+  - **Every form of `inbox-wait` with `-s STATE`** -- the one-shot form every other role
+    runs, `-f` and `-f -1` -- now saves its baseline before the first poll, and refuses
+    (exit 2) before it reports anything when that save fails. A STATE that cannot be
+    written (a full disk) then ends each run at its start; before, a one-shot run named
+    the same change again at once, a loop of wakes. At exit 1, or killed, STATE holds
+    the baseline the run started from, not the file as it was.
+  - **The Supervisor runs it as a background Bash command**, which has no time limit,
+    reads its lines from the output file at each end, and arms it again in the same
+    reply as the work -- only after an end that carries a line: not on "a watcher
+    already runs" (one survives a `/clear`), and not on a "stopped" notice, since the
+    start text arms it. A failure is armed again once; then the Supervisor tells you it
+    cannot watch, and arms it no more, not even at the Stop hook's refusal, until you
+    say it is fixed. A wake with nothing for you ends with one short word, after the
+    summary line says what happened; one that needs you is said in its own words, never
+    the raw line. With no background command, an agent runs the stream (`-f`, no `-1`)
+    under a tool that takes each line as an event. `Monitor` and the one-shot form leave
+    the Supervisor's watch.
+  - **`[serve:supervisor]`** has `watch = .agent-sandbox`, as `[serve:gate]` has its
+    inbox: the Stop hook refuses once a Supervisor turn that ends with no watcher
+    running. A turn you interrupt, or one an API error ends, runs no Stop hook: the
+    Supervisor is then deaf until its next turn, whose end the hook refuses, and what
+    changed meanwhile comes at that re-arm's first poll. Its `.reset` and `.restart`
+    waits run in the foreground. `asb --init roles` writes the section, and adds it to a
+    file written before.
+  - **Every role whose watcher the Stop hook enforces at a terminal** -- the Gate, the
+    Planners, the Implementers, the Reviewers -- gets the same bound: a watcher that
+    refuses at its start is armed again once; if that one refuses too, the role tells
+    the Supervisor in its messages that it cannot watch, and arms it no more, not even
+    at the Stop hook's refusal, until told it is fixed. Before, each failing run woke
+    the role, and the re-arm (or the hook's refusal) started it again: a loop of turns.
+  - Measured with Claude Code 2.1.321 and a stub API: in a quiet hour, no row and no
+    model request; for 16 changes, 5 of them `ack`s, 11 wakes and 44 rows, as under
+    `Monitor`.
+
 - **`asb --trust` shows what is new to be trusted, and says plainly that the rest
   stands** (#491). After a small change to an approved `.agent-sandbox`, the review
   behind `--trust`, `--apply`, a launch's question and `--check` printed every note on

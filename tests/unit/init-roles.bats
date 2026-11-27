@@ -309,7 +309,7 @@ teardown() {
     # shellcheck disable=SC2016 # backquotes in the text, not an expansion
     tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | grep -qF '**Closing line.** "done; in my file; S has it" is said once, in the reply in which you append `done N` to your messages, and never before: a reply with work still pending (a suite running, a section unwritten) ends by naming what is pending and what follows.'
   done
-  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$PROJ/.asb/roles/supervisor.md"
+  grep -qxF ".asb/bin/inbox-wait -f -1 -i '^ack [0-9]+\$' \\" "$PROJ/.asb/roles/supervisor.md"
   grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$PROJ/.asb/roles/supervisor.md"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$PROJ/.asb/roles/supervisor.md"
   # run again: an inbox with messages, and a changed watcher, are kept
@@ -344,8 +344,8 @@ teardown() {
   [[ "$flat" == *'None of them: still no launch line on `alive` alone -- `at=` moves only when the context'"'"'s numbers change, so a turn spent in one long tool call (a test suite) moves none of the four.'* ]]
   [[ "$flat" == *'Ask the user to look at the role'"'"'s terminal, or its `--serve` pane, and give its launch line from the index only when the user says the role is gone.'* ]]
   # the pickup is checked by a look, not an event: the stream skips acks (T39, P1's ruling)
-  [[ "$flat" == *'- When you send, put the pending pickup in your summary line (e.g. `sent 143 to implementer-1, waiting for its ack`): your stream skips `ack N` lines, so no event tells you of a pickup.'* ]]
-  [[ "$flat" == *'Look for `ack N` in the role'"'"'s messages instead: at your next wake or turn after the send, before you tell the user anything about that role, and at every re-arm of the stream.'* ]]
+  [[ "$flat" == *'- When you send, put the pending pickup in your summary line (e.g. `sent 143 to implementer-1, waiting for its ack`): your watcher skips `ack N` lines, so no event tells you of a pickup.'* ]]
+  [[ "$flat" == *'Look for `ack N` in the role'"'"'s messages instead: at your next wake or turn after the send, before you tell the user anything about that role, and at every re-arm of your watcher.'* ]]
   [[ "$flat" == *'The ack found: the summary line moves on. A look that finds none a minute or more after the send: say in the chat that the role has not picked it up. Never send again on your own; the user decides.'* ]]
   run ! grep -qF 'within a minute: say the role' "$sup"
   # the old verdict is gone
@@ -358,7 +358,7 @@ teardown() {
   [[ "$dflat" == *'Stale is a reason to look, never a verdict: the Supervisor looks at the role'"'"'s asking file first (section 8) -- there, the role asked you something in its pane and no hook has run since, and it says so -- then checks the role'"'"'s `context` line'"'"'s `at=`, its messages, an Implementer'"'"'s last commit and its summary line, and says "busy in a turn" when any moved after `alive`.'* ]]
   [[ "$dflat" == *'It gives the launch line only when you say the role is gone, since a turn spent in one long tool call moves none of them.'* ]]
   [[ "$dflat" == *'each second, its turns included (a terminal'"'"'s watcher stops for the turn), so the Supervisor sees the role running.'* ]]
-  [[ "$dflat" == *'Its stream skips `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn, before it tells you anything about that role, and at every re-arm -- and its bar shows the pending pickup meanwhile.'* ]]
+  [[ "$dflat" == *'Its watcher skips `ack` lines, so after a send it looks for the `ack` -- at its next wake or turn, before it tells you anything about that role, and at every re-arm -- and its bar shows the pending pickup meanwhile.'* ]]
   [[ "$dflat" == *'None a minute or more after the send means the role has not picked it up: said in the chat, never sent again on the Supervisor'"'"'s own.'* ]]
   run ! grep -qF 'Stale means the role is not running' "$doc"
   run ! grep -qF 'as the watcher in a terminal does' "$doc"
@@ -373,7 +373,7 @@ teardown() {
 }
 
 # shellcheck disable=SC2016 # backquotes are the purpose files' text, not ours
-@test "the roles model: every watcher but the Supervisor's is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one stream over every other role's messages in the index, the Gate's too (#288)" {
+@test "the roles model: every watcher but the Supervisor's is a background Bash wait, re-run after each wake, never a Monitor; the Supervisor runs one watcher over every other role's messages in the index, the Gate's too (#288)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local r f sup="$PROJ/.asb/roles/supervisor.md" idx="$PROJ/.asb/coord/COORDINATION.md"
@@ -386,6 +386,15 @@ teardown() {
     grep -qF 'background command has no time limit in a terminal session, so nothing expires.' "$f"
     grep -qF 'arm no watcher, read and act' "$f"
   done
+  # a watcher that fails at its start: armed again once, then said, and no more -- the
+  # Stop hook's refusal included (message 175: the bound of R1's F2, for every role)
+  for r in planner-1 planner-2 implementer-1 reviewer-1 gate; do
+    f="$(tr '\n' ' ' <"$PROJ/.asb/roles/$r.md" | tr -s ' ')"
+    [[ "$f" == *'If it ends naming no file -- it refused at its start, exit 2 -- run it again once. If that one ends so too, tell S in your messages that you cannot watch, and arm it no more -- not at the Stop hook'"'"'s refusal either -- until told it is fixed.'* ]]
+  done
+  local dd
+  dd="$(tr '\n' ' ' <"$(dirname "$ENGINE")/docs/roles.md" | tr -s ' ')"
+  [[ "$dd" == *'A watcher that refuses at its start (exit 2) is armed again once; if that one refuses too, the role tells the Supervisor in its messages that it cannot watch'* ]]
   # the Gate arms one as the others do; it is never served, so no --serve rule
   f="$PROJ/.asb/roles/gate.md"
   grep -qxF ".asb/bin/inbox-wait -s .asb/coord/gate/inbox-wait.state \\" "$f"
@@ -397,10 +406,10 @@ teardown() {
   run ! grep -qE 'you have no watcher|opened when it is|arm no watcher|--serve' "$f"
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/gate.md" | wc -l)" -eq 0 ]
   # the Supervisor: one command, its paths from the index, every role's but its own
-  grep -qxF -- "- Watch every role's messages with one stream, a command that keeps running and prints" "$sup"
-  grep -qxF "  a line per change: \`.agent-sandbox\`, then one path per role in the index but" "$sup"
+  grep -qxF -- "- Watch every role's messages with one watcher, a command that waits for a change and" "$sup"
+  grep -qxF "  prints a line for it: \`.agent-sandbox\`, then one path per role in the index but" "$sup"
   grep -qxF "  yourself, then every role's \`context.level\`, yours included, then every role's" "$sup"
-  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -f -1 -i '^ack [0-9]+\$' \\" "$sup"
   grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF "  .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \\" "$sup"
@@ -412,18 +421,41 @@ teardown() {
   grep -qxF '  .asb/coord/planner-1/asking ... .asb/coord/gate/asking' "$sup"
   [ "$(grep -A1 -xF '  .asb/coord/planner-1/asking ... .asb/coord/gate/asking' "$sup" | sed -n 2p)" = '```' ]
   run ! grep -qE 'but the Gate|Gate has no watcher|only when it is its turn' "$sup"
-  # a stream (T39): under the tool that takes each line as an event; armed again only when
-  # it ends, never after an event; arming again is safe; alive fresh; the one-shot fallback
+  # one event (T43): a background Bash command that ends at the first line, read from its
+  # output file; re-armed only after an end with an event line; one short word for a wake
+  # with nothing for the user; the stream as the agent-neutral fallback; no Monitor
   local w
-  w="$(sed -n '/^- Watch every role'"'"'s messages with one stream/,/^- Read the index/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  w="$(sed -n '/^- Watch every role'"'"'s messages with one watcher/,/^\*\*Where things are/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$w" == *'`-i '"'"'^ack [0-9]+$'"'"'` drops a role'"'"'s `ack N` lines, which you never act on; every other change is a line:'* ]]
-  [[ "$w" == *'Run it with the tool that takes each line of a command as an event (claude: `Monitor`, loaded with ToolSearch where it is deferred, `timeout_ms` at its maximum, 1800000, description "role reports, context levels, .agent-sandbox").'* ]]
-  [[ "$w" == *'Each line is one wake: `PATH: LINE`, the last line appended there, or `PATH changed`. Act on it, and read the file when the line is not enough.'* ]]
-  [[ "$w" == *'- Arm it again only when the stream ends -- its `-t`, an expiry, a failure, whatever its status -- never after an event, in one call.'* ]]
-  [[ "$w" == *'Arming again is always safe: a line saying a watcher already runs means it is still armed.'* ]]
-  [[ "$w" == *'- It polls through your turns too, so your own `alive` stays fresh while you work.'* ]]
-  [[ "$w" == *'- Without such a tool: the same command without `-f`, `-i` and `-t`, with the Bash tool and `run_in_background: true`, run again after each wake. It exits at the first change, printing that file'"'"'s path; a background command has no time limit in a terminal session, so nothing expires.'* ]]
-  [[ "$w" == *'- The waits on a `.reset` or `.restart` marker, below, stay one-shot Bash commands.'* ]]
+  [[ "$w" == *'- Run it with the Bash tool and `run_in_background: true`, description "role reports".'* ]]
+  [[ "$w" == *'It waits as long as it takes -- a background command has no time limit in a terminal session -- and ends after the first poll that printed a line, so each end is one wake.'* ]]
+  [[ "$w" == *'Read its output file: a line per change, `PATH: LINE`, the last line appended there, or `PATH changed`. Act on them, and read the file when the line is not enough.'* ]]
+  [[ "$w" == *'- Arm it again only after an end whose output carries such a line: in the same reply as the work, in a call of its own.'* ]]
+  [[ "$w" == *'A change made before it runs again is printed by its first poll. Never after another end:'* ]]
+  [[ "$w" == *'- `a watcher already runs`: it is still armed (one survives a `/clear`); arming again would end at once, and wake you again.'* ]]
+  [[ "$w" == *'- A "stopped" notice, after `/exit`, a respawn or a relaunch: your start text arms it.'* ]]
+  [[ "$w" == *'- Any other end with no such line, or one that says it could not write its STATE, a failure: act on the lines it printed, once -- your messages say what you have routed -- and arm it again once.'* ]]
+  # bounded, the Stop hook's refusal included (R1's F2, P1's ruling 244)
+  [[ "$w" == *'If that one ends so too, tell the user in the chat that you cannot watch, and arm it no more -- not at the Stop hook'"'"'s refusal either -- until the user says it is fixed.'* ]]
+  [[ "$w" == *'- A wake with nothing for the user ends with one short word, `ok`, after your summary line says what happened (the progress rule, below): a turn always ends with a reply, and that is the least it can be.'* ]]
+  [[ "$w" == *'One that needs the user gets your own words -- the report, the question, the proposal -- never the raw line.'* ]]
+  [[ "$w" == *'- With no background command, run the same with `-f` and without `-1` under a tool that takes each line of a command as an event, and arm it again when it ends.'* ]]
+  [[ "$w" == *'- The waits on a `.reset` or `.restart` marker, below, are no watchers: run them in the foreground, not `run_in_background`, so they have ended by your turn'"'"'s end.'* ]]
+  # no Monitor, no -t and no one-shot form in the watch any more
+  [[ "$w" != *Monitor* && "$w" != *timeout_ms* && "$w" != *ToolSearch* && "$w" != *1790* ]]
+  [[ "$w" != *'without `-f`, `-i` and `-t`'* && "$w" != *'one stream'* ]]
+  # the one short word is said once, in the watch: the progress rule is not repeated there
+  [ "$(grep -c 'one short word' "$sup")" -eq 1 ]
+  [[ "$w" != *'goes in your summary line, which the bar of your pane shows'* ]]
+  # docs/roles.md says the same, with the measured counts
+  local d
+  d="$(sed -n '/^  - \*\*The Supervisor'"'"'s watcher\*\* (`-f -1`)/,/^- \*\*The cursor\.\*\*/p' "$(dirname "$ENGINE")/docs/roles.md" | tr '\n' ' ' | tr -s ' ')"
+  [[ "$d" == *'With `-1` it ends after the first poll that printed a line, exit 0, and the Supervisor runs it as a background Bash command, which has no time limit:'* ]]
+  [[ "$d" == *'prints that a watcher already runs, with its pid, and exits 0, and the Supervisor does not arm again on that line.'* ]]
+  [[ "$d" == *'in a quiet hour, no line in the pane and no model request'* ]]
+  # a turn that runs no Stop hook is said, not hidden (R1's F3)
+  [[ "$d" == *'A turn you interrupt, or one an API error ends, runs no Stop hook: the Supervisor is then deaf until its next turn, whose end the hook refuses, and what changed meanwhile comes at that re-arm'"'"'s first poll.'* ]]
+  [[ "$d" != *'-t 1790'* ]]
   # its progress goes to the summary line, written with the shell in the work's call (T39)
   local sflat
   sflat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
@@ -491,7 +523,7 @@ teardown() {
 }
 
 # shellcheck disable=SC2016 # backquotes and $(...) are the purpose files' text, not ours
-@test "the roles model: a [serve:ROLE] per Planner, Implementer and Reviewer, its prompt file written and kept; the Gate's watch only; none for the Supervisor or setup (#277)" {
+@test "the roles model: a [serve:ROLE] per Planner, Implementer and Reviewer, its prompt file written and kept; the Gate's and the Supervisor's watch only; none for setup (#277)" {
   init -- roles planner=2 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local df="$PROJ/.agent-sandbox" r m
@@ -502,10 +534,13 @@ teardown() {
     grep -qF 'Under `--serve` (no terminal) each message is a turn of your own' "$PROJ/.asb/roles/$r.md"
   done
   grep -qxF '[serve:implementer-1]           # no terminal: asb --role implementer-1 --serve' "$df"
+  run ! grep -qF "[serve:setup]" "$df"
   for r in supervisor setup; do
-    run ! grep -qF "[serve:$r]" "$df"
     [ ! -e "$PROJ/.asb/serve/$r.md" ]
   done
+  # the Supervisor: watch alone, its watcher's first file -- its watcher enforced (T43)
+  [ "$(section '[serve:supervisor]' "$df")" = 'watch = .agent-sandbox' ]
+  grep -qxF '[serve:supervisor]                # watch only: the watcher is enforced; the Supervisor is never served' "$df"
   # the Gate: watch alone -- its watcher enforced, never served
   [ "$(section '[serve:gate]' "$df")" = 'watch = .asb/coord/to/gate.md' ]
   [ ! -e "$PROJ/.asb/serve/gate.md" ]
@@ -521,6 +556,10 @@ teardown() {
   [[ "$output" == *"[serve:implementer-1], for the roles implementer-1: \`asb --role ROLE --serve CMD\` holds the role's launch on the host and, at each change to .asb/coord/to/implementer-1.md, runs one turn of the role's session in its sandbox, told the text of .asb/serve/implementer-1.md"* ]]
   [[ "$output" == *"[serve:gate], for the roles gate: watch only -- the watcher on .asb/coord/to/gate.md is enforced, the role is not served"* ]]
   [[ "$output" != *"[serve:gate] has no"* ]]
+  [[ "$output" == *"[serve:supervisor], for the roles supervisor: watch only -- the watcher on .agent-sandbox is enforced, the role is not served"* ]]
+  check supervisor
+  [[ "$output" == *"  --serve: watch only -- the watcher on .agent-sandbox is enforced, the role is not served"$'\n'* ]]
+  [[ "$output" == *"  watcher: a turn does not end while .agent-sandbox has no watcher running (the Stop hook refuses once)"$'\n'* ]]
   check implementer-1
   [[ "$output" == *"--serve: a turn of its session per change to .asb/coord/to/implementer-1.md, told the text of .asb/serve/implementer-1.md"$'\n'* ]]
   check gate
@@ -576,7 +615,7 @@ teardown() {
   init -- roles planner=1 implementer=1 reviewer=1
   [ "$status" -eq 0 ]
   local sup="$PROJ/.asb/roles/supervisor.md"
-  grep -qxF ".asb/bin/inbox-wait -f -i '^ack [0-9]+\$' -t 1790 \\" "$sup"
+  grep -qxF ".asb/bin/inbox-wait -f -1 -i '^ack [0-9]+\$' \\" "$sup"
   grep -qxF "  -s .asb/coord/supervisor/inbox-wait.state \\" "$sup"
   grep -qxF "  -a .asb/coord/supervisor/alive .agent-sandbox \\" "$sup"
   grep -qxF -- "- Watch \`.agent-sandbox\` too: add it to your watcher's files, and keep a copy in your" "$sup"
@@ -762,7 +801,7 @@ effort_of() {
   grep -qxF "  \`asking\` file but yours (a file not written yet is fine). \`-i '^ack [0-9]+\$'\` drops" "$sup"
   run ! grep -qF '.asb/coord/supervisor/asking' "$sup"
   # an asking event: read it; there, the chat line once per since, in local time; gone, no chat
-  w="$(sed -n '/^- Watch every role'"'"'s messages with one stream/,/^- Read the index/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
+  w="$(sed -n '/^- Watch every role'"'"'s messages with one watcher/,/^\*\*Where things are/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$w" == *'- An `asking` file changed: read it.'* ]]
   [[ "$w" == *'There: its role asked the user something in its pane -- a permission dialog, a question -- at its `since=`, and no hook has run since: it waits for the answer, or runs a tool the user approved there.'* ]]
   [[ "$w" == *'Tell the user in the chat, once per `since`, `<role> asked you something in its pane at <time>; go there if you have not answered it.`,'* ]]
@@ -872,11 +911,11 @@ effort_of() {
   local flat
   flat="$(tr '\n' ' ' <"$sup" | tr -s ' ')"
   # shellcheck disable=SC2016 # backticks: the text, not a command
-  [[ "$flat" == *'Fresh: write an empty `.asb/coord/to/<role>.reset`, and append the message only once the marker is gone: a served role'"'"'s loop and the host side of `asb --roles` each take it within a second, and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset` waits for that.'* ]]
+  [[ "$flat" == *'Fresh: write an empty `.asb/coord/to/<role>.reset`, and append the message only once the marker is gone: a served role'"'"'s loop and the host side of `asb --roles` each take it within a second, and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset`, in the foreground, waits for that.'* ]]
   # shellcheck disable=SC2016 # backticks: the text, not a command
   [[ "$flat" == *'Still there after it: nobody takes resets for this role (it was opened in a terminal of its own), so tell the user to type `/clear` in that role'"'"'s terminal, and send when they say it is done.'* ]]
   [[ "$flat" != *'/start'* ]]
-  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 9 ]
+  [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | wc -l)" -eq 10 ] # 9 before T43's "in the foreground"
   [ "$(sed -n '/^- Before a message that opens a new Task/,/role'"'"'s own memory\.$/p' "$sup" | awk 'length > 88' | wc -l)" -eq 0 ]
   # the next bullet: the relay is asked about with the message that opens a Task (#326)
   [ "$(sed -n '/^\*\*Sending a message\.\*\*/,/^\*\*The Gate/p' "$sup" | grep -cxF -- '- With the message that opens a Task for an Implementer, ask too, in the same reply,')" -eq 1 ]
@@ -972,7 +1011,7 @@ effort_of() {
   flat="$(sed -n '/^- Watch `.agent-sandbox` too/,/^\*\*The Gate/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$flat" == *'A running role keeps the policy and the purpose file it was launched with, through a `/clear` (a `.reset`) too: only a relaunch applies a change, the restart below.'* ]]
   [[ "$flat" == *'answer `ready` or `wait: <what, and about how long>`.'* ]]
-  [[ "$flat" == *'On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again: the user approved the change, and the restart only applies it -- then wait with `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`.'* ]]
+  [[ "$flat" == *'On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again: the user approved the change, and the restart only applies it -- then wait, in the foreground, with `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`.'* ]]
   [[ "$flat" == *'Gone: put it in your summary line. Not empty: the host'"'"'s reason, one line; tell the user, then remove the marker. Still there and empty: nobody takes restarts for this role'* ]]
   [[ "$flat" == *'so remove the marker -- left, the next `asb --roles` with the role takes it -- and give the user the relaunch:'* ]]
   [[ "$flat" == *'One `.restart` at a time: the next once the last has gone or been answered. Never a `.restart` and a `.reset` for one role at once: the restart'"'"'s marker is gone first, then a `.reset` when the role'"'"'s next Task needs one.'* ]]
@@ -1284,7 +1323,7 @@ effort_of() {
   [ "$(sed -n '/^\*\*At start\.\*\*$/{n;p;}' "$sup")" = '- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you' ]
   at="$(sed -n '/^\*\*At start\.\*\*/,/^\*\*Where things/p' "$sup" | tr '\n' ' ' | tr -s ' ')"
   [[ "$at" == *'- At a fresh start, read `.asb/scratch/reminders.md` first, where it exists: what you saved before your last `/clear` (**Context.**, below).'* ]]
-  [[ "$(tr '\n' ' ' <"$PROJ/.asb/start/supervisor.md" | tr -s ' ')" == *'Do what your purpose file says at start -- at a fresh start, read `.asb/scratch/reminders.md` first where it exists; print the launch lines, arm your watcher (a stream, as your purpose file says; arming again is safe) -- then read every role'"'"'s messages'* ]]
+  [[ "$(tr '\n' ' ' <"$PROJ/.asb/start/supervisor.md" | tr -s ' ')" == *'Do what your purpose file says at start -- at a fresh start, read `.asb/scratch/reminders.md` first where it exists; print the launch lines, arm your watcher (as your purpose file says; arming again is safe) -- then read every role'"'"'s messages'* ]]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/roles/supervisor.md" | wc -l)" -eq 0 ]
   [ "$(awk 'length > 88' "$(dirname "$ENGINE")/models/roles/start/supervisor.md" | wc -l)" -eq 0 ]
 }
@@ -1375,4 +1414,16 @@ effort_of() {
   run ! grep -qF 'you type `/compact`' "$f"
   [ "$(sed -n '/^### What the levels set off$/,/^## 9\. /p' "$f" | awk 'length > 88' | wc -l)" -eq 0 ]
   [ "$(sed -n '/^- \*\*The branch under review is in the clone\.\*\*/,/^- \*\*Builds\.\*\*/p' "$f" | awk 'length > 88' | wc -l)" -eq 0 ]
+}
+
+@test "the roles model on a file written before the Supervisor's watch was enforced: --init adds [serve:supervisor], watch = .agent-sandbox, and says so" {
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  local df="$PROJ/.agent-sandbox"
+  sed -i '/^\[serve:supervisor\]/,/^watch = .agent-sandbox$/d' "$df"
+  run ! grep -qF '[serve:supervisor]' "$df"
+  init -- roles planner=1 implementer=1 reviewer=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"added to .agent-sandbox: [serve:supervisor]"* ]]
+  [ "$(section '[serve:supervisor]' "$df")" = 'watch = .agent-sandbox' ]
 }
