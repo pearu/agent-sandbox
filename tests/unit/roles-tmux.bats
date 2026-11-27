@@ -734,6 +734,33 @@ no_tmux_path() {
   grep -qF "$PROJ/x"$'\t' "$REC.links"
 }
 
+@test "--roles: the file approved here, then a link's record cannot be written: said with its path, no not approved, and the panes open (#487)" {
+  printf '[agent]\ncommand = claude\n[allow]\npypi.org\n' >"$PROJ/.agent-sandbox" # changed since approved: reviewed here
+  mkdir -p "$H/ext"
+  ln -s "$H/ext" "$PROJ/x"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write >"$REC.links.pending.r"
+  mkdir "$REC.links.lock" # the record's lock cannot be opened
+  run_engine_tty 'y\ny\n' TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $REC.links.lock; the file's approval stands, and the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" != *"not approved"* ]]
+  [ -e "$TM" ] # the panes opened
+  cmp -s "$REC.approved" "$PROJ/.agent-sandbox"
+}
+
+@test "--roles: the file approved as it is, and a link's record cannot be written: said with its path, and the panes open (#487)" {
+  mkdir -p "$H/ext"
+  ln -s "$H/ext" "$PROJ/x"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROJ/x" "$PROJ/x -> $H/ext" "$H/ext" dir read-write >"$REC.links.pending.r"
+  mkdir "$REC.links.lock" # the record's lock cannot be opened
+  run_engine_tty 'y\n' TMUX_DUMP="$TM" -- asb --roles a b
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $REC.links.lock; the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" != *"approve this .agent-sandbox"* ]]
+  [ -e "$TM" ] # the panes opened
+}
+
 # THE HOST TAKES RESETS (#329). --roles starts one watcher beside the session, out of
 # the terminal's session; it is the engine again, with the internal word __roles-resets.
 

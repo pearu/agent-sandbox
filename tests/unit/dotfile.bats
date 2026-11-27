@@ -935,17 +935,30 @@ pending_link() {
   [ "$status" -eq 0 ]
 }
 
-@test "--trust: the file approved, then a link's record cannot be written: no line says the file is unapproved (#484)" {
+@test "--trust: the file approved, then a link's record cannot be written: that is said with its path, no line says the file is unapproved, exit 1 (#484, #487)" {
   pending_link
-  mkdir "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.lock" # the record's lock cannot be opened
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock" # the record's lock cannot be opened
   printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
   run_trust 'y\ny\n'
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
-  [[ "$output" != *"launches from here refuse"* ]]
-  [[ "$output" != *"stays approved"* ]]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the file's approval stands, and the link stays unapproved (asked again at the next review)." ]] # the last word
+  [[ "$output" != *"not approved"* ]]
+  # no raw error
+  [[ "$output" != *"Is a directory"* ]]
+  [ ! -e "$lrec" ]
+  cmp -s "$PROJ/.agent-sandbox" "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).approved"
   run_engine -- asb claude --version
   [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  # not recorded, so the next review asks about the link again
+  rmdir "$lrec.lock"
+  run_trust 'y\ny\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [ -s "$lrec" ]
 }
 
 @test "--trust on a file approved as it is that a launch now refuses: nothing asked, and no line says it stays approved (#484)" {
@@ -965,12 +978,270 @@ pending_link() {
   run_trust 'y\nn\n'
   [ "$status" -eq 0 ]
   mkdir "$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.lock" # the record's lock cannot be opened
+  local before
+  before="$(trust_sums)"
   run_trust 'y\ny\n'
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"this exact content is already approved."* ]]
   [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
-  [[ "$output" != *"stays approved"* ]]
+  [[ "$output" == *"agent-sandbox: the link's record could not be written to "*".links.lock; the file's approval stands, and the link stays unapproved (asked again at the next review)." ]] # the last word
+  [[ "$output" != *"not approved"* ]]
   [[ "$output" != *"launches from here refuse"* ]]
+  [ "$(trust_sums)" = "$before" ]
+}
+
+@test "--trust: the file's approval cannot be written: that is said with its path, not approved, exit 1 (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$rec" # the digest cannot be written
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $rec: not approved."* ]]
+  [[ "$output" == *"agent-sandbox: not approved; launches from here refuse until it is." ]] # the last word
+  # no raw error
+  [[ "$output" != *"Is a directory"* ]]
+  [[ "$output" != *"agent-sandbox: approved."* ]]
+  run_engine -- asb claude --version
+  [ "$status" -eq 1 ]
+  [ ! -s "$H/argv" ]
+}
+
+@test "--trust: a file approved as it is, approved again, and the approval cannot be written: that is said with its path, it stays approved, exit 1 (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local rec before
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  mkdir "$rec.approved.tmp" # the content cannot be renamed into place
+  before="$(sha256sum "$rec" "$rec.approved")"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $rec.approved; this exact content stays approved, as it was." ]] # the last word
+  [[ "$output" != *"not approved"* ]]
+  # no raw error
+  [[ "$output" != *"cannot overwrite"* ]]
+  [ "$(sha256sum "$rec" "$rec.approved")" = "$before" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+}
+
+@test "--trust: the file declined, then a link's record cannot be written: no line says the file's approval stands, not approved, exit 1 (#487)" {
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'n\ny\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" != *"approval stands"* ]]
+  [[ "$output" == *"agent-sandbox: not approved; launches from here refuse until it is." ]] # the last word
+}
+
+@test "--trust: no .agent-sandbox, and a link's record cannot be written: that is said with its path, and nothing of a file, exit 1 (#487)" {
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the link stays unapproved (asked again at the next review)." ]] # the last word
+  [[ "$output" != *"approval stands"* ]]
+  [[ "$output" != *"not approved"* ]]
+}
+
+@test "--trust: the trust store cannot be made: that is said with its path, not approved, exit 1 (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG"
+  : >"$CFG/trust" # a file where the store would be
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $CFG/trust: not approved."* ]]
+  [[ "$output" == *"agent-sandbox: not approved; launches from here refuse until it is." ]] # the last word
+}
+
+@test "--trust: the old purpose copies cannot be removed: approved, and the line says a review after it changes may show more than changed, exit 1 (#487)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'A.\n' >"$PROJ/.asb/roles/a.md"
+  printf '[briefing:a]\n[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$rec.purpose/d"
+  : >"$rec.purpose/d/f"
+  chmod 500 "$rec.purpose/d" # the old copies cannot be removed
+  run_trust 'y\n'
+  chmod 700 "$rec.purpose/d"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved; its copy for the next review could not be written to $rec.purpose, so a review after it changes may show more than changed." ]] # the last word
+  [[ "$output" != *"not approved"* ]]
+  # no raw error
+  [[ "$output" != *"Permission denied"* ]]
+  [ ! -e "$rec.approved" ]
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+  run_engine -- asb --role a claude --version
+  [ "$status" -eq 0 ]
+}
+
+@test "--trust: no .agent-sandbox, and the link record itself cannot be written: that is said with its path, exit 1 (#487)" {
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  : >"$lrec.lock" # the lock opens; the store takes no new file
+  chmod 555 "$CFG/trust"
+  run_trust 'y\n'
+  chmod 755 "$CFG/trust"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec; the link stays unapproved (asked again at the next review)." ]] # the last word
+  # no raw error
+  [[ "$output" != *"Permission denied"* ]]
+  [ ! -e "$lrec" ]
+}
+
+@test "--trust: no .agent-sandbox, and a directory where the link record would be: that is said with its path, exit 1, no temporary left, and nothing moved into it (#487)" {
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec; the link stays unapproved (asked again at the next review)." ]] # the last word
+  [[ "$output" != *"approved."* ]]
+  # no raw error
+  [[ "$output" != *"cannot overwrite"* ]]
+  [ -z "$(ls -A "$lrec")" ]
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+}
+
+@test "--trust: a directory where the approved copy would be: approved by its digest, the copies removed, the line names the path, exit 1; the next review is the whole one (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$rec.approved/d"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved; its copy for the next review could not be written to $rec.approved, so a review after it changes shows the whole file." ]] # the last word
+  [[ "$output" != *"not approved"* ]]
+  [ ! -e "$rec.approved" ]
+  [ ! -e "$rec.purpose" ]
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  printf '[allow]\npypi.org\ngithub.com\n' >"$PROJ/.agent-sandbox"
+  run_trust 'n\n'
+  [[ "$output" == *"agent-sandbox: the approved content was not kept (an earlier engine approved it, or its copy could not be written), so there is nothing to compare with: the whole review"* ]]
+  [[ "$output" == *"github.com"* ]]
+}
+
+@test "--trust: a copy-move failure removes the old purpose copies too (#487)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'A.\n' >"$PROJ/.asb/roles/a.md"
+  printf '[briefing:a]\n[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  [ -d "$rec.purpose" ]
+  rm "$rec.approved"
+  mkdir -p "$rec.approved/d" # the copy cannot be moved in
+  printf 'A, CHANGED.\n' >"$PROJ/.asb/roles/a.md"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: approved; its copy for the next review could not be written to $rec.approved, so a review after it changes shows the whole file." ]] # the last word
+  [ ! -e "$rec.approved" ]
+  [ ! -e "$rec.purpose" ]
+}
+
+@test "--trust: an older approved copy that cannot be removed: approved, the line says a review after it changes may show more than changed, and a launch runs under it (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  rm "$rec.approved"
+  mkdir -p "$rec.approved/d"
+  : >"$rec.approved/d/f"
+  chmod 500 "$rec.approved/d" # neither replaced nor removed
+  printf '[allow]\npypi.org\ngithub.com\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  chmod 700 "$rec.approved/d"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: approved; its copy for the next review could not be written to $rec.approved, so a review after it changes may show more than changed." ]] # the last word
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session allowlist: github.com pypi.org"* || "$output" == *"session allowlist: pypi.org github.com"* ]]
+}
+
+@test "--trust: a change approved while the store takes no new file: nothing recorded, not approved, and the next review shows the change as new (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local rec before
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  printf '[allow]\npypi.org\nevil.example\n' >"$PROJ/.agent-sandbox"
+  before="$(trust_sums)"
+  chmod 555 "$CFG/trust" # nothing can be staged beside the record
+  run_trust 'y\n'
+  chmod 755 "$CFG/trust"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $rec.approved: not approved."* ]]
+  [ "$(trust_sums)" = "$before" ]
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+  run_trust 'n\n'
+  [[ "$output" == *"new — "*"evil.example"* ]]
+  [[ "$output" != *"as you approved it"* ]]
+  [[ "$output" != *"as in your approval"*"evil.example"* ]]
+}
+
+@test "--trust: a change approved, and the digest cannot be moved in: the copies untouched, not approved, no temp left (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_trust 'y\n'
+  [ "$status" -eq 0 ]
+  local rec before
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  rm "$rec"
+  mkdir -p "$rec/d" # a directory where the digest goes
+  printf '[allow]\npypi.org\nevil.example\n' >"$PROJ/.agent-sandbox"
+  before="$(trust_sums)"
+  run_trust 'y\n'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $rec: not approved."* ]]
+  [ "$(trust_sums)" = "$before" ]
+  [ -z "$(find "$CFG/trust" -name '*.tmp')" ]
+  run grep -c evil.example "$rec.approved"
+  [ "$output" = 0 ]
+}
+
+@test "--trust inside a sandbox, the approval cannot be written: not approved, never that it stays approved (#487)" {
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG"
+  : >"$CFG/trust" # a file where the store would be
+  printf '#!/usr/bin/env bash\nsource %q\n_as_pid1_bwrap() { return 0; }\nagent_sandbox "$@"\n' "$ENGINE" >"$H/inside"
+  chmod +x "$H/inside"
+  engine_cmd "$H/inside"
+  run bash -c 'cd "$1" && printf "y\n" | env -i HOME="$2" PATH="$3" AGENT_SANDBOX=1 "${@:4}" --trust 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $CFG/trust: not approved." ]] # the last word
+  [[ "$output" != *"stays approved"* ]]
+}
+
+@test "a launch at a terminal: a link it needs, answered yes, and its record cannot be written: said with its path, then the launch refuses, saying so (#487)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  mkdir -p "$H/ext/b" "$CFG/trust"
+  touch "$H/ext/b/f.md"
+  ln -s "$H/ext" "$PROJ/lnk"
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock" # the record's lock cannot be opened
+  run_engine_tty 'y\n' AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" == *"agent-sandbox: not approved; refusing to launch."* ]]
+  [ ! -s "$H/argv" ]
 }
 
 @test "--apply creates a missing file with the section and the line, then runs --trust's review" {
@@ -1789,6 +2060,53 @@ pending_link() {
   run_engine_tty 'n\nn\n' -- asb --role r --agent claude
   [ "$(grep -c 'approve this .agent-sandbox' <<<"$output")" -eq 1 ]
   [[ "$output" == *"not approved."* ]]
+  [ ! -s "$H/argv" ]
+}
+
+@test "a launch at a terminal: the file approved, then a link's record cannot be written: said with its path, no not approved., and the launch goes on (#487)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock"
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_engine_tty 'y\ny\n' -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the file's approval stands, and the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" != *"not approved"* ]]
+  [[ "$output" == *"session allowlist: pypi.org"* ]]
+  [ -s "$H/argv" ]
+}
+
+@test "the role's agent at a terminal: the file approved, then a link's record cannot be written: said with its path, no not approved., and the launch goes on (#487)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  pending_link
+  local lrec
+  lrec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir "$lrec.lock"
+  printf '[agent]\ncommand = claude -u\n' >"$PROJ/.agent-sandbox"
+  run_engine_tty 'y\ny\n' -- asb --role r
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'approve this .agent-sandbox' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: approved."* ]]
+  [[ "$output" == *"approve this link for $PROJ? [y/N] agent-sandbox: the link's record could not be written to $lrec.lock; the file's approval stands, and the link stays unapproved (asked again at the next review)."* ]]
+  [[ "$output" != *"not approved"* ]]
+  [[ "$(cat "$H/join")" == *$'\n-u'* ]]
+}
+
+@test "a launch at a terminal: the file's approval cannot be written: said with its path, not approved., and the launch refuses (#487)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the review on"
+  local rec
+  rec="$CFG/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$rec" # the digest cannot be written
+  printf '[allow]\npypi.org\n' >"$PROJ/.agent-sandbox"
+  run_engine_tty 'y\n' -- asb claude --version
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: the approval could not be written to $rec: not approved."* ]]
+  [[ "$output" == *"agent-sandbox: not approved."* ]]
+  # no raw error
+  [[ "$output" != *"Is a directory"* ]]
   [ ! -s "$H/argv" ]
 }
 

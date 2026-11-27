@@ -1465,6 +1465,27 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A record the trust review could not write was said as "not approved", or not said
+  (#487).** The review returned one failure for a no and for a record that could not be
+  written. So after a yes to the file and a link whose record could not be written,
+  `--roles`, a launch and the role's agent said `not approved` of the approved file, and
+  `--roles` opened no panes. A failed write of the file's own approval showed only a
+  raw bash error, or `cannot create trust store DIR`. Now each write failure is one
+  line, where it happens, naming the path: `the approval could not be written to PATH:
+  not approved.`, or `this exact content stays approved, as it was.` when an earlier
+  approval of the same content is untouched; and `the link's record could not be
+  written to PATH; the file's approval stands, and the link stays unapproved (asked
+  again at the next review).` After the link's line, `--roles` opens its panes and a
+  launch goes on, as after a declined link; a launch that needs the link refuses,
+  saying `not approved; refusing to launch.` as after a no. `asb --trust` (and
+  `--apply`) exits 1 when a record could not be written, and 0 on a no, as before.
+  The copies the next review compares against are no longer written before the
+  approval itself: a failure part-way left a newer copy beside the older approval, and
+  the next review called the unapproved change approved, hiding a new `[allow]` host
+  among the notes not shown. Every part is now staged first, the approval moved in
+  before the copies, and a copy that cannot be moved in is removed, said as `approved;
+  its copy for the next review could not be written to PATH, so a review after it
+  changes shows the whole file.`
 - **A declined `asb --trust` said an approved file was now refused (#484).** Answering
   `n` for a `.agent-sandbox` approved as it is printed `not approved; launches from here
   refuse until it is.`, though a no records nothing and launches went on as before. A
