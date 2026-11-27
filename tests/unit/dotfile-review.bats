@@ -505,3 +505,377 @@ check_role() {
   [[ "$output" == *"  network: agent port 8000 published at the host's 127.0.0.1:8000"* ]]
   [[ "$output" == *"  network: agent port 2222 published at 0.0.0.0:2222 -- every address of this host, reachable from the network (the host's firewall is yours)"* ]]
 }
+
+# ---- the review against the approval (#491): what is new to be trusted, the rest counted ----
+
+# check_flags FLAG... -- `--check FLAG...`, as check does.
+check_flags() {
+  engine_cmd
+  run bash -c 'n="$4"; cd "$1" && env -i HOME="$2" PATH="$3" "${@:5:n}" --check "${@:5+n}" 2>&1 </dev/null' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "$@"
+}
+
+# tty_check [VAR=value ...] -- `--check` at a terminal (script(1)): stderr is a tty. CRs gone.
+tty_check() {
+  engine_cmd
+  run bash -c 'n="$4"; cd "$1" && env -i HOME="$2" PATH="$3" "${@:5+n}" script -qec "$(printf "%q " "${@:5:n}") --check" /dev/null | tr -d "\r"' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "$@"
+}
+
+# held OUTPUT -- the count OUTPUT's summary line gives, or nothing when there is none.
+held() { sed -n 's/^agent-sandbox: \(\x1b\[2m\)\{0,1\}\([0-9][0-9]*\) notes\{0,1\} as in your approval, not shown; .*/\2/p' <<<"$1"; }
+
+# approve_as TEXT -- TEXT recorded as approved, content kept, as --trust does; then the
+# file is what it was.
+approve_as() {
+  local now
+  now="$(cat "$PROJ/.agent-sandbox" 2>/dev/null || true)"
+  printf '%s' "$1" >"$PROJ/.agent-sandbox"
+  approve
+  printf '%s\n' "$now" >"$PROJ/.agent-sandbox"
+}
+
+PERM_NOTE="a permission rule the agent gets without asking you, for every role"
+
+@test "a one-line change to an approved roles-model file: the added line's note, not an untouched line's, and the rest counted exactly (#491)" {
+  git -C "$PROJ" init -q
+  git -C "$PROJ" -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m init
+  engine_cmd
+  (cd "$PROJ" && env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --init roles </dev/null >/dev/null 2>&1)
+  approve
+  printf '\n[ssh]\ngithub.com\n' >>"$PROJ/.agent-sandbox"
+  # the whole review counts the notes the file now gives: every line it prints but the question
+  run_review "$PROJ" --all
+  [[ "$output" != *"warning — "* ]]
+  [[ "$output" != *"refused — "* ]]
+  local all
+  all="$(grep -c '^agent-sandbox: ' <<<"$output")"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [ssh] github.com: SSH to it as you"* ]]
+  [[ "$output" != *"[agent:gate] effort = low"* ]]
+  [ "$(held "$output")" -eq "$((all - 2))" ] # all but the question and the new note
+  [ "$(grep -c '^agent-sandbox: new — ' <<<"$output")" -eq 1 ]
+}
+
+@test "a change that alters another line's note shows that note, and what it said before as no longer in force (#491)" {
+  approve_as $'[ssh]\nbox\n'
+  printf '[ssh]\nbox\n[remote:box]\nhost = box.example\nport = 2222\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [ssh] box: SSH to it as you"*"; box is the remote box of this file, [remote:box]"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: no longer in force (approved before, not in the file now):"$'\n'"agent-sandbox: no longer — .agent-sandbox: [ssh] box: SSH to it as you"*"where the account allows"$'\n'* ]]
+}
+
+@test "a removed line's note is under no longer in force, a removed [deny] line's too (#491)" {
+  approve_as $'[permissions]\nRead\nEdit\n[deny]\nevil.example\n'
+  printf '[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: no longer in force (approved before, not in the file now):"$'\n'"agent-sandbox: no longer — .agent-sandbox: [deny] evil.example: refused for every role, whatever the allowlist and hosts = public"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: no longer — .agent-sandbox: [permissions] Edit: $PERM_NOTE"$'\n'* ]]
+  [[ "$output" == *$'\n'"-evil.example"$'\n'* ]]
+  [ "$(held "$output")" -eq 1 ] # Read
+  [[ "$output" != *"new — "* ]]
+}
+
+@test "[allow] and [deny] lines each make a note, for their roles: an added host reads new, a suffixed section names its roles (#491)" {
+  approve_as $'[allow]\npypi.org\n'
+  printf '[allow]\npypi.org\nfiles.example\n[deny:reviewer]\nx.example\n[allow:impl-*]\ny.example\n[connect:*]\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [allow] files.example: reachable for every role (this project's allowlist)"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [deny:reviewer] x.example: refused for the roles reviewer, whatever the allowlist and hosts = public"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [allow:impl-*] y.example: reachable for the roles impl-* (this project's allowlist)"$'\n'* ]]
+  [ "$(held "$output")" -eq 1 ] # pypi.org
+}
+
+@test "a [deny] line that would take a profile's own host says the launch leaves it out under that profile; a bad host is a warning (#491)" {
+  printf '[deny]\n.anthropic.com\nbad!host\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [deny] .anthropic.com: refused for every role, whatever the allowlist and hosts = public; not under the profile claude, whose own host"*" .anthropic.com"*" it would take: a launch there leaves it out"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: warning — .agent-sandbox: [deny] bad host 'bad!host'; ignoring"$'\n'* ]]
+}
+
+@test "what reaches stderr outside a note is shown as it came, once, and not compared (#491)" {
+  local real
+  real="$(PATH=/usr/bin:/bin command -v realpath)"
+  printf '#!/usr/bin/env bash\ncase "$*" in *RAWPROBE*) echo "realpath-stub: its own line" >&2 ;; esac\nexec %q "$@"\n' "$real" >"$H/bin/realpath"
+  chmod +x "$H/bin/realpath"
+  approve_as $'[connect]\n./RAWPROBE/ = own\n'
+  printf '[connect]\n./RAWPROBE/ = own\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "$(grep -c '^realpath-stub: its own line$' <<<"$output")" -eq 1 ] # the file now's run; the approved copy's is not shown
+  [[ "$output" != *"new — realpath-stub"* ]]
+}
+
+@test "a refusal approved under an older rule, in both: printed, and the review's status is the file's (#491)" {
+  printf '[agent]\neffort = bogus\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG/trust"
+  cp "$PROJ/.agent-sandbox" "$REC.approved"
+  sha256sum "$PROJ/.agent-sandbox" | cut -d' ' -f1 | tr -d '\n' >"$REC" # approved before the effort check
+  printf '[agent]\neffort = bogus\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *$'\n'"agent-sandbox: refused — .agent-sandbox: [agent] effort = bogus: not an effort level -- one of "*"; a launch refuses it"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: check: a launch refuses this file"* ]]
+  [ -z "$(held "$output")" ]       # the refusal is shown, not counted
+  [[ "$output" != *"no longer"* ]] # and, in both, it is not gone
+}
+
+@test "a warning approved before, in both: printed; it is not counted (#491)" {
+  approve_as $'[net]\nmode = weird\n[permissions]\nRead\n[remote:box]\nhost = box.example\n'
+  printf '[net]\nmode = weird\n[permissions]\nRead\nEdit\n[remote:box]\nhost = box.example\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: warning — .agent-sandbox: [net] mode 'weird' unknown (proxy|strict|open|none); ignoring"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: warning — .agent-sandbox: [remote:box] has no port line"*"; unusable as written"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: refused — .agent-sandbox: [remote:box]: unusable as written, for the reasons above; "* ]]
+  [ "$(held "$output")" -eq 3 ]    # Read, and the remote's two info notes; the warnings and the refusal shown
+  [[ "$output" != *"no longer"* ]] # and, in both, it is not gone
+}
+
+@test "the same note text twice in the file, one added: printed once, the other counted (#491)" {
+  approve_as $'[permissions]\nRead\n'
+  printf '[permissions]\nRead\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "$(grep -c "^agent-sandbox: new — .agent-sandbox: \[permissions\] Read: $PERM_NOTE\$" <<<"$output")" -eq 1 ]
+  [ "$(held "$output")" -eq 1 ]
+  [[ "$output" != *"no longer in force"* ]]
+  # twice approved, twice now: both counted, neither new
+  approve_as $'[permissions]\nRead\n[permissions]\nRead\n'
+  printf '[permissions]\nRead\n[permissions]\nRead\nEdit\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "$(held "$output")" -eq 2 ]
+  [[ "$output" != *"new — .agent-sandbox: [permissions] Read:"* ]]
+  # twice approved, once now: one is gone, one counted
+  printf '[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "$(grep -c "^agent-sandbox: no longer — .agent-sandbox: \[permissions\] Read: $PERM_NOTE\$" <<<"$output")" -eq 1 ]
+  [ "$(held "$output")" -eq 1 ]
+}
+
+@test "one note held back is said as one note (#491)" {
+  approve_as $'[permissions]\nRead\n'
+  printf '[permissions]\nRead\nEdit\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: 1 note as in your approval, not shown; "*" --trust --all shows the whole review."$'\n'* ]]
+}
+
+@test "--all: every note, no summary line and no reason line (#491)" {
+  approve_as $'[permissions]\nRead\nGrep\n'
+  printf '[permissions]\nRead\nGrep\nEdit\n' >"$PROJ/.agent-sandbox"
+  run_review "$PROJ" --all
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Grep: $PERM_NOTE"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Edit: $PERM_NOTE"$'\n'* ]]
+  [ -z "$(held "$output")" ]
+  [[ "$output" != *"new — "* ]]
+  [[ "$output" != *"the whole review"* ]]
+  [[ "$output" == *"+Edit"* ]] # the diff, as today
+  check_flags --all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+  [ -z "$(held "$output")" ]
+}
+
+@test "no approval: the whole review, its first line says why (#491)" {
+  printf '[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "${lines[0]}" = "agent-sandbox: nothing approved to compare with: the whole review" ]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+  [ -z "$(held "$output")" ]
+}
+
+@test "an approval whose content was not kept: the whole review, its first line says why (#491)" {
+  printf '[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG/trust"
+  printf '%064d' 0 >"$REC" # an earlier engine's record: a digest, no content
+  run_review
+  [ "${lines[0]}" = "agent-sandbox: the approved content was not kept (an earlier engine approved it), so there is nothing to compare with: the whole review" ]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+  [ -z "$(held "$output")" ]
+}
+
+@test "approved and unchanged: one line and the count, no file and no notes; --check's own line follows (#491)" {
+  printf '[permissions]\nRead\nEdit\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_review
+  [ "${lines[0]}" = "agent-sandbox: this exact content is already approved." ]
+  [ "$(held "$output")" -eq 2 ]
+  [[ "$output" != *"[permissions] Read"* ]]
+  [[ "$output" != *"----"* ]]
+  [[ "$output" != *"sha256"* ]]
+  [ "$(grep -c 'this exact content is already approved' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"agent-sandbox: approve this .agent-sandbox for $PROJ? [y/N] agent-sandbox: left as it was: this exact content stays approved." ]] # the question, as T38 left it
+  check
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "agent-sandbox: this exact content is already approved." ]
+  [[ "${lines[1]}" == "agent-sandbox: 2 notes as in your approval, not shown; "*" --trust --all shows the whole review." ]]
+  [ "${lines[2]}" = "agent-sandbox: check: approved and unchanged since; a launch uses it" ]
+}
+
+@test "purpose files: all unchanged in one line with their count; one changed shows its diff, the others still one line (#491)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'A.\n' >"$PROJ/.asb/roles/a.md"
+  printf 'B.\n' >"$PROJ/.asb/roles/b.md"
+  printf 'C.\n' >"$PROJ/.asb/roles/c.md"
+  printf '[briefing:a]\n[briefing:b]\n[briefing:c]\n' >"$PROJ/.agent-sandbox"
+  approve
+  run_review # approved and unchanged: the one line and the count, no purpose line
+  [[ "$output" != *"approved, unchanged"* ]]
+  printf '[briefing:a]\n[briefing:b]\n[briefing:c]\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: approved, unchanged: $PROJ/.asb/roles/a.md, $PROJ/.asb/roles/b.md, $PROJ/.asb/roles/c.md (3 files)"$'\n'* ]]
+  [[ "$output" != *": approved, unchanged."* ]]
+  printf 'B, CHANGED.\n' >"$PROJ/.asb/roles/b.md"
+  run_review
+  [[ "$output" == *$'\n'"purpose file $PROJ/.asb/roles/b.md has changed since you approved it."* ]]
+  [[ "$output" == *$'\n'"+B, CHANGED."$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: approved, unchanged: $PROJ/.asb/roles/a.md, $PROJ/.asb/roles/c.md (2 files)"$'\n'* ]]
+}
+
+@test "--all goes with --trust, --check and --apply only: with another verb, or a launch, it is refused (#491)" {
+  local w
+  for w in --status --shutdown "--init roles" claude; do
+    # shellcheck disable=SC2086 # a verb and its word
+    run_engine -- asb --all $w
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--all shows the whole review of the .agent-sandbox; it goes with --trust, --check or --apply"* ]]
+  done
+  engine_cmd # --apply asks: answered no
+  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:4}" --all --apply "[permissions]" Read 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [[ "$output" != *"--all shows the whole review"* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
+}
+
+@test "a note's text is compared as data: a value with \$(...) and backquotes is never run (#491)" {
+  approve_as $'[permissions]\nBash($(touch PWNED1))\nBash(`touch PWNED2`)\n'
+  # shellcheck disable=SC2016 # the file's text, not expanded
+  printf '[permissions]\nBash($(touch PWNED1))\nBash(`touch PWNED2`)\nRead\n' >"$PROJ/.agent-sandbox"
+  run_review
+  [ "$(held "$output")" -eq 2 ]
+  [ ! -e "$PROJ/PWNED1" ]
+  [ ! -e "$PROJ/PWNED2" ]
+  [ ! -e "$BATS_TEST_TMPDIR/PWNED1" ]
+}
+
+# A review with a line of each kind: refused, warning, new, no longer (under its info
+# heading), info (the heading) and the summary.
+kinds_fixture() {
+  approve_as $'[permissions]\nRead\nGrep\n[ssh]\nold.example\n'
+  printf '[permissions]\nRead\nGrep\nEdit\n[agent]\neffort = bogus\n[net]\nmode = weird\n' >"$PROJ/.agent-sandbox"
+}
+
+@test "at a terminal each line of the review has its kind's word and colour; through a pipe the same words, no escape (#491)" {
+  kinds_fixture
+  check
+  [[ "$output" != *$'\e['* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: refused — .agent-sandbox: [agent] effort = bogus: "* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: warning — .agent-sandbox: [net] mode 'weird' unknown"* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [permissions] Edit: "* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: no longer — .agent-sandbox: [ssh] old.example: "* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: 2 notes as in your approval, not shown; "* ]]
+  local piped
+  piped="$(held "$output")"
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
+  local R=$'\e[0m'
+  tty_check
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[31m'"refused — .agent-sandbox: [agent] effort = bogus: "*"; a launch refuses it$R"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[33m'"warning — .agent-sandbox: [net] mode 'weird' unknown (proxy|strict|open|none); ignoring$R"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[32m'"new — .agent-sandbox: [permissions] Edit: $PERM_NOTE$R"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: no longer in force (approved before, not in the file now):"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[36m'"no longer — .agent-sandbox: [ssh] old.example: "*"$R"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[2m'"2 notes as in your approval, not shown; "*" --trust --all shows the whole review.$R"$'\n'* ]]
+  [ "$(held "$output")" = "$piped" ] # the comparison does not see the terminal
+  [[ "$output" != *$'\e[0m'"agent-sandbox: "$'\e['* ]]
+  [ "$(grep -c $'\e\\[' <<<"$output")" -eq 5 ] # the five coloured lines, nothing else
+}
+
+@test "the colour follows stderr, where the review is: stdout alone a terminal gives none, stderr alone gives it (#491)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
+  kinds_fixture
+  engine_cmd
+  # stderr to a file, stdout the terminal
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" script -qec "$(printf "%q " "${@:5}") --check 2>$(printf "%q" "$4")" /dev/null' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/err" "${ENGINE_CMD[@]}"
+  grep -qF 'new — .agent-sandbox: [permissions] Edit: ' "$H/err"
+  run ! grep -qF $'\e[' "$H/err"
+  # stdout to a file, stderr the terminal
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" script -qec "$(printf "%q " "${@:5}") --check >$(printf "%q" "$4")" /dev/null | tr -d "\r"' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "$H/out" "${ENGINE_CMD[@]}"
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[32m'"new — .agent-sandbox: [permissions] Edit: "* ]]
+}
+
+@test "at a terminal, NO_COLOR set gives no escape; NO_COLOR empty gives colour (#491)" {
+  command -v script >/dev/null || skip "script(1) is not on PATH: no terminal to test the colour on"
+  kinds_fixture
+  tty_check NO_COLOR=1
+  [[ "$output" == *$'\n'"agent-sandbox: new — .agent-sandbox: [permissions] Edit: "* ]]
+  [[ "$output" != *$'\e['* ]]
+  tty_check NO_COLOR=
+  [[ "$output" == *$'\n'"agent-sandbox: "$'\e[32m'"new — .agent-sandbox: [permissions] Edit: "* ]]
+}
+
+@test "a profile's refusal and warning, approved and in both: printed with their words, not counted (#491)" {
+  approve_as "$(printf '[sshd]\nhome = /srv\nauthorized-keys = %s/keys\n[permissions]\nRead\n' "$PROJ")"
+  printf '[sshd]\nhome = /srv\nauthorized-keys = %s/keys\n[permissions]\nRead\nEdit\n' "$PROJ" >"$PROJ/.agent-sandbox"
+  run_review
+  [[ "$output" == *$'\n'"agent-sandbox: refused — .agent-sandbox: [sshd] home = /srv: not a value it takes (project); a launch refuses it"$'\n'* ]]
+  [[ "$output" == *$'\n'"agent-sandbox: warning — .agent-sandbox: [sshd] authorized-keys = $PROJ/keys is inside the project directory"* ]]
+  [ "$(held "$output")" -eq 2 ] # Read, and the keys file's info note
+}
+
+@test "every note the engine words as a refusal or a line ignored is marked with its kind (#491)" {
+  # The kind is set at the source, never read from the words at run time; this reads the
+  # source, so a new note worded so and left unmarked is caught here. The two lines
+  # left: a launch's own (a profile's hide), and --serve's watch-only note, which says
+  # what --serve refuses but is itself information.
+  run grep -nE '_as_(msg|remote_say) "(\.agent-sandbox|connect)[^"]*(refuses|unusable|cannot be approved|ignoring|Ignoring)' "$ENGINE"
+  local left
+  # shellcheck disable=SC2016 # the engine's source text, not expanded
+  left="$(grep -vF -e 'hide: ignoring \"$name\"' -e 'watch only -- the watcher on $w is enforced' <<<"$output" || true)"
+  [ -z "$left" ]
+  [ "${#lines[@]}" -eq 2 ]
+  # a remote's lines (said with the section's name in front) and a port's reasons
+  # (said with the line's label in front): every one so worded is marked
+  # shellcheck disable=SC2016 # the engine's source text, not expanded
+  run grep -nE '_as_remote_say "[^"]*(refuses|unusable|ignoring)|_as_msg "\$label: [^"]*(bad port|refused)' "$ENGINE"
+  [ -z "$output" ]
+}
+
+@test "inside a sandbox, --check says why there is nothing to compare with, and never 'approved and unchanged' beside it (#491)" {
+  printf '[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  printf '#!/usr/bin/env bash\nsource %q\n_as_pid1_bwrap() { return 0; }\nagent_sandbox "$@"\n' "$ENGINE" >"$H/inside"
+  chmod +x "$H/inside"
+  engine_cmd "$H/inside"
+  run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" AGENT_SANDBOX=1 "${@:4}" --check 2>&1 </dev/null' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [ "${lines[0]}" = "agent-sandbox: inside a sandbox, where no approval is recorded, so there is nothing to compare with: the whole review" ]
+  [[ "$output" == *$'\n'"agent-sandbox: check: inside a sandbox there is no gate: a launch here uses it without asking"$'\n'* ]]
+  [[ "$output" != *"approved and unchanged"* ]]
+}
+
+@test "a purpose file changed, the dot-file as approved: one line for the dot-file, not all of it; the purpose file's diff (#491)" {
+  mkdir -p "$PROJ/.asb/roles"
+  printf 'A.\n' >"$PROJ/.asb/roles/a.md"
+  printf '[briefing:a]\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  approve
+  printf 'A, CHANGED.\n' >"$PROJ/.asb/roles/a.md"
+  run_review
+  [[ "$output" == *$'\n'"$PROJ/.agent-sandbox is as you approved it (sha256 "*"); a purpose file or addendum it names is not."$'\n'* ]]
+  [[ "$output" != *$'\n'"[permissions]"$'\n'* ]] # the file is not shown
+  [[ "$output" == *$'\n'"+A, CHANGED."$'\n'* ]]
+  [ "$(held "$output")" -eq 1 ]
+  run_review "$PROJ" --all
+  [[ "$output" == *$'\n'"[permissions]"$'\n'* ]] # --all: the whole file
+}
+
+@test "approved and unchanged, with a refusal an older rule let through: the refusal is printed, not counted (#491)" {
+  printf '[agent]\neffort = bogus\n[permissions]\nRead\n' >"$PROJ/.agent-sandbox"
+  mkdir -p "$CFG/trust"
+  cp "$PROJ/.agent-sandbox" "$REC.approved"
+  sha256sum "$PROJ/.agent-sandbox" | cut -d' ' -f1 | tr -d '\n' >"$REC" # approved before the effort check
+  check
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "agent-sandbox: this exact content is already approved." ]
+  [[ "$output" == *$'\n'"agent-sandbox: refused — .agent-sandbox: [agent] effort = bogus: not an effort level -- one of "*"; a launch refuses it"$'\n'* ]]
+  [ "$(held "$output")" -eq 1 ] # Read
+}

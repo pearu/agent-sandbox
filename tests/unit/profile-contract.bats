@@ -61,7 +61,11 @@ contract_facts() {
     "$ENGINE" "$REPO_ROOT/profiles/$1/profile.sh" >"$H/facts"
   [ -s "$H/facts" ]
   [ -z "$(awk -F'\t' -v n="$1" '$2 != n' "$H/facts")" ]
-  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|install|version|pin|env-set|command|by-name-only|loaded)'$'\t' "$H/facts"
+  run ! grep -vE '^(channel|key|resume|clear|base|account-paths|login|account-expiry|login-renew|install|version|pin|env-set|command|by-name-only|loaded|allow)'$'\t' "$H/facts"
+  # its own hosts (#491): one allow line for each host of its dot-file's [allow]
+  local want
+  want="$(sed -n '/^\[allow\]/,/^\[/{/^\[/d;s/#.*//;s/[[:space:]]//g;/./p}' "$REPO_ROOT/profiles/$1/agent-sandbox" 2>/dev/null | sort)"
+  [ "$(awk -F'\t' '$1 == "allow" {print $3}' "$H/facts" | sort)" = "$want" ]
 }
 
 contract_keys() {

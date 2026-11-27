@@ -306,14 +306,16 @@ effort_calls() {
   : >"$H/effort.calls"
 }
 
-# run_review [DIR] -- the dot-file review of DIR ($PROJ, else $H/proj), as `--trust`
+# run_review [DIR [FLAG...]] -- the dot-file review of DIR ($PROJ, else $H/proj), as `--trust`
 # runs it, answered no: sets $output to what it says before the question. Records
-# nothing. What follows from the file's text alone is said here, not at a launch.
+# nothing. What follows from the file's text alone is said here, not at a launch. FLAGs
+# follow --trust (--all: the whole review, #491).
 run_review() {
   local dir="${1:-${PROJ:-$H/proj}}"
+  (($# == 0)) || shift
   engine_cmd
-  run bash -c 'cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:4}" --trust 2>&1' _ \
-    "$dir" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  run bash -c 'n="$4"; cd "$1" && printf "n\n" | env -i HOME="$2" PATH="$3" "${@:5:n}" --trust "${@:5+n}" 2>&1' _ \
+    "$dir" "$H/home" "$H/bin:/usr/bin:/bin" "${#ENGINE_CMD[@]}" "${ENGINE_CMD[@]}" "$@"
 }
 
 # run_engine_tty ANSWERS [VAR=value ...] -- CMD ARGS... -- run_engine, but at a terminal:

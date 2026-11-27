@@ -1120,6 +1120,35 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Changed
 
+- **`asb --trust` shows what is new to be trusted, and says plainly that the rest
+  stands** (#491). After a small change to an approved `.agent-sandbox`, the review
+  behind `--trust`, `--apply`, a launch's question and `--check` printed every note on
+  the whole file and one line per unchanged purpose file. What you decided was buried
+  in what you had approved before. Measured on an `asb --init roles` project with
+  `[permissions:planner-*] Read` added, the review went from 85 lines to 18. Now:
+  - **The notes are made twice**, for the approved content and for the file now, and
+    compared by their text as a multiset. The review shows the new ones (`new —`), then
+    the approved ones the file no longer gives, under `no longer in force (approved
+    before, not in the file now):` (`no longer —`). It ends with
+    `N notes as in your approval, not shown; asb --trust --all shows the whole review.`
+  - **Each `[allow]` and `[deny]` host is a note,** for the roles it is for, so an added
+    or removed host reads as `new` or `no longer`. A `[deny]` that would take a
+    profile's own host says that a launch under that profile leaves it out.
+  - **A refusal (`refused —`) or a warning (`warning —`)** is always shown, new or not:
+    an engine newer than the approval may refuse what it accepted. A warning is a line
+    that is ignored or unusable as written.
+  - **Unchanged purpose files and addenda** are one line,
+    `approved, unchanged: NAMES (N files)`; so is the dot-file, when only they changed.
+  - **An approved file, unchanged,** is `this exact content is already approved` and the
+    count: 2 lines where there were 305.
+  - **With nothing to compare with** (no approval, an earlier engine's that kept no
+    content, or inside a sandbox, where none is recorded), the whole review prints,
+    after a line that says which.
+  - **`--all`** (with `--trust`, `--check` or `--apply`) prints the whole review.
+  - **At a terminal** each kind has a colour, beside its word: red, yellow, green, cyan,
+    and dim for the count. There is no colour through a pipe, or with `NO_COLOR` set
+    to a value.
+
 - **The Supervisor watches with one stream, and its progress goes to the status line.**
   Claude Code's own notices filled the Supervisor's pane, the one you read for
   decisions. Each wake of its one-shot watcher showed a completion and a re-arm, and

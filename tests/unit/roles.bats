@@ -227,7 +227,7 @@ ssh_constraints() { grep -A1 -x -- -h "$H/ssh-add.log" | grep -vx -e -h -e -- | 
 
 @test "the review reads every role's lines, whatever role launches (#221)" {
   dotfile $'[env:impl-*]\nPINNED = yes\n[net:reviewer]\nmode = bogus\n'
-  run_review
+  run_review "$PROJ" --all # approved: the whole review (#491)
   [[ "$output" == *"[env:impl-*] PINNED = yes: sets PINNED inside, for the roles impl-*, under the profile sshd; ignored under claude, where a project's file only forwards"* ]]
   [[ "$output" == *"[net] mode 'bogus' unknown"* ]]
 }
@@ -317,7 +317,7 @@ STUB
   engine_cmd
   run bash -c 'cd "$1" && env -i HOME="$2" PATH="$3" "${@:4}" --check --role market-laptops 2>&1 </dev/null' _ "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
   [[ "$output" == *"network: every public host -- the allowlist does not apply"* ]]
-  run_review
+  run_review "$PROJ" --all # approved: the whole review (#491)
   [[ "$output" == *"[net] hosts = public: every public host is reachable"* ]]
   [[ "$output" == *"[net] hosts 'everywhere' unknown (allowlist|public)"* ]]
   run_engine AGENT_SANDBOX_NET=none -- asb --role market-laptops claude --version

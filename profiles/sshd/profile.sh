@@ -264,7 +264,7 @@ profile_trust_notes() {
       if [[ "$v" == project ]]; then
         printf '[sshd] home = project: the sessions'"'"' HOME is the project directory %s, and every session starts there; dot-files a session'"'"'s tools write go into the project\n' "$cwd"
       else
-        printf '[sshd] home = %s: not a value it takes (project); a launch refuses it\n' "$v"
+        printf 'refused\t[sshd] home = %s: not a value it takes (project); a launch refuses it\n' "$v"
       fi
       continue
     fi
@@ -272,13 +272,13 @@ profile_trust_notes() {
     v="${kv#*=}" p="${kv#*=}"
     [[ "$p" == \~ || "$p" == \~/* ]] && p="$HOME${p#\~}"
     if [[ "$p" != /* ]]; then
-      printf '[sshd] authorized-keys = %s: a relative path; a launch refuses it (an absolute path, or under ~)\n' "$v"
+      printf 'refused\t[sshd] authorized-keys = %s: a relative path; a launch refuses it (an absolute path, or under ~)\n' "$v"
       continue
     fi
     printf '[sshd] authorized-keys = %s: whoever holds a key listed there logs in to this project'"'"'s sshd roles, in their sandbox; the file is copied at each launch\n' "$v"
     p="$(realpath -m -- "$p")"
     if [[ "$p" == "$cwd" || "$p" == "$cwd"/* ]]; then
-      printf 'warning -- [sshd] authorized-keys = %s is inside the project directory, which every session can write: a session could add a key that the next launch lets in. Keep it outside the project\n' "$v"
+      printf 'warning\t[sshd] authorized-keys = %s is inside the project directory, which every session can write: a session could add a key that the next launch lets in. Keep it outside the project\n' "$v"
     fi
   done
 }

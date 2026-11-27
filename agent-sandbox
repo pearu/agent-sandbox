@@ -449,7 +449,28 @@
 # agent_sandbox(), whose locals (args, _session_dir, ...) they reach through
 # bash's dynamic scoping.
 
-_as_msg() { echo "agent-sandbox: $*" >&2; }
+_as_msg() {
+  # The review keeps its notes (_as_trust_notes_kept): each one framed by NULs on stderr,
+  # with its kind, so a redirect that silences a message silences it there too.
+  if [[ -n "${_as_note_cap:-}" ]]; then
+    printf '\0%s\t%s\0' "${_as_kind:-info}" "$*" >&2
+    return 0
+  fi
+  echo "agent-sandbox: $*" >&2
+}
+
+# _as_msg_warning TEXT, _as_msg_refused TEXT -- _as_msg for a note the review always
+# shows, whatever was approved: a line that does not take effect as written (a warning),
+# or one a launch or a verb refuses (a refusal). The kind is the note's, set where it is
+# made (#491); anywhere but the review, the same line as _as_msg.
+_as_msg_warning() {
+  local _as_kind=warning
+  _as_msg "$@"
+}
+_as_msg_refused() {
+  local _as_kind=refused
+  _as_msg "$@"
+}
 
 # _as_python COMPONENT ARGS... -- run one of the engine's Python components (join.py,
 # connect-sync.py) with python3, or with the words of AGENT_SANDBOX_TEST_PYTHON when set:
@@ -596,6 +617,9 @@ Engine flags (before CMD):
                         or not, or a command on PATH);
                         exits non-zero when a launch of any of them would
                         refuse the file (for an author, CI or a pre-commit hook)
+  --all                 with --trust, --check or --apply (before it): the whole
+                        review; without it, against an approval, the review
+                        shows what is new or gone since, and counts the rest
   --verbose             also print the routine status lines (dot-file values
                         applied, session allowlist, seccomp filter in use).
                         Refusals, warnings and "not sandboxed" notices are
@@ -1503,6 +1527,13 @@ _as_ssh_sysconfig_copies() {
   return 0
 }
 
+# _as_deny_takes DENY HOST -- would the [deny] host DENY take HOST (one of the profile's
+# own)? The same name, or either a `.domain` the other is under.
+_as_deny_takes() {
+  local dn="${1#.}" hn="${2#.}"
+  [[ "$hn" == "$dn" || ("$1" == .* && "$hn" == *".$dn") || ("$2" == .* && "$dn" == *".$hn") ]]
+}
+
 # The session's identity at the proxy: mint a per-session token, and write this
 # session's extra hosts, [deny], retrieve-only and git files where the proxy addon
 # reads them. The token goes in the session dir (private, never bound into a
@@ -1541,13 +1572,12 @@ _as_allow_setup() {
   # [deny] (#221): hosts taken out of the global allowlist and this session's grant.
   # Never the profile's own: a line that would take one is left out, and said, since
   # the agent cannot work without them.
-  local _d _p _dn _pn _hit
+  local _d _p _hit
   local -a _deny=()
   for _d in ${_deny_hosts[@]+"${_deny_hosts[@]}"}; do
     _hit=""
     for _p in ${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"}; do
-      _dn="${_d#.}" _pn="${_p#.}"
-      if [[ "$_pn" == "$_dn" || ("$_d" == .* && "$_pn" == *".$_dn") || ("$_p" == .* && "$_dn" == *".$_pn") ]]; then
+      if _as_deny_takes "$_d" "$_p"; then
         _hit="$_p"
         break
       fi
@@ -5689,9 +5719,9 @@ _as_serve_notes() {
         _as_serve_path_ok "$w" \
           && _as_msg ".agent-sandbox: $sec, for $n: watch only -- the watcher on $w is enforced, the role is not served (no prompt: --serve refuses). It widens nothing"
       elif [[ -z "$v" ]]; then
-        _as_msg ".agent-sandbox: $sec has no '$k = PATH'; --serve refuses for $n until it has both watch and prompt"
+        _as_msg_refused ".agent-sandbox: $sec has no '$k = PATH'; --serve refuses for $n until it has both watch and prompt"
       elif ! _as_serve_path_ok "$v"; then
-        _as_msg ".agent-sandbox: $sec $k '$v' is not a path in the project (relative to it, no '..'); --serve refuses for $n"
+        _as_msg_refused ".agent-sandbox: $sec $k '$v' is not a path in the project (relative to it, no '..'); --serve refuses for $n"
       fi
     done
     if [[ -n "$w" && -n "$p" ]] && _as_serve_path_ok "$w" && _as_serve_path_ok "$p"; then
@@ -7134,11 +7164,11 @@ _as_port_ok() { # $1 = label for messages, $2 = token
   local label="$1" t="$2"
   [[ "$t" == none ]] && return 0
   if [[ ! "$t" =~ ^[0-9]{1,5}$ ]] || ((10#$t > 65535)); then
-    _as_msg "$label: bad port '$t' (expected a port 1024-65535, or none)"
+    _as_msg_warning "$label: bad port '$t' (expected a port 1024-65535, or none)"
     return 1
   fi
   if ((10#$t < 1024)); then
-    _as_msg "$label: port $t refused (below 1024: pasta cannot bind system ports unprivileged)"
+    _as_msg_warning "$label: port $t refused (below 1024: pasta cannot bind system ports unprivileged)"
     return 1
   fi
   return 0
@@ -7170,7 +7200,7 @@ _as_agent_port_norm() { # $1 = label for messages, $2 = token
     ok=0
   fi
   if ! ((ok)); then
-    _as_msg "$label: bad port '$t' (expected PORT, or ADDR:PORT with ADDR an IPv4 address of this host or 0.0.0.0 for every one -- not a hostname, a CIDR or IPv6, which is not taken yet; or none)"
+    _as_msg_warning "$label: bad port '$t' (expected PORT, or ADDR:PORT with ADDR an IPv4 address of this host or 0.0.0.0 for every one -- not a hostname, a CIDR or IPv6, which is not taken yet; or none)"
     return 1
   fi
   _as_port_ok "$label${addr:+ $t}" "$port" || return 1
@@ -7621,7 +7651,7 @@ _as_briefing_start_notes() {
     if _as_serve_path_ok "$v"; then
       _as_msg ".agent-sandbox: $sec start, for $n: its first turn at every start is the text of $v (not under --serve, --exec or a verb). It widens nothing"
     else
-      _as_msg ".agent-sandbox: $sec start '$v' is not a path in the project (relative to it, no '..'); a launch of $n refuses"
+      _as_msg_refused ".agent-sandbox: $sec start '$v' is not a path in the project (relative to it, no '..'); a launch of $n refuses"
     fi
   done
   return 0
@@ -7666,7 +7696,7 @@ _as_briefing_context_notes() {
     if _as_serve_path_ok "$v"; then
       _as_msg ".agent-sandbox: $sec context, for $n: their agent's profile keeps $v (and $v.level) current with how full the role's context is, where it can write. It widens nothing"
     else
-      _as_msg ".agent-sandbox: $sec context '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no context file"
+      _as_msg_warning ".agent-sandbox: $sec context '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no context file"
     fi
   done
   return 0
@@ -7801,7 +7831,7 @@ _as_briefing_asking_notes() {
     if _as_serve_path_ok "$v"; then
       _as_msg ".agent-sandbox: $sec asking, for $n: their agent's profile keeps $v there from when the role asks the user something in its pane to its next hook event after the answer, where it can write. It widens nothing"
     else
-      _as_msg ".agent-sandbox: $sec asking '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no asking file"
+      _as_msg_warning ".agent-sandbox: $sec asking '$v' is not a path in the project (relative to it, no '..'); a launch of $n writes no asking file"
     fi
   done
   return 0
@@ -8777,8 +8807,10 @@ _as_profile_facts_dotfile() {
   local -a profile_channel_start=() profile_channel_presets=() profile_channel_templates=() profile_channel_reach=() profile_channel_env=()
   local -a profile_channel_create=() profile_channel_login=() profile_channel_links=()
   _as_profile_dotfile "$2" >/dev/null 2>&1 || true # fills the caller's profile_channels, profile_resume, profile_clear, profile_account_paths, profile_login, profile_account_expiry, profile_login_renew, profile_install
-  # the caller's: the base, for the review's [connect] check (#355)
+  # the caller's: the base, for the review's [connect] check (#355), and the profile's own
+  # hosts, for its [deny] notes (#491)
   _pf_base="$profile_base"
+  _pf_allow=(${_profile_allow_hosts[@]+"${_profile_allow_hosts[@]}"})
 }
 
 # _as_profile_facts FILE -- what the review needs of a profile, which it reads with no
@@ -8793,7 +8825,8 @@ _as_profile_facts_dotfile() {
 # version of its versions table and `pin<TAB>NAME<TAB>V` for the pinned one (#6);
 # `command<TAB>NAME<TAB>CMD`, the
 # command a launch looks up (profile_command, or the dot-file's [agent] command), and
-# `by-name-only<TAB>NAME` for a profile chosen by --profile alone; `loaded<TAB>NAME` once
+# `by-name-only<TAB>NAME` for a profile chosen by --profile alone; `allow<TAB>NAME<TAB>HOST`
+# for each host of its dot-file's [allow], the profile's own (#491); `loaded<TAB>NAME` once
 # its profile.sh has been sourced without failing (no line at all when it fails).
 # Sourced in a subshell; a profile's top level only declares. What a profile adds at a
 # launch (profile_prepare) is not here.
@@ -8805,6 +8838,7 @@ _as_profile_facts() {
     local -a profile_channels=() profile_dotfile_keys=() profile_resume=() profile_account_paths=() profile_login=() profile_account_expiry=()
     local -a profile_install=() profile_versions=()
     local profile_project_env_set=0 profile_clear="" _pf_base="" profile_login_set=0 profile_login_renew="" profile_version_pin=""
+    local -a _pf_allow=()
     # not the caller's (a launch has its own): unset, the launch's defaults apply below
     unset profile_command profile_by_name_only
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
@@ -8825,6 +8859,7 @@ _as_profile_facts() {
     fi
     [[ -z "$profile_clear" ]] || printf 'clear\t%s\t%s\n' "$name" "$profile_clear"
     [[ -z "$_pf_base" ]] || printf 'base\t%s\t%s\n' "$name" "$_pf_base"
+    for l in ${_pf_allow[@]+"${_pf_allow[@]}"}; do printf 'allow\t%s\t%s\n' "$name" "$l"; done
     if ((${#profile_account_paths[@]})); then
       printf 'account-paths\t%s' "$name"
       printf '\t%s' "${profile_account_paths[@]}"
@@ -8855,7 +8890,12 @@ _as_profile_facts() {
 _as_profile_trust_notes() {
   local line
   while IFS= read -r line; do
-    [[ -n "$line" ]] && _as_msg ".agent-sandbox: $line"
+    case "$line" in
+      "") ;;
+      refused$'\t'*) _as_msg_refused ".agent-sandbox: ${line#*$'\t'}" ;;
+      warning$'\t'*) _as_msg_warning ".agent-sandbox: ${line#*$'\t'}" ;;
+      *) _as_msg ".agent-sandbox: $line" ;;
+    esac
   done < <(
     # shellcheck disable=SC2329 # replaces the engine's, for the profile's top level
     _as_msg() { :; }
@@ -10228,7 +10268,7 @@ _as_agent_notes() {
       elif _as_effort_ok "$v"; then
         _as_msg ".agent-sandbox: $sect effort = $v: $n run at the effort level $v, given to their agent by its profile (profile_effort_args) before the agent's own arguments"
       else
-        _as_msg ".agent-sandbox: $sect effort = $v: not an effort level -- one of $(_as_effort_levels); a launch refuses it"
+        _as_msg_refused ".agent-sandbox: $sect effort = $v: not an effort level -- one of $(_as_effort_levels); a launch refuses it"
         bad=1
       fi
       continue
@@ -10239,7 +10279,7 @@ _as_agent_notes() {
       elif _as_auto_compact_ok "$v"; then
         _as_msg ".agent-sandbox: $sect auto-compact = $v: $n run with auto-compact $v, given to their agent by its profile (profile_auto_compact_args) in the briefing's settings"
       else
-        _as_msg ".agent-sandbox: $sect auto-compact = $v: not a value -- one of $(_as_auto_compact_values); a launch refuses it"
+        _as_msg_refused ".agent-sandbox: $sect auto-compact = $v: not a value -- one of $(_as_auto_compact_values); a launch refuses it"
         bad=1
       fi
       continue
@@ -10252,10 +10292,10 @@ _as_agent_notes() {
       elif [[ "$k" == context-rescue ]] && _as_context_rescue_ok "$v"; then
         _as_msg ".agent-sandbox: $sect context-rescue = $v: the context file of $n says rescue once $v tokens or fewer are left before the stop"
       elif [[ "$k" == context-plan ]]; then
-        _as_msg ".agent-sandbox: $sect context-plan = $v: not a value -- a percent of the stop, 1% to 100%; a launch refuses it"
+        _as_msg_refused ".agent-sandbox: $sect context-plan = $v: not a value -- a percent of the stop, 1% to 100%; a launch refuses it"
         bad=1
       else
-        _as_msg ".agent-sandbox: $sect context-rescue = $v: not a value -- tokens left before the stop, a number; a launch refuses it"
+        _as_msg_refused ".agent-sandbox: $sect context-rescue = $v: not a value -- tokens left before the stop, a number; a launch refuses it"
         bad=1
       fi
       continue
@@ -10308,7 +10348,7 @@ _as_agent_notes() {
         [[ "$eg" == $g ]] && lg="$g" lv="${sfx[j]##*$'\t'}"
       done
       # the line the role takes: said only when it is a glob's
-      [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg ".agent-sandbox: [agent:$eg] $key = $ev: role $eg takes the later [agent:$lg] $key = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
+      [[ -z "$lg" || "$lg" != *[*?[]* ]] || _as_msg_warning ".agent-sandbox: [agent:$eg] $key = $ev: role $eg takes the later [agent:$lg] $key = $lv instead (among suffixed sections the later line wins); put [agent:$eg] after it to keep its own"
     done
   done
   return "$bad"
@@ -10362,10 +10402,54 @@ _as_trust_notes() {
     _df_profile_names+=("$(basename -- "$(dirname -- "$f")")")
     while IFS= read -r line; do facts+=("$line"); done < <(_as_profile_facts "$f")
   done
-  _as_dotfile_parse "$file"    # what it ignores, it says
+  _as_dotfile_parse "$file" # what it ignores, it says
+  # [allow] and [deny] (#491): a note per host, for the roles it is for, as a launch takes
+  # them (#221): an unsuffixed line for every role, a section's for its glob's roles. The
+  # unsuffixed are what the parse has kept before the roles' lines are applied.
+  local -a ad=()
+  for h in ${_df_allow[@]+"${_df_allow[@]}"}; do ad+=("*"$'\t'allow$'\t'"$h"); done
+  for h in ${_df_deny[@]+"${_df_deny[@]}"}; do ad+=("*"$'\t'deny$'\t'"$h"); done
+  for h in ${_df_role_lines[@]+"${_df_role_lines[@]}"}; do
+    [[ "$h" == *$'\t'allow$'\t'* || "$h" == *$'\t'deny$'\t'* ]] && ad+=("$h")
+  done
   _as_dotfile_apply_role --all # every role's lines, whatever role launches it
   for h in ${_df_allow[@]+"${_df_allow[@]}"}; do
-    [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg ".agent-sandbox allow: bad host '$h'; ignoring"
+    [[ -z "$h" || "$h" =~ $_as_hostre ]] || _as_msg_warning ".agent-sandbox allow: bad host '$h'; ignoring"
+  done
+  local -a own=() # the profiles with hosts of their own, once each
+  for line in ${facts[@]+"${facts[@]}"}; do
+    [[ "$line" == allow$'\t'* ]] || continue
+    cs="${line#allow$'\t'}"
+    cs="${cs%%$'\t'*}"
+    [[ " ${own[*]-} " == *" $cs "* ]] || own+=("$cs")
+  done
+  for h in ${ad[@]+"${ad[@]}"}; do
+    v="${h%%$'\t'*}" h="${h#*$'\t'}"
+    k="${h%%$'\t'*}" h="${h#*$'\t'}"
+    if [[ "$v" == "*" ]]; then n="every role" v="[$k]"; else n="the roles $v" v="[$k:$v]"; fi
+    [[ -n "$h" && "$h" =~ $_as_hostre ]] || {
+      [[ "$k" == allow ]] || _as_msg_warning ".agent-sandbox: $v bad host '$h'; ignoring"
+      continue
+    }
+    if [[ "$k" == allow ]]; then
+      _as_msg ".agent-sandbox: $v $h: reachable for $n (this project's allowlist)"
+      continue
+    fi
+    # A launch never denies a profile's own host (_as_allow_setup): said, per profile.
+    f=""
+    for cs in ${own[@]+"${own[@]}"}; do
+      key=""
+      for line in ${facts[@]+"${facts[@]}"}; do
+        [[ "$line" == allow$'\t'"$cs"$'\t'* ]] || continue
+        spec="${line##*$'\t'}"
+        _as_deny_takes "$h" "$spec" && key+="${key:+, }$spec"
+      done
+      [[ -z "$key" ]] && continue
+      mode="host"
+      [[ "$key" != *,* ]] || mode="hosts"
+      f+="; not under the profile $cs, whose own $mode $key it would take: a launch there leaves it out"
+    done
+    _as_msg ".agent-sandbox: $v $h: refused for $n, whatever the allowlist and hosts = public$f"
   done
   # [ssh]: a widening -- a role signs in as you over SSH -- said per host and section,
   # and that the host is one of the file's [remote:ALIAS] sections when it is (#344).
@@ -10379,7 +10463,7 @@ _as_trust_notes() {
       grep -qxF -- "$k" <<<"$remotes" && f="; $k is the remote $k of this file, [remote:$k]"
       _as_msg ".agent-sandbox: $v $k: SSH to it as you, signed with your key through the broker, for $n; [net] git and retrieve-only do not reach into it: a push over SSH to a remote on it is possible where the account allows$f"
     else
-      _as_msg ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
+      _as_msg_warning ".agent-sandbox: $v bad host '$k' (a hostname, user@host, or ~/.ssh/config alias); ignoring"
     fi
   done
   local remote_rc=0
@@ -10393,7 +10477,7 @@ _as_trust_notes() {
     if _as_perm_rule_ok "$k"; then
       _as_msg ".agent-sandbox: $v $k: a permission rule the agent gets without asking you, for $n"
     else
-      _as_msg ".agent-sandbox: $v bad rule '$k' (a tool name, or Tool(specifier), as the agent's settings take it); ignoring"
+      _as_msg_warning ".agent-sandbox: $v bad rule '$k' (a tool name, or Tool(specifier), as the agent's settings take it); ignoring"
     fi
   done
   # [env] NAME = VALUE: a profile's, except under a profile that lets a project's file set
@@ -10409,7 +10493,7 @@ _as_trust_notes() {
   for h in ${_df_env_set_by[@]+"${_df_env_set_by[@]}"}; do
     v="${h%%$'\t'*}" k="${h#*$'\t'}"
     if ((${#env_yes[@]} == 0)); then
-      _as_msg ".agent-sandbox: [env] ${k%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
+      _as_msg_warning ".agent-sandbox: [env] ${k%%=*} = ...: a project's file only forwards; setting a variable is a profile's. Ignoring"
       continue
     fi
     if [[ "$v" == "*" ]]; then v="[env]" n="every role"; else n="the roles $v" v="[env:$v]"; fi
@@ -10423,23 +10507,23 @@ _as_trust_notes() {
   _as_briefing_asking_notes
   _as_agent_notes || remote_rc=1
   for h in ${_df_env_refuse[@]+"${_df_env_refuse[@]}"}; do
-    _as_msg ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
+    _as_msg_warning ".agent-sandbox: [env] -$h: a project's file only forwards; refusing a variable is a profile's. Ignoring"
   done
   local -A _seen_ch=() _seen_pr=()
   for h in ${_df_preset_lines[@]+"${_df_preset_lines[@]}"}; do
     [[ -n "${_seen_pr[${h%%$'\t'*}]:-}" ]] && continue
     _seen_pr[${h%%$'\t'*}]=1
-    _as_msg ".agent-sandbox: [preset:${h%%$'\t'*}] is a profile's, not a project's: ignoring (a project picks a preset with [sandbox] preset, and moves a channel with [connect])"
+    _as_msg_warning ".agent-sandbox: [preset:${h%%$'\t'*}] is a profile's, not a project's: ignoring (a project picks a preset with [sandbox] preset, and moves a channel with [connect])"
   done
   for h in ${_df_channel_lines[@]+"${_df_channel_lines[@]}"}; do
     [[ -n "${_seen_ch[${h%%$'\t'*}]:-}" ]] && continue
     _seen_ch[${h%%$'\t'*}]=1
-    _as_msg ".agent-sandbox: [channel:${h%%$'\t'*}] is a profile's channel table, not a project's: ignoring (a project moves a channel with [connect])"
+    _as_msg_warning ".agent-sandbox: [channel:${h%%$'\t'*}] is a profile's channel table, not a project's: ignoring (a project moves a channel with [connect])"
   done
   case "$_df_net_mode" in
     "" | proxy | strict | none) ;;
     open) _as_msg ".agent-sandbox: network mode 'open': the egress allowlist is off for this project" ;;
-    *) _as_msg ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [net] mode '$_df_net_mode' unknown (proxy|strict|open|none); ignoring" ;;
   esac
   local -a hv=()
   read -ra hv <<<"$_df_hosts_seen"
@@ -10448,16 +10532,16 @@ _as_trust_notes() {
       "") ;;
       allowlist) ;;
       public) _as_msg ".agent-sandbox: [net] hosts = public: every public host is reachable, the allowlist does not apply (localhost, the LAN and [deny] stay refused)" ;;
-      *) _as_msg ".agent-sandbox: [net] hosts '$v' unknown (allowlist|public); ignoring" ;;
+      *) _as_msg_warning ".agent-sandbox: [net] hosts '$v' unknown (allowlist|public); ignoring" ;;
     esac
   done < <(printf '%s\n' ${hv[@]+"${hv[@]}"} | sort -u)
   case "$_df_net_retrieve_only" in
     "" | on | 1 | off | 0) ;;
-    *) _as_msg ".agent-sandbox: [net] retrieve-only '$_df_net_retrieve_only' unknown (on|off); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [net] retrieve-only '$_df_net_retrieve_only' unknown (on|off); ignoring" ;;
   esac
   case "$_df_net_git" in
     "" | allow | fetch | refuse) ;;
-    *) _as_msg ".agent-sandbox: [net] git '$_df_net_git' unknown (allow|fetch|refuse); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [net] git '$_df_net_git' unknown (allow|fetch|refuse); ignoring" ;;
   esac
   # [net] agent-port: each token as written and where it is published (#335); one with
   # an address is a widening past the host's loopback. A bad one refuses the launch.
@@ -10466,21 +10550,21 @@ _as_trust_notes() {
       [[ "$v" == none ]] && continue
       _as_msg ".agent-sandbox: [net] agent-port = $h: (strict) published at $(_as_agent_port_say "$v")"
     else
-      _as_msg ".agent-sandbox: [net] agent-port = $h: a launch refuses it"
+      _as_msg_refused ".agent-sandbox: [net] agent-port = $h: a launch refuses it"
     fi
   done
   case "$_df_seccomp_mode" in
     "" | on | 1) ;;
     off | 0) _as_msg ".agent-sandbox: seccomp mode 'off': the default-deny syscall filter is off for this project" ;;
-    *) _as_msg ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [seccomp] mode '$_df_seccomp_mode' unknown (on|off); ignoring" ;;
   esac
   case "$_df_briefing_mode" in
     "" | on | 1 | off | 0) ;;
-    *) _as_msg ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [briefing] mode '$_df_briefing_mode' unknown (on|off); ignoring" ;;
   esac
   case "$_df_gpu_mode" in
     "" | on | 1 | off | 0) ;;
-    *) _as_msg ".agent-sandbox: [gpu] mode '$_df_gpu_mode' unknown (on|off); ignoring" ;;
+    *) _as_msg_warning ".agent-sandbox: [gpu] mode '$_df_gpu_mode' unknown (on|off); ignoring" ;;
   esac
   # [gpu] devices (#335): the nodes it asks for, literally, per section, so a reviewer
   # sees what a project binds; and CUDA's driver nodes, when a card is named without them.
@@ -10500,7 +10584,7 @@ _as_trust_notes() {
     for line in ${facts[@]+"${facts[@]}"}; do
       [[ "$line" == "key"$'\t'"$n"$'\t'"$k" ]] && over=1 && break
     done
-    [[ -n "$over" ]] || _as_msg ".agent-sandbox: [$n] key '$k' is not one this profile reads; ignoring"
+    [[ -n "$over" ]] || _as_msg_warning ".agent-sandbox: [$n] key '$k' is not one this profile reads; ignoring"
   done
   # What a profile says of its own section's values (profile_trust_notes, #335).
   for n in ${_df_profile_names[@]+"${_df_profile_names[@]}"}; do
@@ -10555,7 +10639,7 @@ _as_trust_notes() {
       done
       for f in ${p:+"$p"} ${src:+"$src"}; do
         if bwhy="$(_as_base_refused "$f" "$bpath" ${bap[@]+"${bap[@]}"})"; then
-          _as_msg "connect: '$spec': $bwhy (profile $bname); a launch refuses the line."
+          _as_msg_refused "connect: '$spec': $bwhy (profile $bname); a launch refuses the line."
         fi
       done
     done
@@ -10671,7 +10755,6 @@ _as_trust_prompt_file() {
     _as_msg "a launch refuses this file as it is, so it cannot be approved."
     return 1
   }
-  _as_dotfile_trusted "$cwd" "$file" && _as_msg "this exact content is already approved."
   printf 'agent-sandbox: approve this .agent-sandbox for %s? [y/N] ' "$cwd" >&2
   read -r ans || true
   case "$ans" in
@@ -10689,48 +10772,215 @@ _as_trust_prompt_file() {
 # _as_trust_show_review CWD -- what the review shows of CWD's .agent-sandbox: the file
 # (as a diff from the approved content when it changed), then what follows from its text
 # (_as_trust_notes). Shared by --trust, which then asks, and --check, which does not.
+# Against the approved copy (#491), the notes shown are the difference by note text:
+# those of the file now that the approved copy did not give, then those it gave and the
+# file no longer does, and a count of the rest. A warning or a refusal is shown whatever
+# was approved. The whole review, as before, when there is nothing to compare with -- no
+# approval, or one whose content was not kept (an earlier engine's) -- and with --all
+# (_review_all, by dynamic scope). An approved file, unchanged, is said in one line.
+# Every line of it but the file and the shown files goes through _as_review_line.
+# Returns the notes' status: that of the file now.
 _as_trust_show_review() {
-  local cwd="$1" file rec
+  local cwd="$1" file rec _rv_how same=0 r k t n _rv_held=0
   file="$cwd/.agent-sandbox"
   rec="$(_as_one "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")")"
+  _as_trust_unchanged "$cwd" "$file" && same=1
+  if ((${_review_all:-0})); then
+    _rv_how=all
+  elif ((same)); then
+    _rv_how=same
+  elif [[ -f "$rec.approved" ]]; then
+    _rv_how="delta"
+  elif [[ -f "$rec" ]]; then
+    _rv_how=unkept
+    _as_review_line info "the approved content was not kept (an earlier engine approved it), so there is nothing to compare with: the whole review"
+  else
+    _rv_how=none
+    if _as_inside_sandbox; then
+      _as_review_line info "inside a sandbox, where no approval is recorded, so there is nothing to compare with: the whole review"
+    else
+      _as_review_line info "nothing approved to compare with: the whole review"
+    fi
+  fi
   {
-    if [[ -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file" \
-      && ! cmp -s -- "$rec.approved" "$file"; then
+    if [[ "$_rv_how" == same ]]; then
+      :
+    elif [[ -f "$rec.approved" ]] && ((! same)) && ! cmp -s -- "$rec.approved" "$file"; then
       printf '\n%s has changed since you approved it (by you, by the agent, or by a pull). What changed, approved -> now (through cat -v):\n----\n' "$file"
       diff -u --label approved --label now -- "$rec.approved" "$file" | cat -v || true # differs: 1
       printf -- '----\n'
-    elif [[ -f "$rec" && ! -f "$rec.approved" ]] && ! _as_dotfile_trusted "$cwd" "$file"; then
+    elif [[ "$_rv_how" == delta ]] && cmp -s -- "$rec.approved" "$file"; then
+      printf '\n%s is as you approved it (sha256 %s); a purpose file or addendum it names is not.\n' "$file" "$(_as_sha256_file "$file")"
+    elif [[ -f "$rec" && ! -f "$rec.approved" ]] && ((! same)); then
       printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     else
       printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     fi
-    # The purpose files it briefs roles from (#222), and the project's addenda to them
-    # (#353), part of what is approved.
-    local f copy kind
-    while IFS= read -r f; do
-      [[ -n "$f" ]] || continue
-      kind="purpose file"
-      [[ "$f" == *.addendum.md ]] && kind=addendum
-      copy="$rec.purpose/$(_as_sha256_str "$f")"
-      if [[ -f "$copy" ]] && cmp -s -- "$copy" "$f"; then
-        printf '\n%s %s: approved, unchanged.\n' "$kind" "$(_as_tilde "$f")"
-      elif [[ -f "$copy" ]]; then
+  } >&2
+  [[ "$_rv_how" != same ]] || _as_review_line info "this exact content is already approved."
+  # The purpose files it briefs roles from (#222), and the project's addenda to them
+  # (#353), part of what is approved. Against an approval, those unchanged in one line.
+  local f copy kind
+  local -a _rv_kept=()
+  while IFS= read -r f; do
+    [[ -n "$f" && "$_rv_how" != same ]] || continue
+    kind="purpose file"
+    [[ "$f" == *.addendum.md ]] && kind=addendum
+    copy="$rec.purpose/$(_as_sha256_str "$f")"
+    if [[ -f "$copy" ]] && cmp -s -- "$copy" "$f"; then
+      if [[ "$_rv_how" == delta ]]; then
+        _rv_kept+=("$(_as_tilde "$f")")
+      else
+        printf '\n%s %s: approved, unchanged.\n' "$kind" "$(_as_tilde "$f")" >&2
+      fi
+    elif [[ -f "$copy" ]]; then
+      {
         printf '\n%s %s has changed since you approved it. What changed, approved -> now (through cat -v):\n----\n' "$kind" "$(_as_tilde "$f")"
         diff -u --label approved --label now -- "$copy" "$f" | cat -v || true # differs: 1
         printf -- '----\n'
-      else
+      } >&2
+    else
+      {
         printf '\n%s %s, new to this approval (shown with cat -v):\n' "$kind" "$(_as_tilde "$f")"
         _as_trust_show "$f"
-      fi
-    done < <(_as_dotfile_briefing_files "$cwd" "$file")
-    while IFS= read -r f; do
-      [[ -n "$f" ]] || continue
-      (printf '\naddendum %s: no role reads it -- no [briefing] section names a role or an instance %s (an addendum is <role>.addendum.md or <instance>.addendum.md beside the purpose file).\n' "$(_as_tilde "$f")" "$(basename -- "$f" .addendum.md)")
-    done < <(_as_dotfile_briefing_files "$cwd" "$file" unread)
-  } >&2
-  _as_trust_notes "$cwd" "$file"
+      } >&2
+    fi
+  done < <(_as_dotfile_briefing_files "$cwd" "$file")
+  if ((${#_rv_kept[@]})); then
+    n="${#_rv_kept[@]} files"
+    ((${#_rv_kept[@]} > 1)) || n="1 file"
+    printf -v t '%s, ' "${_rv_kept[@]}"
+    _as_review_line info "approved, unchanged: ${t%, } ($n)"
+  fi
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    (printf '\naddendum %s: no role reads it -- no [briefing] section names a role or an instance %s (an addendum is <role>.addendum.md or <instance>.addendum.md beside the purpose file).\n' "$(_as_tilde "$f")" "$(basename -- "$f" .addendum.md)") >&2
+  done < <(_as_dotfile_briefing_files "$cwd" "$file" unread)
+  # The notes: each a "KIND<TAB>TEXT" record, or "raw<TAB>TEXT" for what reached stderr
+  # outside _as_msg (a tool's own message), shown as it came.
+  local -a _rv_now=() _rv_was=() _rv_gone=()
+  local rc
+  _as_trust_notes_kept "$cwd" "$file"
+  _rv_now=(${_tn_notes[@]+"${_tn_notes[@]}"}) rc="$_tn_rc"
+  # How many of each note text the approved copy gave, taken off as the file now gives
+  # it: a multiset, so the same text twice counts twice. Read and written by key alone,
+  # never in an arithmetic context, where a key (the file's text) would be evaluated.
+  local -A left=()
+  if [[ "$_rv_how" == delta ]]; then
+    _as_trust_notes_kept "$cwd" "$rec.approved"
+    _rv_was=(${_tn_notes[@]+"${_tn_notes[@]}"})
+    for r in ${_rv_was[@]+"${_rv_was[@]}"}; do
+      [[ "${r%%$'\t'*}" != raw ]] || continue
+      t="${r#*$'\t'}"
+      n="${left[$t]:-0}"
+      left[$t]=$((n + 1))
+    done
+  fi
+  for r in ${_rv_now[@]+"${_rv_now[@]}"}; do
+    k="${r%%$'\t'*}" t="${r#*$'\t'}"
+    if [[ "$k" == raw ]]; then
+      printf '%s' "$t" >&2
+      continue
+    fi
+    n="${left[$t]:-0}"
+    ((n == 0)) || left[$t]=$((n - 1))
+    case "$_rv_how:$k" in
+      *:refused | *:warning) _as_review_line "$k" "$t" ;;
+      all:* | none:* | unkept:*) _as_review_line info "$t" ;;
+      same:*) _rv_held=$((_rv_held + 1)) ;;
+      *)
+        if ((n)); then
+          _rv_held=$((_rv_held + 1))
+        else
+          _as_review_line new "$t"
+        fi
+        ;;
+    esac
+  done
+  for r in ${_rv_was[@]+"${_rv_was[@]}"}; do
+    k="${r%%$'\t'*}" t="${r#*$'\t'}"
+    [[ "$k" != raw ]] || continue
+    n="${left[$t]:-0}"
+    ((n)) || continue
+    left[$t]=$((n - 1))
+    _rv_gone+=("$t")
+  done
+  if ((${#_rv_gone[@]})); then
+    _as_review_line info "no longer in force (approved before, not in the file now):"
+    for t in "${_rv_gone[@]}"; do _as_review_line gone "$t"; done
+  fi
+  if ((_rv_held)); then
+    n="$_rv_held notes"
+    ((_rv_held > 1)) || n="1 note"
+    _as_review_line summary "$n as in your approval, not shown; ${invoked:-asb} --trust --all shows the whole review."
+  fi
+  [[ "$_rv_how" != all ]] || ((! same)) || _as_review_line info "this exact content is already approved."
+  return "$rc"
+}
+
+# _as_trust_unchanged CWD FILE -- is FILE, with its purpose files, what the trust record
+# of CWD holds: an approval of this exact content. The record alone, unlike
+# _as_dotfile_trusted, which a sandbox and --check's plan take as given.
+_as_trust_unchanged() {
+  local want have
+  want="$(_as_trust_digest "$1" "$2")"
+  [[ -n "$want" ]] || return 1
+  have="$(cat -- "$(_as_config_dir)/trust/$(_as_sha256_str "$1")" 2>/dev/null || true)"
+  [[ -n "$have" && "$have" == "$want" ]]
+}
+
+# _as_trust_notes_kept CWD FILE -- _as_trust_notes on FILE, printing nothing: its notes
+# into the caller's _tn_notes, one "KIND<TAB>TEXT" each in the order said (KIND: info,
+# warning, refused; raw for anything else it wrote to stderr), and its status into _tn_rc.
+# The same CWD and profiles for every FILE, so only the text differs between two runs.
+_tn_notes=()
+_tn_rc=0
+_as_trust_notes_kept() {
+  local out i
+  local -a parts=()
+  exec {out}>&1
+  # On stderr: [raw] NUL record NUL [raw] NUL record NUL ... -- so the parts alternate,
+  # what came outside _as_msg at the even places, a record at the odd ones; the last
+  # record is the status.
+  mapfile -d '' -t parts < <(
+    _as_note_cap=1
+    r=0
+    _as_trust_notes "$1" "$2" 2>&1 >&"$out" || r=$?
+    printf '\0rc\t%s\0' "$r"
+  )
+  exec {out}>&-
+  _tn_notes=() _tn_rc=1
+  for ((i = 0; i < ${#parts[@]}; i++)); do
+    if ((i % 2 == 0)); then
+      [[ -z "${parts[i]}" ]] || _tn_notes+=("raw"$'\t'"${parts[i]}")
+    elif ((i == ${#parts[@]} - 1)) && [[ "${parts[i]}" == rc$'\t'* ]]; then
+      _tn_rc="${parts[i]#rc$'\t'}"
+    else
+      _tn_notes+=("${parts[i]}")
+    fi
+  done
+}
+
+# _as_review_line KIND TEXT -- one line of the review (#491), with its kind's word and, at
+# a terminal (stderr, and NO_COLOR unset or empty, as --list), its colour: refused (red),
+# warning (yellow), new (green), gone ("no longer", cyan), summary (dim, no word), info
+# (neither). The word says the kind without the colour.
+_as_review_line() {
+  local word="" sgr=""
+  case "$1" in
+    refused) word="refused — " sgr=31 ;;
+    warning) word="warning — " sgr=33 ;;
+    new) word="new — " sgr=32 ;;
+    gone) word="no longer — " sgr=36 ;;
+    summary) sgr=2 ;;
+  esac
+  if [[ -n "$sgr" && -t 2 && -z "${NO_COLOR:-}" ]]; then
+    printf 'agent-sandbox: \e[%sm%s%s\e[0m\n' "$sgr" "$word" "$2" >&2
+  else
+    printf 'agent-sandbox: %s%s\n' "$word" "$2" >&2
+  fi
 }
 
 # Split a `key = value` line into the caller's ck (whitespace removed) and cv
@@ -10786,7 +11036,7 @@ _as_dotfile_parse() {
             # [agent:<glob>] (#355): those roles' agent. In a profile's own dot-file,
             # [agent] is the profile's section (_as_profile_dotfile), which takes no suffix.
             if [[ "${profile:-}" == agent ]]; then
-              _as_msg ".agent-sandbox: [agent:$sglob] -- a profile's [agent] section does not take a role suffix; ignoring the section"
+              _as_msg_warning ".agent-sandbox: [agent:$sglob] -- a profile's [agent] section does not take a role suffix; ignoring the section"
               section="-skip-"
               continue
             fi
@@ -10795,7 +11045,7 @@ _as_dotfile_parse() {
           preset)
             # [preset:<name>] is a preset's rungs in a profile's dot-file (#191).
             [[ "$sglob" =~ ^(isolated|inherit|shared)$ ]] || {
-              _as_msg ".agent-sandbox: [preset:$sglob] -- a preset section is one of isolated, inherit, shared; ignoring the section"
+              _as_msg_warning ".agent-sandbox: [preset:$sglob] -- a preset section is one of isolated, inherit, shared; ignoring the section"
               section="-skip-"
               continue
             }
@@ -10805,7 +11055,7 @@ _as_dotfile_parse() {
             # word an ssh alias takes, with no role suffix after it. The header is kept
             # (`ALIAS<TAB>`), so an empty section or a second one of the name is seen.
             [[ "$sglob" =~ ^[A-Za-z0-9._-]+$ ]] || {
-              _as_msg ".agent-sandbox: [remote:$sglob] -- a remote's name is letters, digits, '-', '_' and '.' (it takes no role suffix); ignoring the section"
+              _as_msg_warning ".agent-sandbox: [remote:$sglob] -- a remote's name is letters, digits, '-', '_' and '.' (it takes no role suffix); ignoring the section"
               section="-skip-"
               continue
             }
@@ -10815,13 +11065,13 @@ _as_dotfile_parse() {
             # [channel:<name>] is not a role suffix but a channel's name (#190): a
             # profile's dot-file declares its channel table this way.
             [[ "$sglob" =~ ^[a-z][a-z0-9_-]*$ ]] || {
-              _as_msg ".agent-sandbox: [channel:$sglob] -- a channel name is a lowercase word; ignoring the section"
+              _as_msg_warning ".agent-sandbox: [channel:$sglob] -- a channel name is a lowercase word; ignoring the section"
               section="-skip-"
               continue
             }
             ;;
           *)
-            _as_msg ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing, serve and agent do); ignoring the section"
+            _as_msg_warning ".agent-sandbox: [$section:$sglob] -- [$section] does not take a role suffix (sandbox, connect, allow, deny, env, conda, net, gpu, ssh, permissions, briefing, serve and agent do); ignoring the section"
             section="-skip-"
             continue
             ;;
@@ -10832,14 +11082,14 @@ _as_dotfile_parse() {
         allow | share-memory | env | conda | net | seccomp | briefing | connect | overlay | sandbox | deny | gpu | ssh | permissions | serve | agent) [[ "$section" == share-memory ]] && _df_share_set=1 ;;
         channel | preset | remote)
           [[ "$sglob" != "*" ]] || {
-            _as_msg ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
+            _as_msg_warning ".agent-sandbox: [$section] needs a name, [$section:<name>]; ignoring the section"
             section="-skip-"
           }
           ;;
         proxy-ca | profile-dir | session-base)
-          _as_msg ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
+          _as_msg_warning ".agent-sandbox: [$section] is not allowed here; it is a command-line/environment knob only"
           ;;
-        *) _as_msg ".agent-sandbox: ignoring unknown section [$section]" ;;
+        *) _as_msg_warning ".agent-sandbox: ignoring unknown section [$section]" ;;
       esac
       continue
     fi
@@ -10890,7 +11140,7 @@ _as_dotfile_line() {
         if [[ "$ck" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
           _df_env_refuse+=("$ck")
         else
-          _as_msg ".agent-sandbox: [env] '$line' does not name a variable; ignoring"
+          _as_msg_warning ".agent-sandbox: [env] '$line' does not name a variable; ignoring"
         fi
       elif [[ "$line" == *=* ]]; then
         _as_dotfile_kv "$line"
@@ -10898,7 +11148,7 @@ _as_dotfile_line() {
           _df_env_set+=("$ck=$cv")
           _df_env_set_by+=("$sglob"$'\t'"$ck=$cv")
         else
-          _as_msg ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
+          _as_msg_warning ".agent-sandbox: [env] '$ck' is not a variable name; ignoring: $line"
         fi
       else
         _df_forward+=("$line")
@@ -10906,7 +11156,7 @@ _as_dotfile_line() {
       ;;
     conda)
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [conda] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
@@ -10917,7 +11167,7 @@ _as_dotfile_line() {
           write) _df_conda_write="$cv" ;;
           pkgs) _df_conda_pkgs="${cv/#\~/$HOME}" ;;
           base) _df_conda_base="$cv" ;; # host | sandbox: whose conda (_as_conda_mode)
-          *) _as_msg ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [conda] key '$ck'" ;;
         esac
       fi
       ;;
@@ -10925,7 +11175,7 @@ _as_dotfile_line() {
       # The network mode, and strict-mode ports (validated with the flags and
       # knobs at launch).
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [net] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
@@ -10942,7 +11192,7 @@ _as_dotfile_line() {
           git) _df_net_git="$cv" ;;
           host-port) _df_net_host_port+=("$cv") ;;
           agent-port) _df_net_agent_port+=("$cv") ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [net] key '$ck'" ;;
         esac
       fi
       ;;
@@ -10950,34 +11200,34 @@ _as_dotfile_line() {
       # The host's GPUs, passed in by default; `mode = off` keeps them out, and
       # `devices` names which nodes are theirs (#335), replacing the default list.
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [gpu] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [gpu] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
           mode) _df_gpu_mode="$cv" ;;
           devices) _as_gpu_devices_line "$sglob" "$cv" ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [gpu] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [gpu] key '$ck'" ;;
         esac
       fi
       ;;
     seccomp)
       # The syscall filter's state (validated with the knob at launch).
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [seccomp] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [seccomp] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
           mode) _df_seccomp_mode="$cv" ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [seccomp] key '$ck'" ;;
         esac
       fi
       ;;
-    "") _as_msg ".agent-sandbox: ignoring '$line' before any [section]" ;;
+    "") _as_msg_warning ".agent-sandbox: ignoring '$line' before any [section]" ;;
     sandbox)
       # The sandbox's own key and position. `role` is parsed and reserved; only
       # `default` exists until roles land.
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [sandbox] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
@@ -10986,22 +11236,22 @@ _as_dotfile_line() {
             if [[ "$sglob" == "*" ]]; then
               _df_role="$cv"
             else
-              _as_msg ".agent-sandbox: [sandbox:$sglob] role -- the default role is a key of the unsuffixed [sandbox] only; ignoring"
+              _as_msg_warning ".agent-sandbox: [sandbox:$sglob] role -- the default role is a key of the unsuffixed [sandbox] only; ignoring"
             fi
             ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [sandbox] key '$ck'" ;;
         esac
       fi
       ;;
     overlay)
       # What `copy-on-write` is implemented with (validated at launch, with the knob).
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [overlay] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
           mode) _df_overlay_mode="$cv" ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [overlay] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [overlay] key '$ck'" ;;
         esac
       fi
       ;;
@@ -11009,7 +11259,7 @@ _as_dotfile_line() {
       # channel = mode [source] [scope]. Collected here, validated at launch, with
       # the flag and the environment, so one code path decides every form.
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [connect] expects 'channel = mode [source] [scope]', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [connect] expects 'channel = mode [source] [scope]', ignoring: $line"
       else
         _df_connect+=("$sglob"$'\t'"$line")
       fi
@@ -11017,7 +11267,7 @@ _as_dotfile_line() {
     briefing)
       # Whether to tell the agent what its sandbox allows (validated at launch).
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [briefing] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [briefing] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
@@ -11025,7 +11275,7 @@ _as_dotfile_line() {
             if [[ "$sglob" == "*" ]]; then
               _df_briefing_mode="$cv"
             else
-              _as_msg ".agent-sandbox: [briefing:$sglob] mode -- the briefing's mode is a key of the unsuffixed [briefing] only; ignoring"
+              _as_msg_warning ".agent-sandbox: [briefing:$sglob] mode -- the briefing's mode is a key of the unsuffixed [briefing] only; ignoring"
             fi
             ;;
           # The purpose file (#222): `{role}` is the role's name. In the unsuffixed
@@ -11040,7 +11290,7 @@ _as_dotfile_line() {
           # The asking file (#485): a file in the project, `{role}` the role's name; the
           # latest line matching the role wins (_as_briefing_asking_resolve).
           asking) _df_briefing_asking+=("$sglob"$'\t'"$cv") ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [briefing] key '$ck'" ;;
         esac
       fi
       ;;
@@ -11050,7 +11300,7 @@ _as_dotfile_line() {
       # glob; the latest line matching the role wins, key by key (_as_serve_resolve).
       # `watch` alone is a watch only: the role's watcher is enforced, it is not served.
       if [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [serve] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [serve] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
@@ -11060,7 +11310,7 @@ _as_dotfile_line() {
           prompt)
             _df_serve+=("$sglob"$'\t'prompt$'\t'"$cv")
             ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [serve] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [serve] key '$ck'" ;;
         esac
       fi
       ;;
@@ -11076,13 +11326,13 @@ _as_dotfile_line() {
       if [[ "${profile:-}" == agent ]]; then
         _as_dotfile_profile_line "$section" "$line"
       elif [[ "$line" != *=* ]]; then
-        _as_msg ".agent-sandbox: [agent] expects 'key = value', ignoring: $line"
+        _as_msg_warning ".agent-sandbox: [agent] expects 'key = value', ignoring: $line"
       else
         _as_dotfile_kv "$line"
         case "$ck" in
           command)
             if [[ -z "$cv" ]]; then
-              _as_msg ".agent-sandbox: [agent] command names no agent (command = AGENT [ARGS]); ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] command names no agent (command = AGENT [ARGS]); ignoring"
             else
               _df_agent+=("$sglob"$'\t'command$'\t'"$cv")
             fi
@@ -11093,7 +11343,7 @@ _as_dotfile_line() {
             if [[ "$cv" == - ]] || _as_role_name_ok "$cv"; then
               _df_agent+=("$sglob"$'\t'account$'\t'"$cv")
             else
-              _as_msg ".agent-sandbox: [agent] account = $cv: not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] account = $cv: not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring"
             fi
             ;;
           accounts)
@@ -11106,9 +11356,9 @@ _as_dotfile_line() {
               [[ "$_df_w" == - ]] || _as_role_name_ok "$_df_w" || _df_bad+="${_df_bad:+, }'$_df_w'"
             done
             if ((${#_df_words[@]} == 0)); then
-              _as_msg ".agent-sandbox: [agent] accounts names no account (accounts = NAME..., - for the base); ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] accounts names no account (accounts = NAME..., - for the base); ignoring"
             elif [[ -n "$_df_bad" ]]; then
-              _as_msg ".agent-sandbox: [agent] accounts = $cv: $_df_bad not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring the line"
+              _as_msg_warning ".agent-sandbox: [agent] accounts = $cv: $_df_bad not an account name (a letter or digit, then letters, digits, '.', '_' or '-'), nor '-', the base; ignoring the line"
             else
               _df_agent+=("$sglob"$'\t'accounts$'\t'"${_df_words[*]}")
             fi
@@ -11119,7 +11369,7 @@ _as_dotfile_line() {
             # Kept as written: one that is not a level (_as_effort_ok) is the review's to
             # refuse, and a launch's.
             if [[ -z "$cv" ]]; then
-              _as_msg ".agent-sandbox: [agent] effort names no level (effort = $(_as_effort_levels), or - for none); ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] effort names no level (effort = $(_as_effort_levels), or - for none); ignoring"
             else
               _df_agent+=("$sglob"$'\t'effort$'\t'"$cv")
             fi
@@ -11129,7 +11379,7 @@ _as_dotfile_line() {
             # agent's profile gives it (profile_auto_compact_args, _as_auto_compact_apply);
             # `-`, none, the agent's own. Kept as written, as effort is.
             if [[ -z "$cv" ]]; then
-              _as_msg ".agent-sandbox: [agent] auto-compact names no value (auto-compact = $(_as_auto_compact_values), or - for none); ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] auto-compact names no value (auto-compact = $(_as_auto_compact_values), or - for none); ignoring"
             else
               _df_agent+=("$sglob"$'\t'auto-compact$'\t'"$cv")
             fi
@@ -11139,12 +11389,12 @@ _as_dotfile_line() {
             # writes `plan` and `rescue` in the context file ([briefing] context,
             # _as_context_resolve); `-`, never. Kept as written, as effort is.
             if [[ -z "$cv" ]]; then
-              _as_msg ".agent-sandbox: [agent] $ck names no value ($ck = $([[ "$ck" == context-plan ]] && printf 'PERCENT%%' || printf 'TOKENS'), or - for none); ignoring"
+              _as_msg_warning ".agent-sandbox: [agent] $ck names no value ($ck = $([[ "$ck" == context-plan ]] && printf 'PERCENT%%' || printf 'TOKENS'), or - for none); ignoring"
             else
               _df_agent+=("$sglob"$'\t'"$ck"$'\t'"$cv")
             fi
             ;;
-          *) _as_msg ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
+          *) _as_msg_warning ".agent-sandbox: ignoring unknown [agent] key '$ck'" ;;
         esac
       fi
       ;;
@@ -11162,7 +11412,7 @@ _as_dotfile_profile_line() {
   local section="$1" line="$2" ck cv
   _as_dotfile_is_profile "$section" || return 0
   if [[ "$line" != *=* ]]; then
-    _as_msg ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
+    _as_msg_warning ".agent-sandbox: [$section] expects 'key = value', ignoring: $line"
   else
     _as_dotfile_kv "$line"
     [[ "$section" == "${profile:-}" ]] && _df_profile_kv+=("$ck=$cv")
@@ -11214,6 +11464,12 @@ _as_remote_say() {
   ((_rm_say)) || return 0
   _as_msg ".agent-sandbox: [remote:$_rm_alias] $*"
 }
+# _as_remote_say_warning TEXT -- _as_remote_say for a line unusable or ignored as written:
+# a warning, which the review always shows (#491).
+_as_remote_say_warning() {
+  local _as_kind=warning
+  _as_remote_say "$@"
+}
 
 # _as_remote_eval ALIAS [say] -- the section [remote:ALIAS] of the caller's _df_remote into
 # the caller's _rm_host (the destination, without a port), _rm_sshport (the port of host =
@@ -11235,14 +11491,14 @@ _as_remote_eval() {
     line="${e#*$'\t'}"
     [[ -n "$line" ]] || continue
     if [[ "$line" != *=* ]]; then
-      _as_remote_say "expects 'key = value', ignoring: $line"
+      _as_remote_say_warning "expects 'key = value', ignoring: $line"
       continue
     fi
     _as_dotfile_kv "$line"
     case "$ck" in
       host | account | port | scratch | gpu)
         if [[ -n "${seen[$ck]:-}" ]]; then
-          _as_remote_say "$ck = $cv: a second $ck line, where the section takes one; unusable as written"
+          _as_remote_say_warning "$ck = $cv: a second $ck line, where the section takes one; unusable as written"
           _rm_bad=$((_rm_bad + 1))
           continue
         fi
@@ -11255,17 +11511,17 @@ _as_remote_eval() {
         v="$cv" w=""
         [[ "$cv" =~ ^(.*):([0-9]{1,5})$ ]] && v="${BASH_REMATCH[1]}" w="${BASH_REMATCH[2]}"
         if [[ -n "$w" ]] && ! ((10#$w >= 1 && 10#$w <= 65535)); then
-          _as_remote_say "host = $cv: $w is not a port (1-65535); unusable as written"
+          _as_remote_say_warning "host = $cv: $w is not a port (1-65535); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif _as_ssh_spec_ok "$v" && [[ "${v#*@}" == "$_rm_alias" ]]; then
           # --setup-remote writes `Host ALIAS` into ~/.ssh/config: it would shadow this one.
-          _as_remote_say "host = $cv: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias ${v#*@}; name the section otherwise; unusable as written"
+          _as_remote_say_warning "host = $cv: the remote's own name, which --setup-remote makes an alias in your ~/.ssh/config for the login, so it would shadow your alias ${v#*@}; name the section otherwise; unusable as written"
           _rm_host="$v" _rm_bad=$((_rm_bad + 1))
         elif _as_ssh_spec_ok "$v"; then
           _rm_host="$v" _rm_sshport="${w:+$((10#$w))}"
           _as_remote_say "host = $cv: the host the login runs on, reached over ssh as you reach it from here${w:+, its sshd at port $_rm_sshport}"
         else
-          _as_remote_say "host = $cv: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias, then :SSHPORT when its sshd's port is to be named); unusable as written"
+          _as_remote_say_warning "host = $cv: not an ssh destination (a hostname, user@host, or a ~/.ssh/config alias, then :SSHPORT when its sshd's port is to be named); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         fi
         ;;
@@ -11274,7 +11530,7 @@ _as_remote_eval() {
           _rm_account="$cv"
           _as_remote_say "account = $cv: the account that runs the login there"
         else
-          _as_remote_say "account = $cv: not an account name adduser takes (lowercase letters, digits, '-' and '_', starting with a letter or '_', at most 32); unusable as written"
+          _as_remote_say_warning "account = $cv: not an account name adduser takes (lowercase letters, digits, '-' and '_', starting with a letter or '_', at most 32); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         fi
         ;;
@@ -11288,7 +11544,7 @@ _as_remote_eval() {
           esac
           _as_remote_say "port = $cv: the login listens at $w"
         else
-          _as_remote_say "port = $cv: not a port --agent-port takes (PORT, or ADDR:PORT with ADDR an IPv4 address of that host or 0.0.0.0 for every one; the port 1024-65535); unusable as written"
+          _as_remote_say_warning "port = $cv: not a port --agent-port takes (PORT, or ADDR:PORT with ADDR an IPv4 address of that host or 0.0.0.0 for every one; the port 1024-65535); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         fi
         ;;
@@ -11299,7 +11555,7 @@ _as_remote_eval() {
             _as_remote_say "scratch = $cv: the project directory there, the login's one writable place ('~' is the account's home there)"
             ;;
           *)
-            _as_remote_say "scratch = $cv: relative; it is absolute or under '~' (the account's home there); unusable as written"
+            _as_remote_say_warning "scratch = $cv: relative; it is absolute or under '~' (the account's home there); unusable as written"
             _rm_bad=$((_rm_bad + 1))
             ;;
         esac
@@ -11321,7 +11577,7 @@ _as_remote_eval() {
           _rm_gpu=off
           _as_remote_say "gpu = none: no GPU device node of that host is passed into the login's sandbox"
         elif [[ -n "$bad" ]]; then
-          _as_remote_say "gpu = $cv: $bad; unusable as written"
+          _as_remote_say_warning "gpu = $cv: $bad; unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif ((${#ws[@]})); then
           _rm_gpu="${ws[*]}"
@@ -11341,23 +11597,23 @@ _as_remote_eval() {
           }
         done
         if [[ -n "$bad" ]]; then
-          _as_remote_say "allow = $cv: bad host '$bad' (a hostname, or .domain); unusable as written"
+          _as_remote_say_warning "allow = $cv: bad host '$bad' (a hostname, or .domain); unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif ((${#ws[@]})); then
           _rm_allow+="${_rm_allow:+ }${ws[*]}"
           _as_remote_say "allow = $cv: the login's sandbox reaches these hosts through its allowlist proxy there"
         else
-          _as_remote_say "allow = : names no host; ignoring"
+          _as_remote_say_warning "allow = : names no host; ignoring"
         fi
         ;;
       env)
         v="${cv%%=*}"
         v="${v%"${v##*[![:space:]]}"}"
         if [[ "$cv" != *=* ]]; then
-          _as_remote_say "env = $cv: not NAME=VALUE; unusable as written"
+          _as_remote_say_warning "env = $cv: not NAME=VALUE; unusable as written"
           _rm_bad=$((_rm_bad + 1))
         elif [[ ! "$v" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-          _as_remote_say "env = $cv: '$v' is not a variable name; unusable as written"
+          _as_remote_say_warning "env = $cv: '$v' is not a variable name; unusable as written"
           _rm_bad=$((_rm_bad + 1))
         else
           w="${cv#*=}"
@@ -11366,15 +11622,15 @@ _as_remote_eval() {
           _as_remote_say "env = $cv: sets $v to '$w' inside the login's sandbox"
         fi
         ;;
-      *) _as_remote_say "key '$ck' is not one a remote takes (host, account, port, scratch, gpu, allow, env); ignoring" ;;
+      *) _as_remote_say_warning "key '$ck' is not one a remote takes (host, account, port, scratch, gpu, allow, env); ignoring" ;;
     esac
   done
   if [[ -z "${seen[host]:-}" ]]; then
-    _as_remote_say "has no host line (an ssh destination); unusable as written"
+    _as_remote_say_warning "has no host line (an ssh destination); unusable as written"
     _rm_bad=$((_rm_bad + 1))
   fi
   if [[ -z "${seen[port]:-}" ]]; then
-    _as_remote_say "has no port line (where the login listens there, as --agent-port takes it); unusable as written"
+    _as_remote_say_warning "has no port line (where the login listens there, as --agent-port takes it); unusable as written"
     _rm_bad=$((_rm_bad + 1))
   fi
   return 0
@@ -11390,7 +11646,7 @@ _as_remote_notes() {
   while IFS= read -r a; do
     [[ -n "$a" ]] || continue
     if grep -qxF -- "$a" <<<"$dups"; then
-      _as_msg ".agent-sandbox: [remote:$a] is written more than once: the file is unusable, and cannot be approved, until one is renamed or removed"
+      _as_msg_refused ".agent-sandbox: [remote:$a] is written more than once: the file is unusable, and cannot be approved, until one is renamed or removed"
       rc=1
       continue
     fi
@@ -11401,7 +11657,7 @@ _as_remote_notes() {
     done
     [[ -n "$reached" ]] || _as_msg ".agent-sandbox: [remote:$a]: no [ssh] line names $a, so no role reaches it yet"
     if ((_rm_bad)); then
-      _as_msg ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a refuses it"
+      _as_msg_refused ".agent-sandbox: [remote:$a]: unusable as written, for the reasons above; ${invoked:-asb} --setup-remote $a refuses it"
     else
       _as_msg ".agent-sandbox: [remote:$a]: a sandboxed login on $_rm_host${_rm_sshport:+:$_rm_sshport} as ${_rm_account:-the ssh user}, set up by ${invoked:-asb} --setup-remote $a"
     fi
@@ -12985,9 +13241,9 @@ _as_gpu_devices_line() {
   read -r -a ents <<<"$2"
   for e in ${ents[@]+"${ents[@]}"}; do
     if [[ "$e" != /dev/?* ]]; then
-      _as_msg ".agent-sandbox: $sec devices '$e': not a node under /dev/; ignoring it"
+      _as_msg_warning ".agent-sandbox: $sec devices '$e': not a node under /dev/; ignoring it"
     elif [[ "/$e/" == */../* ]]; then
-      _as_msg ".agent-sandbox: $sec devices '$e': a '..' component; ignoring it"
+      _as_msg_warning ".agent-sandbox: $sec devices '$e': a '..' component; ignoring it"
     else
       kept+="${kept:+ }$e"
     fi
@@ -13887,8 +14143,10 @@ _as_trust_check() {
     _as_msg "check: a launch refuses this file"
     return 1
   }
-  if _as_dotfile_trusted "$cwd" "$file"; then
+  if _as_trust_unchanged "$cwd" "$file"; then
     _as_msg "check: approved and unchanged since; a launch uses it"
+  elif _as_inside_sandbox; then
+    _as_msg "check: inside a sandbox there is no gate: a launch here uses it without asking"
   elif [[ -f "$rec" ]]; then
     _as_msg "check: CHANGED since it was approved; a launch asks again ($invoked --trust)"
   else
@@ -19288,7 +19546,7 @@ agent_sandbox() (
   # to the agent untouched.
   local profile=""
   local -a _ssh_hosts=() _allow_hosts=() _deny_hosts=() _host_ports=() _agent_ports=()
-  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0
+  local _ssh_unrestricted=0 _ssh_key="" _ssh_timeout="" _ssh_want=0 _do_trust=0 _do_check=0 _do_engine_help=0 _review_all=0
   local _do_init=0 _init_model="" _init_env="" _init_gpu="" _init_shared=0 _init_nenv=0 _init_envdir="" _init_envdir_set=0
   local -a _init_counts=() _apply_words=()
   local _setup_remote="" _setup_remote_port="" _setup_remote_verb="" # --setup-remote ALIAS|DEST [--port PORT | --status | --shutdown] (#344)
@@ -19477,6 +19735,12 @@ agent_sandbox() (
         ;;
       --check)
         _do_check=1
+        shift
+        ;;
+      --all)
+        # The whole review (#491), not only what is new to approve: --trust, --check and
+        # --apply's (before --apply, whose words are its own).
+        _review_all=1
         shift
         ;;
       --apply)
@@ -19786,6 +20050,11 @@ agent_sandbox() (
       *) break ;;
     esac
   done
+  # ---- --all (#491): the whole review, where there is a review ----
+  if ((_review_all)) && ! ((_do_trust || _do_check || ${#_apply_words[@]})); then
+    _as_msg "--all shows the whole review of the .agent-sandbox; it goes with --trust, --check or --apply (before --apply's words), not on its own or with another verb: $invoked --trust --all"
+    return 2
+  fi
   # ---- [--agent AGENT] --account NAME --login (#355): an account's login, sandboxed, then exit ----
   # Nothing on the line but --login once and at most one --agent and one --account, so
   # nothing else of this invocation applies to it.

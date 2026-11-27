@@ -870,13 +870,46 @@ shows it and asks:
 Before the question, the review says what follows from the file's text alone, so
 that a launch need not repeat it: a line it will ignore (malformed, an unknown
 section or key, a role suffix a section does not take, a bad host, an unknown mode),
-a widening (network mode `open`, seccomp `off`), a `[<profile>]` key that profile
-does not read, and per path declaration what it gives -- over a profile's channel, it
-wins there; under `$HOME`, outside the project, `own` is sandbox-only storage and any
-other mode shows your real one; a file is bound over, so it cannot be deleted or
-renamed inside. It reads every profile, so `asb --trust` checks `[claude]` without a
-profile named. What depends on the host or the moment -- a path that does not exist
-yet, a conflict -- is still said at launch.
+each `[allow]` and `[deny]` host and the roles it is for (a `[deny]` that would take a
+profile's own host is left out under that profile, and says so), a widening (network
+mode `open`, seccomp `off`), a `[<profile>]` key that profile does not read, and per
+path declaration what it gives -- over a profile's channel, it wins there; under
+`$HOME`, outside the project, `own` is sandbox-only storage and any other mode shows
+your real one; a file is bound over, so it cannot be deleted or renamed inside. It
+reads every profile, so `asb --trust` checks `[claude]` without a profile named. What
+depends on the host or the moment -- a path that does not exist yet, a conflict -- is
+still said at launch.
+
+**Against your approval, the review shows what is new to be trusted** (#491). The notes
+are made twice, for the content you approved and for the file now, with today's
+profiles, and compared by their text:
+
+- **new** — a note the file now gives and the approved content did not. A line you
+  left alone whose meaning another change altered gives a different text, so it is
+  shown too;
+- **no longer** — under `no longer in force (approved before, not in the file now):`,
+  a note the approved content gave and the file no longer does: a line removed, or
+  one whose meaning changed;
+- **a refusal or a warning, always** — a line a launch or a verb refuses (`refused —`),
+  or one that does not take effect as written, ignored or unusable (`warning —`),
+  whatever you approved: an engine newer than your approval may refuse what it
+  accepted;
+- **the rest, counted** — `N notes as in your approval, not shown; asb --trust --all
+  shows the whole review.` The same text twice counts twice.
+
+The purpose files and addenda you approved unchanged are one line,
+`approved, unchanged: NAMES (N files)`; a changed one is still a diff, a new one shown
+whole, and the `.agent-sandbox` itself, when only they changed, is one line. A file you
+approved, unchanged, is one line, `this exact content is already approved`, and the
+count; its refusals and warnings still show. With nothing to compare with -- no
+approval, one whose content an earlier engine did not keep, or inside a sandbox, where
+none is recorded -- the whole review prints, after a first line that says which.
+**`--all`** with `--trust`, `--check` or `--apply` (before `--apply`'s words) prints the
+whole review, every note; with another verb it is refused. At a terminal each kind has
+its colour -- a refusal red, a warning yellow, new green, no longer cyan, the count dim
+-- and always its word, so nothing is said by colour alone; piped, logged, or with
+`NO_COLOR` set to a value, the same lines without colour. The file's diff and the files
+shown are never coloured.
 
 **`asb --check`** is the same review, asking nothing and recording nothing: the file (as
 a diff when it changed since you approved it), the notes, and whether it is approved.
