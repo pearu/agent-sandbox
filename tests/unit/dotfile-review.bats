@@ -688,7 +688,7 @@ PERM_NOTE="a permission rule the agent gets without asking you, for every role"
   mkdir -p "$CFG/trust"
   printf '%064d' 0 >"$REC" # an earlier engine's record: a digest, no content
   run_review
-  [ "${lines[0]}" = "agent-sandbox: the approved content was not kept (an earlier engine approved it), so there is nothing to compare with: the whole review" ]
+  [ "${lines[0]}" = "agent-sandbox: the approved content was not kept (an earlier engine approved it, or its copy could not be written), so there is nothing to compare with: the whole review" ]
   [[ "$output" == *$'\n'"agent-sandbox: .agent-sandbox: [permissions] Read: $PERM_NOTE"$'\n'* ]]
   [ -z "$(held "$output")" ]
 }

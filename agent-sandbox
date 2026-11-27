@@ -7976,23 +7976,59 @@ _as_maybe_inside() {
 # by the agent's flags: an `asb claude -p ...` typed at a shell can be asked (#143).
 _as_has_terminal() { [[ -t 0 && -t 2 ]]; }
 
+# _as_trust_record CWD FILE -- record FILE as CWD's approved dot-file: its digest, and
+# the copies the next review compares against (its content, its purpose files). THE
+# COPIES ARE NEVER NEWER THAN THE DIGEST (#487): a copy newer than the approval would
+# make the next review call an unapproved change approved, and hide it; one older shows
+# more than changed, and hides nothing. So every part is staged beside its place first
+# ($rec.tmp, .approved.tmp, .purpose.tmp/), and a failure there leaves the record as it
+# was; then the digest moves in, then the copies. When a copy cannot be moved in, the
+# copies are removed, so the next review has nothing to compare with and shows the
+# whole file. The temps are gone on every path. Nothing is shown (the caller says it);
+# _tr_fail := the path that could not be written. Returns 0 when all is written, 1 when
+# nothing changed (not approved, or approved as before), 2 when the digest approves FILE
+# and a copy could not be written: _tr_kept := 1 when even removing the copies failed,
+# so an older one may remain.
+_tr_fail="" _tr_kept=0
 _as_trust_record() {
-  local cwd="$1" file="$2" dir rec
+  local cwd="$1" file="$2" dir rec rc=0
   dir="$(_as_config_dir)/trust"
-  mkdir -p "$dir" 2>/dev/null || {
-    _as_msg "cannot create trust store $dir"
-    return 1
-  }
   rec="$dir/$(_as_sha256_str "$cwd")"
-  cp -- "$file" "$rec.approved.tmp" && mv -f -- "$rec.approved.tmp" "$rec.approved" || return 1
+  _tr_fail="$dir" _tr_kept=0
+  _as_trust_record_in "$cwd" "$file" "$dir" "$rec" || rc=$?
+  rm -rf -- "$rec.tmp" "$rec.approved.tmp" "$rec.purpose.tmp" 2>/dev/null
+  if ((rc == 2)); then
+    rm -rf -- "$rec.approved" "$rec.purpose" 2>/dev/null
+    [[ ! -e "$rec.approved" && ! -e "$rec.purpose" ]] || _tr_kept=1
+  fi
+  return "$rc"
+}
+_as_trust_record_in() {
+  local cwd="$1" file="$2" dir="$3" rec="$4" f
+  mkdir -p -- "$dir" 2>/dev/null || return 1
+  # stage
+  _tr_fail="$rec.approved"
+  cp -T -- "$file" "$rec.approved.tmp" 2>/dev/null || return 1
   # The approved purpose files too (#222), so the next review can show what changed.
-  rm -rf -- "$rec.purpose"
-  local f
+  _tr_fail="$rec.purpose"
+  rm -rf -- "$rec.purpose.tmp" 2>/dev/null || return 1
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    mkdir -p -- "$rec.purpose" && cp -- "$f" "$rec.purpose/$(_as_sha256_str "$f")" || return 1
+    { mkdir -p -- "$rec.purpose.tmp" && cp -T -- "$f" "$rec.purpose.tmp/$(_as_sha256_str "$f")"; } 2>/dev/null || return 1
   done < <(_as_dotfile_briefing_files "$cwd" "$file")
-  _as_trust_digest "$cwd" "$file" >"$rec" || return 1
+  _tr_fail="$rec"
+  { : >"$rec.tmp"; } 2>/dev/null || return 1
+  _as_trust_digest "$cwd" "$file" >"$rec.tmp" || return 1
+  # the digest first: until it moves, nothing has changed
+  mv -fT -- "$rec.tmp" "$rec" 2>/dev/null || return 1
+  # then the copies
+  _tr_fail="$rec.approved"
+  mv -fT -- "$rec.approved.tmp" "$rec.approved" 2>/dev/null || return 2
+  _tr_fail="$rec.purpose"
+  rm -rf -- "$rec.purpose" 2>/dev/null || return 2
+  if [[ -d "$rec.purpose.tmp" ]]; then
+    mv -fT -- "$rec.purpose.tmp" "$rec.purpose" 2>/dev/null || return 2
+  fi
   return 0
 }
 
@@ -8046,10 +8082,18 @@ _as_links_locked() {
 }
 
 # _as_links_record PROJECT LINE... -- add the lines (five fields) to PROJECT's record.
+# When that fails, _lr_fail := the path that could not be written (the store, the
+# record's lock, the record), and nothing is shown: the caller says it (#487).
+_lr_fail=""
 _as_links_record() {
   local rec
   rec="$(_as_links_rec "$1")"
   shift
+  _lr_fail="${rec%/*}"
+  mkdir -p -- "$_lr_fail" 2>/dev/null || return 1
+  _lr_fail="$rec.lock"
+  { : >>"$rec.lock"; } 2>/dev/null || return 1
+  _lr_fail="$rec"
   _as_links_locked "$rec" _as_links_record_in "$rec" "$@"
 }
 _as_links_record_in() {
@@ -8061,7 +8105,9 @@ _as_links_record_in() {
       IFS=$'\t' read -r -a _lr_f <<<"$l"
       printf '%s\t%s\t%s\t%s\t%s\n' "${_lr_f[0]}" "${_lr_f[1]}" "${_lr_f[2]}" "${_lr_f[3]}" "${_lr_f[4]}"
     done
-  } | sort -u >"$tmp" && mv -f -- "$tmp" "$rec"
+  } | sort -u 2>/dev/null >"$tmp" && mv -fT -- "$tmp" "$rec" 2>/dev/null && return 0
+  rm -f -- "$tmp" 2>/dev/null
+  return 1
 }
 
 # _as_links_line_ok LINE -- does LINE's chain still hold: every link of it reads as
@@ -8279,9 +8325,9 @@ _as_links_gate() {
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   if _as_has_terminal; then
-    # one question per link; a no to one this launch needs refuses it
-    _as_links_ask "$proj" "${new[@]}" || return 1
-    if ((_la_no)); then
+    # one question per link; a no to one this launch needs refuses it, as does a record
+    # that could not be written (said where it failed): that link is not approved (#487)
+    if ! _as_links_ask "$proj" "${new[@]}" || ((_la_no)); then
       _as_msg "not approved; refusing to launch."
       return 1
     fi
@@ -8354,7 +8400,11 @@ _as_links_found() {
 # the question unnecessary (written in the dot-file, it is the user's own and asks
 # nothing). A yes records it; a no leaves it unapproved. Each is asked once per command
 # (_la_asked): one declined earlier counts as declined again, unasked. _la_no := how many
-# of LINE... are declined. Fails only when the record cannot be written.
+# of LINE... are declined. Fails only when the record cannot be written, which it says,
+# naming the path (#487): the link is then not approved, and the review asks it again
+# while it is there (_as_links_found finds what is not in the record), as does a launch
+# that needs it. With _la_stands=1 (by dynamic scope: _as_trust_prompt, after a yes to
+# the file), the line says the file's approval stands.
 declare -gA _la_asked=()
 _la_no=0
 _as_links_ask() {
@@ -8377,7 +8427,14 @@ _as_links_ask() {
     read -r ans || true
     case "$ans" in
       y | Y | yes | YES)
-        _as_links_record "$proj" "$l" || return 1
+        if ! _as_links_record "$proj" "$l"; then
+          if ((${_la_stands:-0})); then
+            _as_msg "the link's record could not be written to $_lr_fail; the file's approval stands, and the link stays unapproved (asked again at the next review)."
+          else
+            _as_msg "the link's record could not be written to $_lr_fail; the link stays unapproved (asked again at the next review)."
+          fi
+          return 1
+        fi
         _as_msg "approved."
         ;;
       *) _la_no=$((_la_no + 1)) ;;
@@ -10704,24 +10761,35 @@ _as_trust_notes() {
 # Then the implied declarations (#401), what a launch found and could not ask about and
 # what the scan of the plainly bound directories finds, each asked on its own
 # (_as_links_ask): a no to one leaves it unapproved and changes nothing else.
-# Returns 0 when approved (or forgotten), 1 when not -- the dot-file's answer; with
-# neither a dot-file nor an approval of one, 0 when there were links to ask about. Reads
-# the answers from stdin and writes everything else to stderr.
+# Returns (#487):
+#   0  approved (or forgotten), and every record written; with neither a dot-file nor an
+#      approval of one, when there were links to ask about
+#   1  not approved -- the dot-file's answer (or its approval could not be written)
+#   2  as 0, but a record could not be written: a link's (what was approved or
+#      forgotten stands, and the link is not approved, as after a no to it), or the
+#      file's own when its earlier approval of this exact content stands untouched
+# _tp_wfail := 1 when a record could not be written (said where it failed), else 0.
+# Reads the answers from stdin and writes everything else to stderr.
+_tp_wfail=0
 _as_trust_prompt() {
-  local cwd="$1" rc=0
+  local cwd="$1" rc=0 _la_stands=0
+  _tp_wfail=0
   _as_links_found "$cwd"
   # shellcheck disable=SC2234 # the subshell: one substitution per simple command (#423)
   if [[ ! -f "$cwd/.agent-sandbox" ]] && ([[ ! -f "$(_as_config_dir)/trust/$(_as_sha256_str "$cwd")" ]]); then
     ((${#_lf_lines[@]})) || return 1
   else
     _as_trust_prompt_file "$cwd" || rc=1
+    ((rc)) || [[ ! -f "$cwd/.agent-sandbox" ]] || _la_stands=1
   fi
-  _as_links_ask "$cwd" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+  _as_links_ask "$cwd" ${_lf_lines[@]+"${_lf_lines[@]}"} || _tp_wfail=1
+  ((rc || ! _tp_wfail)) || rc=2
   return "$rc"
 }
 
 # _as_trust_prompt_file CWD -- _as_trust_prompt's question on the dot-file. _tp_no := 1
-# when its question was asked and declined, else 0.
+# when its question was asked and declined, else 0; _tp_wfail := 1 when the yes could
+# not be recorded.
 _tp_no=0
 _as_trust_prompt_file() {
   local cwd="$1" file rec ans
@@ -10764,8 +10832,33 @@ _as_trust_prompt_file() {
       return 1
       ;;
   esac
-  _as_trust_record "$cwd" "$file" || return 1
-  _as_msg "approved."
+  local _tr_rc=0
+  _as_trust_record "$cwd" "$file" || _tr_rc=$?
+  case "$_tr_rc" in
+    0) _as_msg "approved." ;;
+    2)
+      # approved (the digest moved in); a copy the next review compares against did not
+      # (#487), and the copies were removed, unless even that failed
+      _tp_wfail=1
+      if ((_tr_kept)); then
+        _as_msg "approved; its copy for the next review could not be written to $_tr_fail, so a review after it changes may show more than changed."
+      else
+        _as_msg "approved; its copy for the next review could not be written to $_tr_fail, so a review after it changes shows the whole file."
+      fi
+      ;;
+    *)
+      _tp_wfail=1
+      # Nothing changed (#487): an approval of this exact content, recorded before,
+      # stands, and that is what is said. The record alone: inside a sandbox,
+      # _as_dotfile_trusted takes any file as given, recorded or not.
+      if _as_trust_unchanged "$cwd" "$file"; then
+        _as_msg "the approval could not be written to $_tr_fail; this exact content stays approved, as it was."
+        return 0
+      fi
+      _as_msg "the approval could not be written to $_tr_fail: not approved."
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -10793,7 +10886,7 @@ _as_trust_show_review() {
     _rv_how="delta"
   elif [[ -f "$rec" ]]; then
     _rv_how=unkept
-    _as_review_line info "the approved content was not kept (an earlier engine approved it), so there is nothing to compare with: the whole review"
+    _as_review_line info "the approved content was not kept (an earlier engine approved it, or its copy could not be written), so there is nothing to compare with: the whole review"
   else
     _rv_how=none
     if _as_inside_sandbox; then
@@ -10812,7 +10905,7 @@ _as_trust_show_review() {
     elif [[ "$_rv_how" == delta ]] && cmp -s -- "$rec.approved" "$file"; then
       printf '\n%s is as you approved it (sha256 %s); a purpose file or addendum it names is not.\n' "$file" "$(_as_sha256_file "$file")"
     elif [[ -f "$rec" && ! -f "$rec.approved" ]] && ((! same)); then
-      printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
+      printf '\n%s has changed since you approved it; the approved content was not kept (an earlier engine approved it, or its copy could not be written), so here is all of it (sha256 %s, through cat -v):\n' "$file" "$(_as_sha256_file "$file")"
       _as_trust_show "$file"
     else
       printf '\n%s (sha256 %s; shown with cat -v, so a non-ASCII byte appears as M-x):\n' "$file" "$(_as_sha256_file "$file")"
@@ -16607,7 +16700,12 @@ _as_trust_review() {
     _as_msg "not approved."
     return 1
   fi
-  if ! _as_trust_prompt "$cwd"; then
+  local rc=0
+  _as_trust_prompt "$cwd" || rc=$?
+  # A record that could not be written (#487) is the engine's failure, and the exit
+  # status says it to a script: the line where it failed said what stands.
+  ((rc != 2)) || return 1
+  if ((rc)); then
     if [[ ! -f "$file" ]]; then
       _as_msg "kept; launches from here stay refused until the file is restored or the approval forgotten."
     elif ! _as_dotfile_trusted "$cwd" "$file"; then
@@ -16617,10 +16715,9 @@ _as_trust_review() {
       # nothing, so the approval stands (#484).
       _as_msg "left as it was: this exact content stays approved."
     fi
-    # Approved here, then failed (a link's record could not be written; a declined link
-    # fails nothing): the "approved." above stands, and nothing is added to it. Not
-    # asked (a launch refuses the file as it is): that line says it all.
-    return 0
+    # Not asked (a launch refuses the file as it is): that line says it all. A decline
+    # exits 0; a record not written, 1.
+    return "$_tp_wfail"
   fi
   [[ -f "$file" ]] || return 0
   # A tracked file gets no offer: an exclude line does nothing for it, and a
@@ -18772,12 +18869,17 @@ _as_roles_open() {
     return 1
   fi
   if ((need)); then
-    if ! _as_trust_prompt "$dir"; then
+    # 2: approved, and a link's record not written -- said where it failed; that link
+    # is as one declined (#487)
+    local _tp_rc=0
+    _as_trust_prompt "$dir" || _tp_rc=$?
+    if ((_tp_rc == 1)); then
       _as_msg "not approved; --roles opens no panes."
       return 1
     fi
   else
-    _as_links_ask "$dir" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+    # a record not written is said where it failed, and that link is as one declined (#487)
+    _as_links_ask "$dir" ${_lf_lines[@]+"${_lf_lines[@]}"} || true
   fi
   # No roles named: the project's own, from the approved file. A project that needs its
   # setup -- a setup role whose [conda:setup] names an environment -- and has not had it
@@ -20311,7 +20413,8 @@ agent_sandbox() (
     if [[ "$_ag_mode" == launch ]] && _as_has_terminal && ! _as_inside_sandbox; then
       if { [[ -f "$_ag_file" ]] && ! _as_dotfile_trusted "$_ag_proj" "$_ag_file"; } || { [[ ! -f "$_ag_file" && -f "$_ag_rec" ]]; }; then
         _trust_asked=1
-        _as_trust_prompt "$_ag_proj" || _as_msg "not approved."
+        # 2: approved, and a link's record not written, said where it failed (#487)
+        _as_trust_prompt "$_ag_proj" || { (($? != 1)) || _as_msg "not approved."; }
       fi
     fi
     # --check evaluates the file as a launch would once it is approved (_as_dotfile_trusted).
@@ -20868,7 +20971,8 @@ agent_sandbox() (
   fi
   # A launch whose agent the file names has asked already (#355: see the role's agent).
   if ((_df_needs_review && ! _trust_asked && ! (_do_verb || _do_shutdown || _do_status))) && _as_has_terminal; then
-    _as_trust_prompt "$_proj" || _as_msg "not approved."
+    # 2: approved, and a link's record not written, said where it failed (#487)
+    _as_trust_prompt "$_proj" || { (($? != 1)) || _as_msg "not approved."; }
   fi
   # A JOIN READS THE KEEPER'S DOT-FILE, NOT THE LIVE ONE. A running role's policy is
   # the one its keeper started with, so the file a join parses is the copy the keeper
