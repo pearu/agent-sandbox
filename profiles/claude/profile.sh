@@ -110,7 +110,8 @@
 #   profile_trust_notes CWD KEY=VALUE...
 #                               optional. Prints lines the dot-file's review
 #                               says about the project's section named after
-#                               the profile (#335).
+#                               the profile (#335); "refused<TAB>TEXT" or
+#                               "warning<TAB>TEXT" is always shown (#491).
 #
 # What the engine provides to a profile: profile_bin (the agent executable,
 # resolved), AGENT_SANDBOX_ENGINE (real path of the engine file),

@@ -174,7 +174,7 @@ trust() {
   [ "$status" -eq 0 ]
   [ "$(setenv_value MY_TOOL)" = on ]
   run ! setenv_value PINNED
-  run_review
+  run_review "$PROJ" --all # approved: the whole review shows every note (#491)
   # claude ignores it; the sshd profile, which lets a project set a variable, sets it (#335)
   [[ "$output" == *"[env] PINNED = yes: sets PINNED inside, for every role, under the profile sshd; ignored under claude, where a project's file only forwards"* ]]
   [[ "$output" == *"[env] -HOME: a project's file only forwards"* ]]
@@ -1252,8 +1252,8 @@ pending_link() {
     '[gpu:rev]' 'devices = /dev/nvidia*' '[gpu:none]' 'devices =' >"$PROJ/.agent-sandbox"
   run_trust 'n\nn\n'
   [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu] devices: only these GPU device nodes are passed in, for every role, in place of the default list: /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia1"* ]]
-  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices '/etc/passwd': not a node under /dev/; ignoring it"* ]]
-  [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices '/dev/../etc/shadow': a '..' component; ignoring it"* ]]
+  [[ "$output" == *"agent-sandbox: warning — .agent-sandbox: [gpu:impl-*] devices '/etc/passwd': not a node under /dev/; ignoring it"* ]]
+  [[ "$output" == *"agent-sandbox: warning — .agent-sandbox: [gpu:impl-*] devices '/dev/../etc/shadow': a '..' component; ignoring it"* ]]
   [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices: only these GPU device nodes are passed in, for the roles impl-*, in place of the default list: /dev/nvidia0"$'\n'* ]]
   [[ "$output" == *"agent-sandbox: .agent-sandbox: [gpu:impl-*] devices names an NVIDIA card without /dev/nvidiactl /dev/nvidia-uvm: CUDA needs /dev/nvidiactl and /dev/nvidia-uvm (and /dev/nvidia-uvm-tools) as well"* ]]
   [[ "$output" == *"[gpu:rev] devices: only these GPU device nodes are passed in, for the roles rev, in place of the default list: /dev/nvidia*"* ]]

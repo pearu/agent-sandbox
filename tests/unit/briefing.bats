@@ -489,7 +489,7 @@ addenda() {
   [[ "$output" == *"or a purpose file or addendum it names, has changed since you approved it"* ]]
   run_review
   [[ "$output" == *"addendum "*"/.asb/roles/implementer.addendum.md, new to this approval"*"ROLE ADDENDUM."* ]]
-  [[ "$output" == *"purpose file "*"/.asb/roles/implementer-1.md: approved, unchanged."* ]]
+  [[ "$output" == *"approved, unchanged: $PROJ/.asb/roles/implementer-1.md (1 file)"* ]]
   approve
   run_engine BWRAP_COPY="$OUT" -- asb --role implementer-1 claude --version
   [ "$status" -eq 0 ]

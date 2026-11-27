@@ -403,10 +403,10 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1); time.sleep(60)' "$PORT" &
   [[ "$output" != *"inside the project directory"* ]]
   printf '[sshd]\nauthorized-keys = %s/keys\n' "$PROJ" >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *".agent-sandbox: warning -- [sshd] authorized-keys = $PROJ/keys is inside the project directory, which every session can write: a session could add a key that the next launch lets in. Keep it outside the project"* ]]
+  [[ "$output" == *"warning — .agent-sandbox: [sshd] authorized-keys = $PROJ/keys is inside the project directory, which every session can write: a session could add a key that the next launch lets in. Keep it outside the project"* ]]
   printf '[sshd]\nauthorized-keys = keys\n' >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *".agent-sandbox: [sshd] authorized-keys = keys: a relative path; a launch refuses it (an absolute path, or under ~)"* ]]
+  [[ "$output" == *"refused — .agent-sandbox: [sshd] authorized-keys = keys: a relative path; a launch refuses it (an absolute path, or under ~)"* ]]
 }
 
 @test "sshd: [sshd] home = project -- the account's passwd entry, inside, names the project, the rest of /etc/passwd as it is, bound over it; without the line no passwd file; another value refused; the review says it (#344)" {
@@ -443,7 +443,7 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1); time.sleep(60)' "$PORT" &
   [[ "$output" != *"key 'home' is not one this profile reads"* ]]
   printf '[sshd]\nauthorized-keys = %s\nhome = /srv\n' "$H/keys" >"$PROJ/.agent-sandbox"
   run_review
-  [[ "$output" == *".agent-sandbox: [sshd] home = /srv: not a value it takes (project); a launch refuses it"* ]]
+  [[ "$output" == *"refused — .agent-sandbox: [sshd] home = /srv: not a value it takes (project); a launch refuses it"* ]]
 }
 
 @test "sshd: never the default profile -- a verb with no command still acts on claude, the only other one" {
