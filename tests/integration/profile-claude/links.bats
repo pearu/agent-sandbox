@@ -75,6 +75,34 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [ ! -e "$IWORK/report" ]
 }
 
+# #409 (its tests at the end): the cache a link to ~/dot/cache (#401's dotfiles case): the changelog channel's
+# cache/changelog.md is reached through it, and the link itself is the scan's.
+cache_setup() {
+  rm "$IHOME/.claude/CLAUDE.md"
+  mkdir -p "$IHOME/dot/cache"
+  printf 'CHANGES\n' >"$IHOME/dot/cache/changelog.md"
+  ln -s ../dot/cache "$IHOME/.claude/cache"
+  ACCS="$IHOME/.local/state/agent-sandbox/claude/accounts"
+  # the changelog read and written (the channel), then a write beside it
+  printf '%s\n' 'c="$HOME/.claude/cache"' 'printf "changelog=%s\n" "$(cat "$c/changelog.md" 2>&1)"' \
+    '(echo ROLE >>"$c/changelog.md") 2>/dev/null && echo channel=ok || echo channel=refused' \
+    '(echo AGENT >"$c/other") 2>/dev/null && echo write=ok || echo write=refused' >"$IWORK/probe.sh"
+}
+CACHE_Q='  ~/.claude/cache = read-write outside:~/dot/cache'
+CHANGELOG_Q='  ~/.claude/cache/changelog.md = read-write outside:~/dot/cache/changelog.md'
+# the changelog once the cache is approved: within it, not asked (an approved parent covers
+# its child)
+# shellcheck disable=SC2088 # the words the review prints
+CHANGELOG_COVERED='~/.claude/cache/changelog.md = read-write outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked.'
+launched() {
+  [ "$status" -eq 0 ] || {
+    printf "%s\n" "$output" | tail -5 >&3
+    false
+  }
+}
+# others -- every file named `other` under the test's root, as paths below it
+others() { (cd "$I" && find . -name other | sort); }
+
 @test "the dotfiles case (~/.claude/CLAUDE.md -> ../dot/claude/CLAUDE.md) under shared: refused until approved, then read and written through with the channel's mode" {
   claude_
   refused_for_link
@@ -152,7 +180,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   [[ "$(rpt)" == *"read=DOTFILE"* ]]
 }
 
-@test "a linked directory (skills), a linked cache with its changelog, and a chain are read once approved (the linked cache/ itself needs a second review: its changelog is all the first one lists)" {
+@test "a linked directory (skills), a linked cache with its changelog, and a chain are read once approved, in one review (#409: the linked cache/ itself is asked in the same round as its changelog)" {
   rm "$IHOME/.claude/CLAUDE.md"
   mkdir -p "$IHOME/dot/skills" "$IHOME/dot/cache"
   printf 'MY-SKILL\n' >"$IHOME/dot/skills/s.md"
@@ -167,6 +195,7 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
   trust_y
   [[ "$output" == *"~/.claude/skills = read-write outside:~/dot/skills"* ]]
   [[ "$output" == *"~/dot/a -> claude/CLAUDE.md"* ]]
+  [[ "$output" == *"~/.claude/cache = read-write outside:~/dot/cache"* ]]
   claude_
   [ "$status" -eq 0 ] || {
     printf "%s\n" "$output" | tail -5 >&3
@@ -916,4 +945,123 @@ refused_for_link() { # what a launch without a terminal says, and that nothing r
     cat "$I/finds" >&3
     false
   }
+}
+
+# ---- #409: a linked ~/.claude/cache, on the base and on an account -----------------------
+@test "#409: the issue's loop -- one refused launch and one review ask the linked cache, its changelog within it covered; the next launch sees the whole cache" {
+  cache_setup
+  printf 'X\n' >"$IHOME/dot/cache/other"
+  printf '%s\n' 'cat "$HOME/.claude/cache/changelog.md" "$HOME/.claude/cache/other"' >"$IWORK/probe.sh"
+  claude_
+  refused_for_link
+  trust_y
+  [[ "$output" == *"$CACHE_Q"* ]]
+  [[ "$output" == *"$CHANGELOG_COVERED"* ]]
+  claude_
+  launched
+  [ "$(rpt)" = $'CHANGES\nX' ]
+}
+
+@test "#409 at a terminal: the first launch asks the linked cache in its one round, its changelog within it covered; the next asks nothing and sees the whole cache" {
+  cache_setup
+  printf 'X\n' >"$IHOME/dot/cache/other"
+  printf '%s\n' 'cat "$HOME/.claude/cache/changelog.md" "$HOME/.claude/cache/other"' >"$IWORK/probe.sh"
+  claude_tty $'y\ny'
+  [[ "$output" == *"$CACHE_Q"* ]]
+  [[ "$output" == *"$CHANGELOG_COVERED"* ]]
+  # it runs: the changelog is there; a link the scan found is bound from the launch after
+  # its approval (as before #409), so `other` is not yet, and the probe's cat says so
+  [[ "$(rpt)" == CHANGES$'\n'*"other: No such file or directory" ]]
+  claude_
+  launched
+  [ "$(rpt)" = $'CHANGES\nX' ]
+}
+
+@test "#409: on the base, the linked cache declined: the changelog is read and written, a write beside it is refused, nothing lands on the host" {
+  cache_setup
+  claude_
+  refused_for_link
+  trust_y 'n y'
+  [[ "$output" == *"$CACHE_Q"* ]]
+  [[ "$output" == *"$CHANGELOG_Q"* ]] # the cache declined: the changelog asked on its own
+  claude_
+  launched
+  [[ "$(rpt)" == *"changelog=CHANGES"* ]]
+  [[ "$(rpt)" == *"channel=ok"* ]]
+  [[ "$(rpt)" == *"write=refused"* ]]
+  [ -z "$(others)" ]
+  [ "$(cat "$IHOME/dot/cache/changelog.md")" = $'CHANGES\nROLE' ]
+}
+
+@test "#409: under an account, the base's linked cache approved applies as on the base: the write lands in the target, the account's copy stays a link, the next launch starts; a second account asks nothing" {
+  cache_setup
+  mkdir -p "$ACCS/work" "$ACCS/two"
+  claude_ --account work
+  refused_for_link
+  trust_y
+  [[ "$output" == *"$CACHE_Q"* ]]
+  [[ "$output" == *"$CHANGELOG_COVERED"* ]]
+  claude_ --account work
+  launched
+  [[ "$(rpt)" == *"changelog=CHANGES"* ]]
+  [[ "$(rpt)" == *"write=ok"* ]]
+  [ "$(others)" = ./home/dot/cache/other ]
+  [ "$(cat "$IHOME/dot/cache/other")" = AGENT ]
+  [ "$(readlink "$ACCS/work/cache")" = ../dot/cache ]
+  claude_ --account work
+  launched
+  rm "$IHOME/dot/cache/other"
+  claude_ --account two
+  launched
+  [[ "$(rpt)" == *"write=ok"* ]]
+  [ "$(others)" = ./home/dot/cache/other ]
+}
+
+@test "#409: under an account, the approval of the base's linked cache withdrawn: the changelog is read and written, a write beside it is refused, nothing lands in the account, the next launch starts" {
+  cache_setup
+  mkdir -p "$ACCS/work"
+  claude_ --account work
+  refused_for_link
+  trust_y 'n y' # the changelog approved on its own (the cache declined) ...
+  trust_y 'y'   # ... then the cache
+  local rec
+  rec="$(printf '%s' "$IWORK" | sha256sum | cut -d' ' -f1)"
+  rec="$IHOME/.config/agent-sandbox/trust/$rec.links"
+  grep -q "^$IHOME/.claude/cache"$'\t' "$rec"
+  sed -i "\\|^$IHOME/.claude/cache\\t|d" "$rec" # withdrawn: the cache's line, not the changelog's
+  grep -q "^$IHOME/.claude/cache/changelog.md"$'\t' "$rec"
+  claude_ --account work
+  launched
+  [[ "$(rpt)" == *"changelog=CHANGES"* ]]
+  [[ "$(rpt)" == *"channel=ok"* ]]
+  [[ "$(rpt)" == *"write=refused"* ]]
+  [ -z "$(others)" ]
+  [ "$(readlink "$ACCS/work/cache")" = ../dot/cache ]
+  claude_ --account work
+  launched
+}
+
+@test "#409 under inherit and the default preset, base and account: the changelog a copy, refused at the check gate; one review asks the cache, the changelog within it covered; the next launch sees the whole cache" {
+  local pre acct
+  for pre in inherit ''; do
+    for acct in '' work; do
+      rm -rf "$IHOME/.config/agent-sandbox/trust" "$IHOME/.claude/cache" "$IHOME/dot/cache"
+      [[ -z "$acct" ]] || mkdir -p "$IHOME/.local/state/agent-sandbox/claude/accounts/$acct"
+      [ -e "$IHOME/.claude/CLAUDE.md" ] || touch "$IHOME/.claude/CLAUDE.md"
+      cache_setup
+      printf 'X\n' >"$IHOME/dot/cache/other"
+      printf '%s\n' 'cat "$HOME/.claude/cache/changelog.md" "$HOME/.claude/cache/other"' >"$IWORK/probe.sh"
+      TEST_PRESET="$pre"
+      local -a a=()
+      [[ -z "$acct" ]] || a=(--account "$acct")
+      claude_ "${a[@]}"
+      refused_for_link
+      trust_y
+      [[ "$output" == *"$CACHE_Q"* ]]
+      [[ "$output" == *"~/.claude/cache/changelog.md = copy outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked."* ]]
+      claude_ "${a[@]}"
+      launched
+      [ "$(rpt)" = $'CHANGES\nX' ]
+    done
+  done
 }

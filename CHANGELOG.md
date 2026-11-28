@@ -1507,6 +1507,35 @@ names are gone; there are no aliases for removed names before 1.0.
 
 ### Fixed
 
+- **A linked `~/.claude/cache` needed two rounds of `asb --trust` (#409).** A launch
+  refused for a link wrote no record of what it bound, so the review after it could not
+  scan the directories it binds: it asked only `~/.claude/cache/changelog.md`, and
+  `~/.claude/cache` itself only after a launch that ran; at a terminal, the second launch
+  asked nothing, so the cache waited for a `--trust`. Now the launch's view is on record
+  before it can refuse -- at the gate a store's read meets first (the changelog's `copy`
+  under `inherit` and the default preset) as at the full one -- so the one review after
+  it, or the launch's own questions at a terminal, ask every link it would meet in one
+  round, under every preset, on the base and on an account.
+- **An approved link did not cover a path through it (#409).** With `~/.claude/cache`
+  approved and its changelog not, a launch refused for the changelog, saying its target
+  was outside the view and new or changed, both false. Now a link approved `read-write`
+  covers every path through it into its target (`read-only`: every such path but a
+  `read-write` one): neither a launch nor a review asks about such a path, and the review
+  asks a link before the paths through it, saying of each covered one that it is not
+  asked.
+- **Under `--account`, a linked `~/.claude/cache` collected the agent's writes in the
+  account's directory and stopped every later launch on it (#409).** The account's copy
+  of the base's link was covered with a directory the agent could write in, so its first
+  write beside the changelog made it a directory with content where the base has a
+  link, and each later launch refused. An approval of the link had no effect on an
+  account. Now the account's copy is the base's link, as on the base: approved, its
+  target is bound where it leads and the write lands there; not approved, nothing written
+  through it reaches the host (a write beside the changelog is refused, or, where the
+  link leads into a directory of the sandbox's own such as `~/.cache`, stays in the
+  sandbox and is gone at exit); nothing written through it lands in the account's
+  directory. An account left with such a
+  directory still refuses (the engine removes no content), and the refusal now says what
+  an earlier launch may have left there; see docs/troubleshooting.md.
 - **A record the trust review could not write was said as "not approved", or not said
   (#487).** The review returned one failure for a no and for a record that could not be
   written. So after a yes to the file and a link whose record could not be written,

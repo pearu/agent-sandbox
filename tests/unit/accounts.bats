@@ -1376,3 +1376,421 @@ set_fetched() {
   [ "$(fetched "$store")" = 0 ]
   [ "$(cat "$SBOX/account")" = "claude"$'\t'"work" ]
 }
+
+# ---- #409: a linked ~/.claude/cache, on the base and on an account ----------------------
+# The base's cache/ a symbolic link to ~/dot/cache, which holds the changelog channel's
+# cache/changelog.md: the channel's path is reached through the link (its own question),
+# and the link itself is the scan's (#401).
+linked_cache() {
+  rm -rf "$C/cache"
+  mkdir -p "$H/home/dot/cache"
+  printf 'notes\n' >"$H/home/dot/cache/changelog.md"
+  ln -s ../dot/cache "$C/cache"
+  TRUST="$H/home/.config/agent-sandbox/trust"
+  VIEWS="$TRUST/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links.view."
+}
+# trust_answer ANSWERS -- `asb --trust` in the project, ANSWERS (printf %b) typed in
+trust_answer() {
+  engine_cmd
+  run bash -c 'cd "$1" && printf "%b" "$2" | env -i HOME="$3" PATH="$4" "${@:5}" --trust 2>&1' _ \
+    "$PROJ" "$1" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+}
+CACHE_LINE='  ~/.claude/cache = read-write outside:~/dot/cache'
+CHANGELOG_LINE='  ~/.claude/cache/changelog.md = read-write outside:~/dot/cache/changelog.md'
+# the changelog once the cache, its parent, is approved: covered, not asked (A2)
+COVERED_LINE="~/.claude/cache/changelog.md = read-write outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked."
+# asked_once TEXT -- TEXT (a review or launch) asked exactly one question: the cache's
+asked_once() { [ "$(grep -c 'approve this link for' <<<"$1")" -eq 1 ]; }
+
+@test "#409: a launch refused for the linked cache's changelog leaves its view on record; the one review after it asks the cache, and the changelog within it no more once the cache is approved; the next launch binds the cache's target" {
+  linked_cache
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Refusing to launch until it is reviewed"* ]]
+  [ ! -s "$H/argv" ]
+  # the view on record, written before the gate refused: the base bound plainly
+  grep -qxF "$C"$'\t'rw$'\t'"$C"$'\t'read-write "$VIEWS"*
+  trust_answer 'y\ny\n'
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"$COVERED_LINE"* ]]
+  asked_once "$output"
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  argv_has --bind "$H/home/dot/cache/changelog.md" "$H/home/dot/cache/changelog.md"
+}
+
+@test "#409 at a terminal: the first launch asks the linked cache in its one round, the cache before the changelog, which its approval covers" {
+  linked_cache
+  run_engine_tty 'y\ny\n' -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"$COVERED_LINE"* ]]
+  asked_once "$output"
+  # (a link the scan found is bound from the launch after its approval, as before #409)
+  run_engine_tty '' -- asb claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"approve this link"* ]]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+}
+
+@test "#409: under an account, the base's linked cache is the base's link: the review after a refused launch asks it (the changelog within it covered); approved, the account's launch binds its target and puts the changelog there, the account's copy stays a link; a second account asks nothing" {
+  linked_cache
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Refusing to launch until it is reviewed"* ]]
+  # the account's directory written as the base, its own login a path the scan skips
+  grep -qxF "$C"$'\t'rw$'\t'"$C"$'\t'read-write "$VIEWS"*
+  grep -qxF "$C/.credentials.json"$'\t'other$'\t\t-' "$VIEWS"*
+  run ! grep -qF "$ACC/work"$'\t' "$VIEWS"*
+  trust_answer 'y\ny\n'
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"$COVERED_LINE"* ]]
+  asked_once "$output"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  argv_has --bind "$H/home/dot/cache/changelog.md" "$H/home/dot/cache/changelog.md"
+  [ "$(readlink "$ACC/work/cache")" = ../dot/cache ] # never covered
+  run ! grep -qF "$ACC/work/cache" "$H/argv"
+  run_engine -- asb --account personal claude --version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is reached through a symbolic link"* ]]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  [ "$(readlink "$ACC/personal/cache")" = ../dot/cache ]
+}
+
+@test "#409: under an account, the base's linked cache not approved: its target is not bound, the changelog goes where the base's link leads, the account's copy stays a link" {
+  linked_cache
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  trust_answer 'n\ny\n' # the cache declined, the changelog approved
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"$CHANGELOG_LINE"* ]]
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  argv_has --bind "$H/home/dot/cache/changelog.md" "$H/home/dot/cache/changelog.md"
+  [ "$(readlink "$ACC/work/cache")" = ../dot/cache ] # never covered
+  run ! grep -qF "$ACC/work/cache" "$H/argv"
+}
+
+@test "#409: an account's directory with content where the base has a symlink refuses, saying what an earlier launch may have left there; the remove-either advice stays; a file there gets no such sentence" {
+  mkdir "$ACC/work/link"
+  printf 'agent\n' >"$ACC/work/link/other"
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the account 'work': '$ACC/work/link' is a directory where the base's '$C/link' is a symlink, so the base's cannot be put over it; remove '$ACC/work/link' (the account's) to see the base's there, or '$C/link' (the base's) to keep the account's. If an earlier launch made it (a cover for the base's link, before #409's fix), what is in it is the agent's writes through that link, which a launch now never puts there. Nothing was started"* ]]
+  [ ! -s "$H/argv" ]
+  [ -e "$ACC/work/link/other" ] # never removed
+  rm -r "$ACC/work/link"
+  : >"$ACC/work/link"
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"'$ACC/work/link' is a file where the base's '$C/link' is a symlink"* ]]
+  [[ "$output" != *"earlier launch"* ]]
+}
+
+@test "#409: the view on record before the gate is the launch's final one: a link to where the changelog's mount moves (shown there) is not asked by the review after a refused launch" {
+  linked_cache
+  ln -s ../dot/cache/changelog.md "$C/cl2" # into the changelog's target, which the view shows
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  trust_answer 'y\ny\n'
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" != *"cl2"* ]]
+}
+
+@test "#409: under an account, a link inside an entry of the base's bound from it is the base's too: the review asks it; approved, the account's launch binds its target" {
+  mkdir -p "$H/home/dot/ide-x"
+  ln -s ../../dot/ide-x "$C/ide/l"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ] # a link the scan finds blocks no launch
+  trust_answer 'y\n'
+  [[ "$output" == *"  ~/.claude/ide/l = read-write outside:~/dot/ide-x"* ]]
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/ide-x" "$H/home/dot/ide-x"
+}
+
+@test "#409 helper: under an account, a path under the account's copy of a base link is the same under the base's link; a name that only starts like it, or no account, is unchanged" {
+  source_engine
+  # shellcheck disable=SC2034 # read by the helpers by dynamic scope
+  local profile_base="$C" _acct_dir="$ACC/work" _as_base_real="$C"
+  # shellcheck disable=SC2034
+  local -a _as_base_links=(cache)
+  local p="$ACC/work/cache/changelog.md"
+  _as_ln_acct_base p
+  [ "$p" = "$C/cache/changelog.md" ]
+  p="$ACC/work/cache"
+  _as_ln_acct_base p
+  [ "$p" = "$C/cache" ]
+  p="$ACC/work/cachex/f"
+  _as_ln_acct_base p
+  [ "$p" = "$ACC/work/cachex/f" ]
+  p="$ACC/work/ide/f"
+  _as_ln_acct_base p
+  [ "$p" = "$ACC/work/ide/f" ]
+  _acct_dir=""
+  p="$ACC/work/cache/f"
+  _as_ln_acct_base p
+  [ "$p" = "$ACC/work/cache/f" ]
+}
+
+@test "#409 helper: the account's mount stands for the base only where it is the account's directory at the base's path" {
+  source_engine
+  # shellcheck disable=SC2034 # read by the helper by dynamic scope
+  local profile_base="$C" _acct_dir="$ACC/work" _as_base_real="$C"
+  # shellcheck disable=SC2034
+  local -a _od=("$C" "$C" "$C/ide")
+  # shellcheck disable=SC2034
+  local -A _ms=([0]="$ACC/work" [1]="$H/store" [2]="$ACC/work")
+  _as_ln_acct_mount 0
+  run ! _as_ln_acct_mount 1
+  run ! _as_ln_acct_mount 2
+  _acct_dir=""
+  run ! _as_ln_acct_mount 0
+}
+
+@test "#409: under an account, a chain through two of the base's links (cache -> c2 -> ../dot/cache) makes neither again, approved or not: the account's copies are the base's, as on the base (bubblewrap before 0.9.0 dies on a symlink already there)" {
+  rm -rf "$C/cache"
+  mkdir -p "$H/home/dot/cache"
+  printf 'notes\n' >"$H/home/dot/cache/changelog.md"
+  ln -s c2 "$C/cache"
+  ln -s ../dot/cache "$C/c2"
+  local rec
+  rec="$H/home/.config/agent-sandbox/trust/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  run_engine -- asb --account work claude --version
+  [ "$status" -ne 0 ]
+  # (the changelog approved on its own first, the two links declined; then the links: an
+  # approved parent covers its child, which a review then does not ask, A2)
+  trust_answer 'n\nn\ny\n'
+  trust_answer 'y\ny\n'
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  run ! grep -qF -- "$C/c2" "$H/argv"
+  # the links withdrawn, the changelog's still approved: its mount through the chain too
+  sed -i -e "\\|^$C/cache\t|d" -e "\\|^$C/c2\t|d" "$rec"
+  grep -q "^$C/cache/changelog.md"$'\t' "$rec"
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  run ! argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  argv_has --bind "$H/home/dot/cache/changelog.md" "$H/home/dot/cache/changelog.md"
+  run ! grep -qF -- "$C/c2" "$H/argv"
+  [ "$(readlink "$ACC/work/c2")" = ../dot/cache ]
+}
+
+@test "#409: a link of the base's at an account path (a linked .credentials.json), approved for a role on the base, binds nothing into a role on an account: only the base's own links are the account's" {
+  rm "$C/.credentials.json"
+  mkdir -p "$H/home/dot"
+  printf 'BASE-LOGIN\n' >"$H/home/dot/creds.json"
+  ln -s ../dot/creds.json "$C/.credentials.json"
+  run_engine -- asb claude --version
+  engine_cmd
+  (cd "$PROJ" && yes | env -i HOME="$H/home" PATH="$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}" --trust >/dev/null 2>&1)
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/creds.json" "$H/home/dot/creds.json" # approved on the base
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ]
+  run ! grep -qF "$H/home/dot/creds.json" "$H/argv"
+}
+
+# ---- #409 under every preset: a store's read through the link refused at the check gate ----
+# Under `inherit` and the default preset the changelog channel is a `copy` store: its read
+# through the link is refused by the check-mode gate (_as_connect_bind_all), before the
+# full one. Its view is on record all the same (_as_ln_prepass).
+
+@test "#409 under inherit and the default preset, base and account: a launch refused at the check gate leaves its view on record; the one review after it asks the cache, the changelog within it covered; the next launch starts" {
+  local pre acct
+  for pre in inherit ''; do
+    for acct in '' work; do
+      rm -rf "$H/home/.config/agent-sandbox/trust" "$C/cache" "$H/home/dot" "$ACC/work/cache"
+      linked_cache
+      local -a a=()
+      [[ -z "$acct" ]] || a=(--account "$acct")
+      TEST_PRESET="$pre" run_engine -- asb "${a[@]}" claude --version
+      [ "$status" -ne 0 ]
+      [[ "$output" == *"~/.claude/cache/changelog.md = copy outside:~/dot/cache/changelog.md"* ]]
+      grep -qxF "$C"$'\t'rw$'\t'"$C"$'\t'read-write "$VIEWS"*
+      # the briefing the launch binds after its binds, in the view as the final one has it
+      grep -qxF /run/agent-sandbox$'\t'other$'\t\t-' "$VIEWS"*
+      trust_answer 'y\ny\n'
+      [[ "$output" == *"$CACHE_LINE"* ]]
+      [[ "$output" == *"~/.claude/cache/changelog.md = copy outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked."* ]]
+      asked_once "$output"
+      TEST_PRESET="$pre" run_engine -- asb "${a[@]}" claude --version
+      [ "$status" -eq 0 ] || {
+        printf 'preset %s account %s: %s\n' "${pre:-default}" "${acct:--}" "$output" >&3
+        false
+      }
+      argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+    done
+  done
+}
+
+@test "#409 at a terminal, under inherit and the default preset, base and account: the first launch asks the cache in its one round, the changelog within it covered, and starts" {
+  local pre acct
+  for pre in inherit ''; do
+    for acct in '' work; do
+      rm -rf "$H/home/.config/agent-sandbox/trust" "$C/cache" "$H/home/dot" "$ACC/work/cache"
+      linked_cache
+      local -a a=()
+      [[ -z "$acct" ]] || a=(--account "$acct")
+      TEST_PRESET="$pre" run_engine_tty 'y\ny\n' -- asb "${a[@]}" claude --version
+      [ "$status" -eq 0 ] || {
+        printf 'preset %s account %s: %s\n' "${pre:-default}" "${acct:--}" "$output" >&3
+        false
+      }
+      [[ "$output" == *"$CACHE_LINE"* ]]
+      [[ "$output" == *"~/.claude/cache/changelog.md = copy outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked."* ]]
+      asked_once "$output"
+    done
+  done
+}
+
+@test "#409: a hide over a directory with a link in it, under each preset: the review after a refused launch does not ask about that link" {
+  local pre
+  mkdir -p "$H/home/dot/hidden"
+  ln -s ../../dot/hidden "$C/daemon/l"
+  for pre in shared inherit ''; do
+    rm -rf "$H/home/.config/agent-sandbox/trust" "$C/cache" "$H/home/dot/cache"
+    linked_cache
+    TEST_PRESET="$pre" run_engine -- asb claude --version
+    [ "$status" -ne 0 ]
+    trust_answer 'y\ny\n'
+    [[ "$output" == *"$CACHE_LINE"* ]]
+    [[ "$output" != *"daemon/l"* ]]
+  done
+}
+
+@test "#409 (A2): the cache approved after its changelog was declined: the launch starts, the changelog reached through the approved cache, under shared and inherit" {
+  local pre
+  for pre in shared inherit; do
+    rm -rf "$H/home/.config/agent-sandbox/trust" "$C/cache" "$H/home/dot/cache"
+    linked_cache
+    TEST_PRESET="$pre" run_engine -- asb claude --version
+    [ "$status" -ne 0 ]
+    trust_answer 'n\nn\n' # both declined
+    [[ "$output" == *"$CACHE_LINE"* ]]
+    [ "$(grep -c 'approve this link for' <<<"$output")" -eq 2 ]
+    TEST_PRESET="$pre" run_engine -- asb claude --version
+    [ "$status" -ne 0 ]
+    trust_answer 'y\n' # the cache, then: the changelog within it, not asked
+    asked_once "$output"
+    trust_answer '' # (before any launch prunes the changelog's pending line)
+    [[ "$output" != *"approve this link"* ]]
+    [[ "$output" != *"not asked"* ]]
+    TEST_PRESET="$pre" run_engine -- asb claude --version
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"is reached through a symbolic link"* ]]
+    argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  done
+}
+
+@test "#409 (A2): a parent approved read-only does not cover a child that is read-write: the child is asked" {
+  linked_cache
+  local rec
+  rec="$TRUST/$(printf '%s' "$PROJ" | sha256sum | cut -d' ' -f1).links"
+  mkdir -p "$TRUST"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$C/cache" "$C/cache -> ../dot/cache" "$H/home/dot/cache" dir read-only >"$rec"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"~/.claude/cache/changelog.md = read-write outside:~/dot/cache/changelog.md"* ]]
+  # (the scan asks the cache again with the mode it has now, read-write: declined)
+  trust_answer 'n\ny\n'
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"$CHANGELOG_LINE"* ]]
+  [[ "$output" != *"not asked."* ]]
+  run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+}
+
+@test "#409: under an account, a declaration of your own at the base link's own path keeps its mount where the link leads; the account's copy stays a link" {
+  linked_cache
+  dotfile '[connect]' '~/.claude/cache = read-write outside:~/dot/cache'
+  run_engine -- asb --account work claude --version
+  [ "$status" -eq 0 ] || {
+    printf '%s\n' "$output" >&3
+    false
+  }
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  [ "$(readlink "$ACC/work/cache")" = ../dot/cache ]
+  run ! grep -qF "$ACC/work/cache" "$H/argv"
+}
+
+@test "#409 at a terminal: a no to the cache and to the changelog refuses the launch; nothing is bound through the link" {
+  linked_cache
+  run_engine_tty 'n\nn\n' -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not approved; refusing to launch."* ]]
+  [ "$(grep -c 'approve this link for' <<<"$output")" -eq 2 ]
+  [ ! -s "$H/argv" ]
+}
+
+@test "#409 (A2): a path through an approved link that leaves its target through another link is not covered: it is asked, and a no refuses" {
+  linked_cache
+  mkdir -p "$H/home/dot/elsewhere"
+  mv "$H/home/dot/cache/changelog.md" "$H/home/dot/elsewhere/changelog.md"
+  ln -s ../elsewhere/changelog.md "$H/home/dot/cache/changelog.md"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  trust_answer 'y\nn\n'
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"  ~/.claude/cache/changelog.md = read-write outside:~/dot/elsewhere/changelog.md"* ]]
+  [[ "$output" != *"not asked"* ]]
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"~/.claude/cache/changelog.md = read-write outside:~/dot/elsewhere/changelog.md"* ]]
+}
+
+@test "#409 (A2): an approved link retargeted since covers nothing: the path through it is asked again" {
+  linked_cache
+  run_engine -- asb claude --version
+  trust_answer 'y\n'
+  mkdir -p "$H/home/dot/other"
+  printf 'other\n' >"$H/home/dot/other/changelog.md"
+  rm "$C/cache"
+  ln -s ../dot/other "$C/cache"
+  run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"~/.claude/cache/changelog.md = read-write outside:~/dot/other/changelog.md"* ]]
+}
+
+@test "#409 (A2): the parent is asked before its child in a UTF-8 locale too (whose collation would put cache/changelog.md first): one question, the child not asked" {
+  locale -a 2>/dev/null | grep -qix 'en_US.utf-\?8' || skip "no en_US.UTF-8 locale here"
+  linked_cache
+  TEST_PRESET=inherit run_engine LANG=en_US.UTF-8 -- asb claude --version
+  [ "$status" -ne 0 ]
+  engine_cmd
+  run bash -c 'cd "$1" && yes | env -i HOME="$2" PATH="$3" LANG=en_US.UTF-8 "${@:4}" --trust 2>&1' _ \
+    "$PROJ" "$H/home" "$H/bin:/usr/bin:/bin" "${ENGINE_CMD[@]}"
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  [[ "$output" == *"~/.claude/cache/changelog.md = copy outside:~/dot/cache/changelog.md: within ~/.claude/cache, approved; not asked."* ]]
+  [ "$(grep -c 'approve this link' <<<"$output")" = 1 ]
+}
+
+@test "#409: the view the gate before a store's read leaves is the list as the links rewrite it: with the cache approved (its target bound), a link into that target is not asked by the review after a refused launch" {
+  linked_cache
+  TEST_PRESET=inherit run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  trust_answer 'y\n' # the cache, which covers its changelog
+  [[ "$output" == *"$CACHE_LINE"* ]]
+  TEST_PRESET=inherit run_engine -- asb claude --version
+  [ "$status" -eq 0 ]
+  argv_has --bind "$H/home/dot/cache" "$H/home/dot/cache"
+  # a new link the gate before a store's read refuses (skills, a store under inherit), and
+  # one into the cache's bound target, which the launch's view shows
+  rm -r "$C/skills"
+  mkdir -p "$H/home/dot/skills"
+  ln -s ../dot/skills "$C/skills"
+  printf 'x\n' >"$H/home/dot/cache/x"
+  ln -s ../dot/cache/x "$C/cl3"
+  TEST_PRESET=inherit run_engine -- asb claude --version
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"~/.claude/skills is reached through a symbolic link"* ]]
+  trust_answer 'n\n'
+  [[ "$output" == *"  ~/.claude/skills = copy-on-write outside:~/dot/skills"* ]]
+  [[ "$output" != *"cl3"* ]]
+}
