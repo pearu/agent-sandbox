@@ -188,6 +188,18 @@ policy with the defaults, which for memory scoping is wider. Restore the file,
 launch from a terminal to be asked, or run `asb --trust` from the project
 directory: with the file missing, either offers to forget the approval.
 
+**`the account 'NAME': '.../accounts/NAME/cache' is a directory where the base's
+'~/.claude/cache' is a symlink ... Nothing was started`** The base's entry is a symbolic
+link (a dotfiles `~/.claude/cache -> ../dot/cache`), and the account's directory has a
+directory with content under the same name. One way it got there: before #409's fix, a
+launch on the account covered its copy of the link with that directory and let the agent
+write into it, which a launch now never does (the account's copy is the base's link, as
+on the base). Another: the account's directory is read-write to a role on it, so a role
+can replace the copy of the link with a directory of its own. Either way, what is in it
+is what was written there: look, keep what you want elsewhere, and remove the account's
+directory to see the base's link there -- or remove the base's link to keep the
+account's. The engine does not remove a directory with content.
+
 **`asb: command not found` (or it runs an old version) after moving or pulling the
 repo** A normal install copies the engine and profiles under
 `~/.local/share/agent-sandbox` and `asb` points there, so moving the clone is fine but a

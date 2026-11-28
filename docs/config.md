@@ -1035,7 +1035,14 @@ declared or channel path that is new or changed since, or that a launch would us
 another mode, is asked about again, by a launch at a terminal or by `asb --trust` (which
 a launch without one names); one found inside a plainly bound directory waits for the
 next review. Each question names the declaration that makes it unnecessary, to write in
-the dot-file. `--check` lists them too.
+the dot-file. `--check` lists them too. A launch refused for a link leaves on record what
+it would have bound, so the one review that the refusal names (or the launch's own
+questions at a terminal) asks every link that launch would meet, under every preset
+(#409). The questions come in path order, a link before any path through it; a link
+approved with `read-write` covers every path through it into its target, and one approved
+`read-only` every such path but a `read-write` one: such a path is not asked about, by the
+review or by a launch, and its line says so (`within ~/.claude/cache, approved; not
+asked.`).
 
 The approval is stored under `~/.config/agent-sandbox/trust/`, which is **never
 bound into the sandbox**, so the agent can neither read nor forge it. Refusing
@@ -1393,13 +1400,20 @@ by one over the account's directory, and then the channels the profile declares 
 project's `[claude] hide`), and the profile's `account-paths` -- **the base's login and
 its refresh lock are never in an account role**; that is the point. An entry that is a
 symlink is made again in the account's directory with its target as written, never
-followed on the host. Where the account's directory has an entry of the same name and
+followed on the host; made so, it is the base's link (#409): a link of the base's you
+approved (the review's `implied by symbolic links`) applies to every role on every
+account as on the base, its target bound where the link leads, with no question per
+account; through one not approved, nothing written reaches the host, as on the base: a
+write beside a channel there is refused, or, where the link leads into a directory the
+sandbox gives the role (`~/.cache`, a tmpfs), stays in the sandbox and is gone at exit.
+Where the account's directory has an entry of the same name and
 kind, the base's covers it. Any symlink there, under a name the base has, is taken to be
 one an earlier launch made again (the engine does not tell its own from yours), and is
 removed and made afresh when the base's entry is no longer a symlink to the same target.
 Any other mismatch (a file in the account's directory where the base has a directory, a
 directory where it has a file, a file or non-empty directory where it has a symlink; an
-empty one is an earlier launch's cover of the link) refuses the launch before anything
+empty one is the cover a launch before #409's fix made of the link, made the link again)
+refuses the launch before anything
 starts, naming both paths: remove the account's to see the base's there, or the base's
 to keep the account's. An entry created in the base after the launch is not seen by that
 launch (a role on the base sees it at once); one the agent creates at the top during the

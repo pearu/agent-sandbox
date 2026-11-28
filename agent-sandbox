@@ -8064,6 +8064,39 @@ _as_links_approved() {
   [[ -f "$rec" ]] && grep -qFx -- "$2" "$rec"
 }
 
+# _as_links_covered PROJECT LINE -- AN APPROVED PARENT COVERS ITS CHILD (#409): is LINE
+# (five fields) within a link of PROJECT's record that still holds -- LINE's chain begins
+# with that link's whole chain, LINE's path and target lie inside that link's path and
+# its target directory, and its mode grants LINE's (read-write grants every mode,
+# read-only all but read-write)? The user approved following that link to its target
+# with that mode, so a path through it asks nothing more: not at a launch (_as_ln_met),
+# not at a review (_as_links_found, _as_links_ask). _lc_by := that link's path.
+_lc_by=""
+_as_links_covered() {
+  local rec l
+  local -a _lc_c=() _lc_p=()
+  _lc_by=""
+  rec="$(_as_links_rec "$1")"
+  [[ -f "$rec" ]] || return 1
+  IFS=$'\t' read -r -a _lc_c <<<"$2"
+  ((${#_lc_c[@]} == 5)) || return 1
+  while IFS= read -r l; do
+    IFS=$'\t' read -r -a _lc_p <<<"$l"
+    ((${#_lc_p[@]} == 5)) && [[ "${_lc_p[3]}" == dir ]] || continue
+    [[ "${_lc_c[0]}" == "${_lc_p[0]}"/* && "${_lc_c[2]}" == "${_lc_p[2]}"/* ]] || continue
+    [[ "${_lc_c[1]}" == "${_lc_p[1]}" || "${_lc_c[1]}" == "${_lc_p[1]} ; "* ]] || continue
+    case "${_lc_p[4]}" in
+      read-write) ;;
+      read-only) [[ "${_lc_c[4]}" != read-write ]] || continue ;;
+      *) continue ;;
+    esac
+    _as_links_line_ok "$l" || continue
+    _lc_by="${_lc_p[0]}"
+    return 0
+  done <"$rec"
+  return 1
+}
+
 # _as_links_locked FILE CMD... -- run CMD holding an flock on FILE.lock: the record and
 # the pending files are read, changed and renamed over by launches that may run at once
 # (`--roles` panes), and none may lose another's lines.
@@ -8325,16 +8358,25 @@ _as_links_gate() {
   ((${#new[@]})) || return 0
   mapfile -t new < <(printf '%s\n' "${new[@]}" | sort -u)
   if _as_has_terminal; then
-    # one question per link; a no to one this launch needs refuses it, as does a record
-    # that could not be written (said where it failed): that link is not approved (#487)
-    if ! _as_links_ask "$proj" "${new[@]}" || ((_la_no)); then
+    # one question per link: what this launch needs, and, asking anyway, the scan's
+    # findings, in one sorted list -- a parent before its children, which its yes covers
+    # (_as_links_covered, #409); a no to a finding blocks nothing (it is simply not
+    # approved). Then a line this launch needs that is neither approved nor covered
+    # refuses it, as does a record that could not be written (said where it failed):
+    # that link is not approved (#487).
+    _as_links_found "$proj"
+    local -a ask=()
+    mapfile -t ask < <(printf '%s\n' "${new[@]}" ${_lf_lines[@]+"${_lf_lines[@]}"} | LC_ALL=C sort -u)
+    if ! _as_links_ask "$proj" "${ask[@]}"; then
       _as_msg "not approved; refusing to launch."
       return 1
     fi
-    # asking anyway: the scan's findings too, each on its own; a no to one of those
-    # blocks nothing (it is simply not approved)
-    _as_links_found "$proj"
-    _as_links_ask "$proj" ${_lf_lines[@]+"${_lf_lines[@]}"} || return 1
+    for l in "${new[@]}"; do
+      _as_links_approved "$proj" "$l" || _as_links_covered "$proj" "$l" || {
+        _as_msg "not approved; refusing to launch."
+        return 1
+      }
+    done
     return 0
   fi
   local -a f=()
@@ -8388,10 +8430,18 @@ _lf_proj="" _lf_done=0
 declare -ga _lf_lines=()
 _as_links_found() {
   if ((_lf_done)) && [[ "$_lf_proj" == "$1" ]]; then return 0; fi
-  mapfile -t _lf_lines < <({
+  # (sorted by byte, whatever the user's locale: a parent before its children, which its
+  # approval may cover, _as_links_ask; a UTF-8 locale's collation skips the tab and the
+  # slash, and puts PARENT/child before PARENT<TAB>)
+  local l
+  _lf_lines=()
+  while IFS= read -r l; do
+    [[ -n "$l" ]] || continue
+    _as_links_covered "$1" "$l" || _lf_lines+=("$l")
+  done < <({
     _as_links_pending "$1"
     _as_links_scan_review "$1"
-  } | sort -u)
+  } | LC_ALL=C sort -u)
   _lf_proj="$1" _lf_done=1
 }
 
@@ -8414,6 +8464,12 @@ _as_links_ask() {
   _la_no=0
   for l in "$@"; do
     [[ -n "$l" ]] || continue
+    # within a link approved earlier in this review (a parent before its child): not asked
+    if _as_links_covered "$proj" "$l"; then
+      IFS=$'\t' read -r -a f <<<"$l"
+      (_as_msg "$(_as_tilde "${f[0]}") = ${f[4]} outside:$(_as_tilde "${f[2]}"): within $(_as_tilde "$_lc_by"), approved; not asked.")
+      continue
+    fi
     if [[ -n "${_la_asked[$proj$'\n'$l]+x}" ]]; then
       _la_no=$((_la_no + 1))
       continue
@@ -10201,7 +10257,9 @@ _as_base_rw_sources() {
 # mount point in the account's directory; an empty file among them is removed by the
 # cleanup (as a placeholder), a directory or a symlink stays. Sets _as_base_real and
 # _as_base_entries (the names bound from the base), so _as_host_path_of places a mount
-# point under one of them in the base, where bwrap makes it.
+# point under one of them in the base, where bwrap makes it; and _as_base_links (the
+# names made again as symlinks), so the account's copy of a link is taken as the base's
+# own wherever links are judged (_as_ln_acct_base, #409).
 #
 # A NAME THE ACCOUNT'S DIRECTORY HAS TOO: the base's is bound over it when both are of
 # a kind bwrap can mount over (a directory over a directory, a file over a file). Any
@@ -10219,7 +10277,7 @@ _as_base_entry_binds() {
   local real="$1" e name dest line entry ap skip a ka ke t
   local GLOBIGNORE=""
   local -a fields=() skip_paths=() todo=()
-  _as_base_real="$real" _as_base_entries=()
+  _as_base_real="$real" _as_base_entries=() _as_base_links=()
   for line in ${profile_channels[@]+"${profile_channels[@]}"}; do
     IFS=$'\t' read -r -a fields <<<"$line"
     for entry in "${fields[@]:1}"; do
@@ -10249,13 +10307,20 @@ _as_base_entry_binds() {
       [[ -d "$a" ]] && ka=directory
       [[ -d "$e" ]] && ke=directory
       [[ -L "$e" ]] && ke=symlink
-      # an empty directory where the base has a symlink: an earlier launch's cover of it
-      # (_as_ln_met; a file one is removed at the end), made the link again below
+      # an empty directory where the base has a symlink: the cover of it that a launch
+      # before #409's fix made (_as_ln_met), made the link again below; a launch now
+      # takes the account's copy for the base's link (_as_ln_acct_base) and covers none
       if [[ "$ke" == symlink && -d "$a" && -z "$(ls -A -- "$a" 2>/dev/null)" ]]; then
         ka=symlink
       fi
       if [[ "$ka" != "$ke" ]]; then
-        _as_msg "the account '${_acct_name:-}': '$a' is a $ka where the base's '$e' is a $ke, so the base's cannot be put over it; remove '$a' (the account's) to see the base's there, or '$e' (the base's) to keep the account's. Nothing was started"
+        # (a directory with content where the base has a link: before #409's fix, a
+        # launch covered the account's copy of the link with a directory and let the
+        # agent write into it; the engine does not remove what is in it)
+        local _bp_why=""
+        [[ "$ka" == directory && "$ke" == symlink ]] \
+          && _bp_why=" If an earlier launch made it (a cover for the base's link, before #409's fix), what is in it is the agent's writes through that link, which a launch now never puts there."
+        _as_msg "the account '${_acct_name:-}': '$a' is a $ka where the base's '$e' is a $ke, so the base's cannot be put over it; remove '$a' (the account's) to see the base's there, or '$e' (the base's) to keep the account's.$_bp_why Nothing was started"
         return 1
       fi
     fi
@@ -10280,6 +10345,7 @@ _as_base_entry_binds() {
         _as_msg "the account '${_acct_name:-}': cannot make '$a' a symlink to '$t', as the base's '$e' is. Nothing was started"
         return 1
       fi
+      _as_base_links+=("$name")
     else
       [[ -d "$e" ]] || _as_connect_placeholder "$dest"
       args+=(--bind "$e" "$dest")
@@ -17608,6 +17674,38 @@ _as_ln_unroot() {
   done
 }
 
+# _as_ln_acct_base NAME -- for _as_ro_pins: UNDER AN ACCOUNT, THE ACCOUNT'S COPY OF A BASE
+# LINK IS THE BASE'S LINK (#409). _as_base_entry_binds made it from the base's, with the
+# base's text, at the path the base's has on a launch without an account, so it leads
+# the role where the base's leads it there, and the user approved the base's. NAME (a
+# host path, by name) under such a copy, $_acct_dir/E[/REST], := the same under the
+# base's own, $_as_base_real/E[/REST]; any other is unchanged. So the links met on that
+# way are the base's, judged, moved and recorded as on a launch on the base: a mount
+# through the link goes where the base's leads (never over the account's copy, nor into
+# the account's directory), and an approved line of the base's applies.
+_as_ln_acct_base() {
+  local -n _ab_p="$1"
+  local _ab_e _ab_n
+  [[ -n "${_acct_dir:-}" && -n "${_as_base_real:-}" && "$_ab_p" == "$_acct_dir"/* ]] || return 0
+  _ab_n="${_ab_p#"$_acct_dir"/}"
+  for _ab_e in ${_as_base_links[@]+"${_as_base_links[@]}"}; do
+    if [[ "$_ab_n" == "$_ab_e" || "$_ab_n" == "$_ab_e"/* ]]; then
+      _ab_p="$_as_base_real/$_ab_n"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# _as_ln_acct_mount K -- for _as_ro_pins, on its locals: is mount K the account's
+# directory at the base's inside path (#355)? For the scan and the approved lines it
+# stands for the base (#409): what shows there that is not the account's own (its
+# account-paths) is the base's, an entry bound from it or a link made again from it.
+_as_ln_acct_mount() {
+  [[ -n "${_acct_dir:-}" && -n "${_as_base_real:-}" && -n "${profile_base:-}" ]] \
+    && [[ "${_od[$1]}" == "$profile_base" && "${_ms[$1]-}" == "$_acct_dir" ]]
+}
+
 # _as_ln_inview HOST -- for _as_ro_pins, on its locals: does the final view show the host
 # object HOST at its own path from the host, with any access? A link to it is ordinary
 # content (#401): the role has exactly the access the target has there.
@@ -17632,13 +17730,29 @@ _as_ln_inview() {
 # empty. No subshell: it runs per mount of every launch.
 _as_ln_scan_mode() {
   local -n _sm_out="$2"
-  local _sm_d="${_od[$1]}"
+  local _sm_d="${_od[$1]}" _sm_e
   _sm_out=""
-  [[ "${_mk[$1]-}" == rw || "${_mk[$1]-}" == ro ]] && [[ "${_ms[$1]-}" == "$_sm_d" && -d "$_sm_d" && "$_sm_d" != "$_sd"/* ]] || return 0
+  [[ "${_mk[$1]-}" == rw || "${_mk[$1]-}" == ro ]] || return 0
+  # under an account, the account's directory at the base's path: the base's mode
+  # there (#409; the scan reads the base, _as_links_view_write)
+  if _as_ln_acct_mount "$1"; then
+    _sm_out=read-only
+    [[ "${_mk[$1]}" == rw ]] && _sm_out=read-write
+    return 0
+  fi
+  [[ "${_ms[$1]-}" == "$_sm_d" && -d "$_sm_d" && "$_sm_d" != "$_sd"/* ]] || return 0
   _sm_out="${_ln_mode[$_sm_d]-}"
   if [[ "$_sm_out" != read-only && "$_sm_out" != read-write ]]; then
     _sm_out=""
-    [[ "$_sm_d" == "${_proj:-$cwd}" || "$_sm_d" == "${profile_base:-/nonexistent}" ]] || return 0
+    if [[ "$_sm_d" != "${_proj:-$cwd}" && "$_sm_d" != "${profile_base:-/nonexistent}" ]]; then
+      # under an account, an entry of the base's bound from it one by one: what the
+      # base's own mount shows there on a launch without one (#409)
+      [[ -n "${_acct_dir:-}" && "$_sm_d" == "${profile_base:-/nonexistent}"/* ]] || return 0
+      for _sm_e in ${_as_base_entries[@]+"${_as_base_entries[@]}"}; do
+        [[ "$_sm_d" == "$profile_base/$_sm_e" ]] && break
+      done
+      [[ "$_sm_d" == "$profile_base/${_sm_e:-}" ]] || return 0
+    fi
     _sm_out=read-only
     [[ "${_mk[$1]}" == rw ]] && _sm_out=read-write
   fi
@@ -17648,11 +17762,21 @@ _as_ln_scan_mode() {
 # _as_links_view_write -- for _as_ro_pins, on its locals: this launch's final view, for
 # the scan at the next review (_as_links_scan_review): each mount in the list's order,
 # DEST, KIND, host source, and the mode the scan reads it with (or `-`). Under the trust
-# store, by profile and role; not inside a sandbox, where there is no review.
+# store, by profile and role; not inside a sandbox, where there is no review. WRITTEN
+# BEFORE THE GATE CAN REFUSE (#409), from the list as the links rewrite it
+# (_as_ro_pins' view-only pass) -- at depth 1, or with nothing to rewrite, from the list
+# itself, the final one, so it is not written again after the gate: a launch that gate
+# refuses for a link leaves its view on record, so the review that the refusal names
+# scans it and asks that view's links in the same round. So does the gate before a
+# store's read, through _as_ln_prepass. Under an account, the account's directory at the base's
+# path is written as the base (#409): the scan reads the base's own directory, whose
+# entries the account shows -- each bound from it, or its link made again
+# (_as_ln_acct_base) -- and each of the account's own paths (account-paths) as a mount
+# of its own that shows no host path, so the scan neither reads it nor counts it shown.
 _as_links_view_write() {
   # (never under native: _as_ro_pins returns before it)
   [[ -z "$_rp_only" && -n "${_proj:-${cwd:-}}" ]] && ! _as_inside_sandbox || return 0
-  local _vw_f _vw_k _vw_m _vw_t
+  local _vw_f _vw_k _vw_m _vw_t _vw_ap
   _vw_f="$(_as_one "$(_as_links_view_file "${_proj:-$cwd}")$(_as_sha256_str "${profile:-}/${_role:-default}")")"
   _vw_t="$_vw_f.$BASHPID.tmp" # this launch's own: concurrent launches each rename theirs
   mkdir -p -- "${_vw_f%/*}" 2>/dev/null || return 0
@@ -17660,8 +17784,22 @@ _as_links_view_write() {
     [[ -n "${_mk[$_vw_k]+x}" ]] || continue
     _as_ln_scan_mode "$_vw_k" _vw_m
     [[ "${_od[_vw_k]}${_ms[$_vw_k]}" != *[$'\t\n']* ]] || continue
+    if _as_ln_acct_mount "$_vw_k"; then
+      printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "$_as_base_real" "${_vw_m:--}"
+      # shellcheck disable=SC2031 # the launch's own profile_account_paths
+      for _vw_ap in ${profile_account_paths[@]+"${profile_account_paths[@]}"}; do
+        _vw_ap="${_od[_vw_k]}/${_vw_ap%/}"
+        _as_ro_pins_norm _vw_ap
+        [[ "$_vw_ap" != *[$'\t\n']* ]] && printf '%s\tother\t\t-\n' "$_vw_ap"
+      done
+      continue
+    fi
     printf '%s\t%s\t%s\t%s\n' "${_od[_vw_k]}" "${_mk[$_vw_k]}" "${_ms[$_vw_k]}" "${_vw_m:--}"
   done >"$_vw_t" 2>/dev/null || return 0
+  # the prepass's view: the mounts the launch adds after its binds, too (_as_ln_late_lines)
+  if ((${_ln_prepass:-0})); then
+    _as_ln_late_lines >>"$_vw_t" 2>/dev/null || return 0
+  fi
   # the connect paths, whose links are the launch's own to find (_as_ln_met), not the scan's
   # (their declared source and mode: the review reads their links as the launch does)
   local _vw_s _vw_ds=0
@@ -17700,8 +17838,13 @@ _as_ln_recorded() {
     ((_lr_m >= 0)) || continue
     _as_ln_scan_mode "$_lr_m" _lr_mode
     [[ -n "$_lr_mode" ]] || continue
+    # the link at its own host path, as the role sees it: under an account, the
+    # account's copy of a base link is the base's (_as_ln_acct_base, #409)
     _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
-    [[ "$_lr_h" == "${_lr_d:-/}" ]] || continue
+    [[ -n "$_lr_h" ]] || continue
+    _lr_h="${_lr_h%/}/${_lr_f[0]##*/}"
+    _as_ln_acct_base _lr_h
+    [[ "$_lr_h" == "${_lr_f[0]}" ]] || continue
     _lr_c="" _lr_t=""
     _as_links_resolve "${_lr_f[0]}" _lr_c _lr_t || continue
     _lr_x=""
@@ -17717,8 +17860,12 @@ _as_ln_recorded() {
         [[ "$_lr_c" == *" ; "* ]] && _lr_c="${_lr_c#* ; }" || _lr_c=""
         _lr_t="${_lr_x%% -> *}"
         _lr_d="${_lr_t%/*}"
+        # made again unless the role sees it at its own host path (an account's copy of a
+        # base link is the base's, there already: _as_ln_acct_base, #409)
         _as_ro_pins_host_at "${_lr_d:-/}" _lr_h
-        [[ "$_lr_h" == "${_lr_d:-/}" ]] || _ln_syms+=("${_lr_x#* -> }"$'\t'"$_lr_t")
+        _lr_h="${_lr_h%/}/${_lr_t##*/}"
+        _as_ln_acct_base _lr_h
+        [[ "$_lr_h" == "$_lr_t" ]] || _ln_syms+=("${_lr_x#* -> }"$'\t'"$_lr_t")
       done
     elif [[ -L "${_lr_f[0]}" && -n "$_lr_x" && "$_lr_c$_lr_t" != *$'\t'* ]]; then
       _as_ln_inview "$_lr_t" && continue
@@ -17727,6 +17874,69 @@ _as_ln_recorded() {
     fi
   done <"$_lr_rec"
   return 0
+}
+
+# _as_ln_prepass -- for _as_ro_pins' check mode (_as_connect_bind_all, before a source
+# is read), on its locals, before its gate (#409): where that gate will refuse or ask (a
+# line of _ln_pending not approved), this launch's view on record first, so the review
+# the refusal names, or the gate's own asking at a terminal, scans it and asks every link
+# the launch would meet in one round -- under every preset, a store's read through a link
+# (`copy`, the default and `inherit` presets' changelog) refused here as a bind through
+# one is at the full gate. The view of the binds made so far, which are every bind of the
+# launch's but the engine's own few after them (_as_ln_late_lines): the whole pass on
+# them (the links judged, the list rewritten as the launch will rewrite it, the view
+# written, _as_ln_view_pass), in a subshell, silent, stopping before its gate -- nothing
+# made on the host, nothing said. The launch writes its view again on its final list.
+_as_ln_prepass() {
+  local _pp_l _pp_n=0
+  for _pp_l in ${_ln_pending[@]+"${_ln_pending[@]}"}; do
+    _as_links_approved "${_proj:-$cwd}" "$_pp_l" || _pp_n=1
+  done
+  ((_pp_n)) && ! _as_inside_sandbox || return 0
+  (
+    local -a _pp_out=() _pp_pins=()
+    _ln_prepass=1 _as_ro_pins "$_rp_name" _pp_out _pp_pins
+  ) >/dev/null 2>&1 || true
+}
+
+# _as_ln_late_lines -- for the prepass's view (_as_ln_prepass): the mounts a launch adds
+# after its binds (_as_connect_bind_all), each as a view line of a mount that shows no
+# host path at its own path (`other`), as each of them is in the final view -- so the
+# scan neither reads under it nor counts it as shown, as on the final view: the briefing
+# (_as_briefing_write), the proxy CA over the system bundle (_as_ca_bind), and with --ssh
+# under strict the hosts file (_as_strict_ssh_rules) and the copies at uid 0's home
+# (_as_ssh_setup). --ssh's own binds at their own paths (known_hosts, the config, the
+# agent's socket, a key's .pub) are not here: each is inside the secret store or the
+# session's directory, where no declaration reaches and no link may lead (_as_path_protected,
+# _as_links_outside_ok); a key's .pub elsewhere is a file of the user's, shown as it is.
+_as_ln_late_lines() {
+  local _ll_ca _ll_rh
+  printf '%s\tother\t\t-\n' "$(_as_briefing_inside)"
+  case "${_knob_net:-proxy}" in
+    proxy | strict)
+      if [[ -r "${AGENT_SANDBOX_PROXY_CA:-$HOME/.mitmproxy/mitmproxy-ca-cert.pem}" ]] \
+        && _ll_ca="$(_as_system_ca_bundle 2>/dev/null)"; then
+        printf '%s\tother\t\t-\n' "$_ll_ca"
+      fi
+      ;;
+  esac
+  ((${_ssh_want:-0})) || return 0
+  [[ "${_knob_net:-proxy}" != strict ]] || printf '%s\tother\t\t-\n' /etc/hosts
+  _ll_rh="$(getent passwd 0 2>/dev/null | cut -d: -f6)"
+  if [[ -n "$_ll_rh" && "$_ll_rh" != "$HOME" ]]; then
+    printf '%s\tother\t\t-\n' "$_ll_rh/.ssh/known_hosts" "$_ll_rh/.ssh/config"
+  fi
+  return 0
+}
+
+# _as_ln_view_pass NAME -- for _as_ro_pins, before its gate (#409): the view of the option
+# list NAME (the list as the links rewrite it) on record, as the launch's final view
+# would be: the list parsed and its sources resolved as _as_ro_pins does, then the view
+# written (_as_links_view_write) -- no link judged, no pin, nothing made on the host.
+_as_ln_view_pass() {
+  local _ln_depth=1 _ln_viewonly=1
+  local -a _vp_out=() _vp_pins=()
+  _as_ro_pins "$1" _vp_out _vp_pins || true
 }
 
 # _as_ln_insert NAME OPT ARG DEST -- for _as_ro_pins (its _nargs): put the option OPT ARG
@@ -17767,7 +17977,9 @@ _as_ln_insert() {
 # link (bwrap refuses a symbolic-link destination), so it goes where the link leads:
 # - the link in a directory of the engine's (under the state directory: an account's,
 #   a role's store, a copy-on-write layer): covered, the link replaced there by an empty
-#   file or directory once every check passed, so the path is fixed (_ln_cover);
+#   file or directory once every check passed, so the path is fixed (_ln_cover) -- but
+#   not an account's copy of a base link, which is the base's link (_as_ln_acct_base,
+#   #409: the caller resolves the path through the base's own, so it is moved as below);
 # - else at T's own path (_ln_move), each link of the chain the view does not show made
 #   again inside (_ln_syms), so the link resolves to it; the role sees T at T too;
 # - not at all (_ln_drop) where nothing is there to show: a host bind through a link
@@ -17850,8 +18062,11 @@ _as_ln_met() {
       local _lm_d _lm_h
       for _lm_l in "${_ch_links[@]:1}"; do
         _lm_d="${_lm_l%/*}"
+        # (as in _as_ln_recorded: an account's copy of a base link is there already)
         _as_ro_pins_host_at "${_lm_d:-/}" _lm_h
-        [[ "$_lm_h" == "${_lm_d:-/}" ]] && continue
+        _lm_h="${_lm_h%/}/${_lm_l##*/}"
+        _as_ln_acct_base _lm_h
+        [[ "$_lm_h" == "$_lm_l" ]] && continue
         _as_ro_pins_readlink "$_lm_l" _lm_x
         _as_ln_unroot "$_lm_l" _lm_h
         _ln_syms+=("$_lm_x"$'\t'"$_lm_h")
@@ -17877,6 +18092,9 @@ _as_ln_met() {
   fi
   # what the user could not declare, no link declares: the written outside:'s refusals
   _as_links_outside_ok "$2" "$_lm_chain" "$_lm_t" "$_lm_mode" || return 1
+  # within a link the user approved, with a mode that grants this one: nothing to ask
+  # (#409: an approved parent covers its child)
+  _as_links_covered "${_proj:-${cwd:-}}" "$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode" && return 0
   _ln_pending+=("$2"$'\t'"$_lm_chain"$'\t'"$_lm_t"$'\t'"$_lm_kind"$'\t'"$_lm_mode")
   return 0
 }
@@ -18178,6 +18396,7 @@ _as_ro_pins_walk() {
 # sandbox.
 _as_ro_pins() {
   local -n _rp_in="$1" _rp_out="$2" _rp_pinned="$3"
+  local _rp_name="$1"
   # CHK (an array's name, KEY<TAB>SRC<TAB>SLOT per queued read): the check mode -- per
   # entry, OUT gets `skip` where SLOT is not the mount that shows at KEY, else the
   # source's link checks (refusals only: nothing pinned, nothing made) and `run`
@@ -18369,6 +18588,11 @@ _as_ro_pins() {
       _ino[${_rs_p[_k]}]="$_a:${_x% *}" _nlink[${_rs_p[_k]}]="$_t"
     done
   fi
+  # the view-only pass (_as_ln_view_pass): the view of this list, and nothing else
+  if ((${_ln_viewonly:-0})); then
+    _as_links_view_write
+    return 0
+  fi
   if [[ -n "$_rp_only" ]]; then
     local _ce _cs _cl
     _rp_out=()
@@ -18387,7 +18611,9 @@ _as_ro_pins() {
       # the resolved source the check approved, which the read then uses (_as_ln_met)
       ! declare -p _rd_res &>/dev/null || _rd_res[${#_rp_out[@]} - 1]="${_ln_src[$_k]-}"
     done
-    # nothing is read through a link before it is approved
+    # nothing is read through a link before it is approved -- and a gate that refuses
+    # or asks here leaves this launch's view on record first (_as_ln_prepass, #409)
+    _as_ln_prepass
     _as_links_gate "${_proj:-$cwd}" || return 1
     return 0
   fi
@@ -18445,6 +18671,7 @@ _as_ro_pins() {
     _as_ro_pins_host_at "${_x:-/}" _x
     if [[ -n "$_x" ]]; then
       _x="${_x%/}/${_d##*/}"
+      _as_ln_acct_base _x
       _as_ro_pins_apart "$_x" || _as_ro_pins_chain "$_x" "$_d" dest || return 1
     fi
   done
@@ -18454,22 +18681,14 @@ _as_ro_pins() {
   # The links the scan found and the user approved, re-read first (_as_ln_recorded).
   local -a _ln_extra=()
   ((${_ln_depth:-0})) || _as_ln_recorded || return 1
-  _as_links_gate "${_proj:-$cwd}" || return 1
+  # The view, on record BEFORE THE GATE CAN REFUSE (#409): the list as the links rewrite
+  # it (moved, dropped, an approved target added), computed without a change to the host
+  # (_as_ln_view_pass); with nothing to rewrite, this list's own -- then the final one,
+  # not written again after the gate (at depth 1 it is written once more, the same).
+  local _ln_re=0
   if ((${#_ln_move[@]} + ${#_ln_drop[@]} + ${#_ln_cover[@]} + ${#_ln_extra[@]} + ${#_ln_src[@]})) && ((! ${_ln_depth:-0})); then
+    _ln_re=1
     local _ln_e _ln_j _ln_w
-    for _ln_e in ${_ln_cover[@]+"${_ln_cover[@]}"}; do
-      _ln_w="${_ln_e%%$'\t'*}"
-      [[ -L "$_ln_w" ]] || continue
-      rm -f -- "$_ln_w" || return 1
-      if [[ "${_ln_e##*$'\t'}" == dir ]]; then
-        mkdir -- "$_ln_w" || return 1
-      else
-        # an empty file, removed at the end as every mount point the engine made is
-        : >"$_ln_w" || return 1
-        _as_placeholder_files=("$_ln_w") _as_placeholder_maybe=()
-        _as_placeholder_register
-      fi
-    done
     local -a _ln_in=("${_rp_in[@]:0:_end}") _ln_tail=("${_rp_in[@]:_end}")
     local -A _ln_gone=()
     for ((_ln_j = 0; _ln_j < ${#_on[@]}; _ln_j++)); do
@@ -18505,11 +18724,31 @@ _as_ro_pins() {
       _as_ln_insert _ln_in --symlink "${_ln_e%%$'\t'*}" "${_ln_e##*$'\t'}"
     done
     _ln_in+=(${_ln_tail[@]+"${_ln_tail[@]}"})
+    _as_ln_view_pass _ln_in
+  else
+    _as_links_view_write
+  fi
+  ((! ${_ln_prepass:-0})) || return 0 # the prepass: the view is all it is for
+  _as_links_gate "${_proj:-$cwd}" || return 1
+  if ((_ln_re)); then
+    for _ln_e in ${_ln_cover[@]+"${_ln_cover[@]}"}; do
+      _ln_w="${_ln_e%%$'\t'*}"
+      [[ -L "$_ln_w" ]] || continue
+      rm -f -- "$_ln_w" || return 1
+      if [[ "${_ln_e##*$'\t'}" == dir ]]; then
+        mkdir -- "$_ln_w" || return 1
+      else
+        # an empty file, removed at the end as every mount point the engine made is
+        : >"$_ln_w" || return 1
+        _as_placeholder_files=("$_ln_w") _as_placeholder_maybe=()
+        _as_placeholder_register
+      fi
+    done
     local _ln_depth=1
     _as_ro_pins _ln_in "$2" "$3"
     return
   fi
-  _as_links_view_write
+  # (the view of this very list is on record: written before the gate, above)
   ((${#_pn_p[@]})) || return 0
   # The self-check, again on what the output shows: no mount at or above a pinned
   # directory between its mount and its place (a pin would hide what came after it).
@@ -20757,8 +20996,9 @@ agent_sandbox() (
   # engine's list names them (another launch's mount points).
   local -a _as_placeholder_files=() _as_placeholder_maybe=()
   # Under an account (#355): the resolved base and the names of its entries bound from
-  # it one by one (_as_base_entry_binds), for _as_host_path_of.
-  local -a _as_base_entries=()
+  # it one by one (_as_base_entry_binds), for _as_host_path_of; and of those made again
+  # as symlinks, for the links' rule (_as_ln_acct_base, #409).
+  local -a _as_base_entries=() _as_base_links=()
   local _as_base_real=""
   # Declared HERE, not down with the launch locals: state isolation opens the
   # session dir well before that point, and a later `local _session_dir=""`

@@ -991,9 +991,11 @@ implied() { # MSG names the implied declaration KEY = MODE outside:T, refused wi
   [ ! -s "$H/argv" ]
   run_engine AGENT_SANDBOX_NET=none -- asb --trust <<<$'y\ny' # one question per link
   [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep -c 'approve this link for')" -eq 2 ]
-  [[ "$output" == *"/proj/lnk/b/f.md = read-only outside:"*"/ext/b/f.md"* ]]
-  [[ "$output" == *"/proj/lnk = read-write outside:"*"/ext"* ]] # the link itself, in the project: the scan's
+  # the link itself, in the project (the scan's), asked first; approved read-write, it
+  # covers the declaration's path through it, which is then not asked (#409)
+  [ "$(printf '%s\n' "$output" | grep -c 'approve this link for')" -eq 1 ]
+  [[ "$output" == *"/proj/lnk = read-write outside:"*"/ext"* ]]
+  [[ "$output" == *"/proj/lnk/b/f.md = read-only outside:"*"/ext/b/f.md: within "*"/proj/lnk, approved; not asked."* ]]
   run_engine AGENT_SANDBOX_NET=none -- asb --connect './lnk/b/f.md = read-only' claude --version
   [ "$status" -eq 0 ]
   argv_has --ro-bind "$(cd "$H/ext" && pwd -P)/b/f.md" "$(cd "$H/ext" && pwd -P)/b/f.md"
