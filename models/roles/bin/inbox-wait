@@ -1,6 +1,6 @@
 #!/bin/sh
 # inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE...
-# inbox-wait -f -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE...
+# inbox-wait -f [-1] -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE...
 # -- written by `asb --init roles`
 # (docs/roles.md, section 5). Exit 0 at the first change of any FILE -- its modification
 # time, inode or size: a rename over it, as the Write tool does, counts -- printing that
@@ -12,13 +12,18 @@
 # STATE carries the baseline from one run to the next (#339). Without it, the baseline
 # is each FILE as this run finds it, so a change made between one run's exit and the
 # next run's start is never reported. With it, a FILE that STATE has an entry for is
-# compared with the state saved there, so such a change is reported at once by the
-# first poll; a FILE with no entry (a missing or empty STATE: every FILE) starts from
-# now. At exit 0, STATE is written anew, by a rename from a temporary file beside it:
-# the reported FILE's entry advances to the state that poll saw, every other FILE keeps
-# its baseline (two FILEs changed in one poll are reported by two runs, the second at
-# once), and entries for paths not among the FILEs are kept. At exit 1, or killed, it
-# is left as it was: the next run may then report a change the role has already read,
+# compared with the state saved there, so such a change is reported at once by the first
+# poll; a FILE with no entry (a missing or empty STATE: every FILE) starts from now.
+# STATE is written anew, by a rename from a temporary file beside it, first at start,
+# from the baseline, before the first poll: a run that cannot write it refuses (exit 2)
+# and reports nothing, since nothing it reported could be saved -- so a STATE that
+# cannot be written ends each run at its start, never in a loop of runs that each report
+# the same change. At exit 0 it is written again: the reported FILE's entry advances to
+# the state that poll saw, every other FILE keeps its baseline (two FILEs changed in one
+# poll are reported by two runs, the second at once), and entries for paths not among
+# the FILEs are kept. A save at exit 0 that fails is said on stderr, and the next run
+# refuses at its start while it still fails. At exit 1, or killed, it holds the baseline
+# the run started from: the next run may then report a change the role has already read,
 # one extra wake at worst, never a missed change. One line per FILE: its state, a tab,
 # its path as given (a path may hold spaces and tabs). Refused at start (exit 2): a FILE
 # path with a newline, STATE among the FILEs (by any spelling), STATE a directory or
@@ -42,9 +47,23 @@
 # arming again is safe. The lock goes with the process (its children do not hold it), so
 # a stream that died never answers so. Refused at start, with the one-shot form's
 # refusals: -f without -s, a PATTERN that is not an ERE, and no flock on PATH.
+#
+# ONE EVENT (-f -1), for a command whose end is the wake (the Supervisor's watch, a
+# background command, which has no time limit). The stream, ending after the first poll
+# that printed a line: every line of that poll is printed, STATE is saved as above, and
+# it exits 0. A poll whose changes were all dropped (-i, blank lines) prints nothing and
+# does not end it: its baseline advances, as the stream's does. So a change made while
+# no run waited -- between one run's exit and the next one's start -- is printed by the
+# next run's first poll, through STATE, and a run killed before its save prints its
+# lines again at the next. A save that fails ends the run, after its lines, and the next
+# run refuses at its start (above) while it still fails. -t ends it as it ends the
+# stream, exit 0 with no event line. The lock is the stream's: a second run on a STATE
+# whose run is still waiting prints that a watcher already runs and exits 0 at once --
+# an end that is no event, so whoever re-arms at each end does not re-arm on that line.
+# -1 without -f is refused.
 usage() {
   echo "usage: inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE..." >&2
-  [ -z "$follow$pat" ] || echo "       inbox-wait -f -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE..." >&2
+  [ -z "$follow$pat$once" ] || echo "       inbox-wait -f [-1] -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE..." >&2
   exit 2
 }
 refuse() {
@@ -56,9 +75,11 @@ alive=""
 sf=""
 follow=""
 pat=""
-while getopts t:a:s:fi: o; do
+once=""
+while getopts t:a:s:fi:1 o; do
   case "$o" in
     f) follow=1 ;;
+    1) once=1 ;;
     i)
       [ -n "$OPTARG" ] || usage
       printf '' | grep -Eq -- "$OPTARG" 2>/dev/null
@@ -76,8 +97,8 @@ while getopts t:a:s:fi: o; do
 done
 shift $((OPTIND - 1))
 [ $# -gt 0 ] || usage
-# -i is the stream's, and the stream needs STATE.
-[ -n "$follow" ] || [ -z "$pat" ] || usage
+# -i and -1 are the stream's, and the stream needs STATE.
+[ -n "$follow" ] || [ -z "$pat$once" ] || usage
 [ -z "$follow" ] || [ -n "$sf" ] || usage
 case "$lim" in '' | *[!0-9]*) usage ;; esac
 # A FILE of digits alone is the old form's SECS (`FILE SECS [ALIVE]`), which would wait
@@ -161,6 +182,11 @@ for f; do
   if [ -n "$sf" ] && saved "$f"; then s="$sv"; else s="$(st "$f")"; fi
   m="$m$s$nl"
 done
+# The baseline is written before the first poll, in every form: a change made after
+# this run ends is reported by the next even when this one saw none, and a run whose
+# STATE cannot be written reports nothing it could not save.
+rep=""
+[ -z "$sf" ] || save "$@" || refuse "-s $sf: could not write it, so nothing it reports could be saved"
 # shown PATH -- the event line for PATH: the last of the lines appended since the
 # baseline ($bs bytes) up to the current size ($cs) that is not blank and does not match
 # PATTERN, cut and escaped; nothing when every one is. NUL bytes are dropped, and the
@@ -196,16 +222,12 @@ shown() {
       }'
 }
 if [ -n "$follow" ]; then
-  # The baseline is written at once, so a change made after this run ends is reported
-  # by the next even when this one saw none.
-  rep=""
-  save "$@" || printf 'inbox-wait: could not write %s; a change made before the next run may be missed\n' "$sf" >&2
   # -t is seconds by the clock: a poll takes longer than its sleep (a stat per FILE),
   # so a count of polls would outlast the deadline of the tool it is set inside.
   end=$(($(date +%s) + lim))
   while :; do
     [ -n "$alive" ] && touch "$alive" 2>/dev/null
-    rest="$m" nm="" moved=""
+    rest="$m" nm="" moved="" printed=""
     for f; do
       b="${rest%%"$nl"*}"
       rest="${rest#*"$nl"}"
@@ -217,16 +239,20 @@ if [ -n "$follow" ]; then
       bi="${b#* * * }" ci="${cur#* * * }"
       bs="${bi#* }" cs="${ci#* }" bi="${bi% *}" ci="${ci% *}"
       if [ -n "$b" ] && [ -n "$cur" ] && [ "$bi" = "$ci" ] && [ "$cs" -gt "$bs" ]; then
-        shown "$f"
+        ev="$(shown "$f")"
       else
-        printf '%s changed\n' "$f"
+        ev="$f changed"
       fi
+      # nothing when every appended line was dropped: no event
+      [ -z "$ev" ] || { printf '%s\n' "$ev" && printed=1; }
     done
     m="$nm"
     if [ -n "$moved" ]; then
       rep=""
       save "$@" || printf 'inbox-wait: could not write %s; the next run reports these changes again\n' "$sf" >&2
     fi
+    # -1: the poll that printed a line is the last, after its save
+    [ -z "$once" ] || [ -z "$printed" ] || exit 0
     sleep 1 9>&-
     if [ "$lim" -gt 0 ] && [ "$(date +%s)" -ge "$end" ]; then exit 0; fi
   done

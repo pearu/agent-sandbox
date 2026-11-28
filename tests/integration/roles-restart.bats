@@ -21,11 +21,11 @@ setup() {
   make_integration <<'PROBE'
 #!/usr/bin/env bash
 seen=no
+# the login it runs on (#482): the base's, or an account's, bound where the base is
+{ cat "$HOME/.probe-base/.login" 2>/dev/null || echo none; } >>logins
 [[ -e "${SHARED:?}/flag" ]] && seen=yes
 printf 'args=%s seen=%s\n' "$*" "$seen" >>launches
 date +%s.%N >>started
-# the login it runs on (#482): the base's, or an account's, bound where the base is
-{ cat "$HOME/.probe-base/.login" 2>/dev/null || echo none; } >>logins
 until [ -e release ]; do sleep 0.1; done
 PROBE
   # the probe's profile, saying how it resumes a session

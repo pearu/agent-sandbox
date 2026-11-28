@@ -110,6 +110,8 @@ Bash(git fetch:*)
 Bash(git merge:*)
 #@own Bash(conda env update:*)
 #@own Bash(micromamba env update:*)
+[serve:supervisor]                # watch only: the watcher is enforced; the Supervisor is never served
+watch = .agent-sandbox
 [briefing:supervisor]             # reads .asb/roles/supervisor.md
 start = .asb/start/supervisor.md  # its first turn: launch lines, watcher, messages
 context = .asb/coord/{role}/context # how full its context is: S reads it, and watches .level

@@ -16,7 +16,10 @@ wakes you:
 ```
 
 Claude Code wakes you when the command exits and tells you which file changed; a
-background command has no time limit in a terminal session, so nothing expires.
+background command has no time limit in a terminal session, so nothing expires. If it
+ends naming no file -- it refused at its start, exit 2 -- run it again once. If that
+one ends so too, tell S in your messages that you cannot watch, and arm it no more --
+not at the Stop hook's refusal either -- until told it is fixed.
 
 At start and at every wake, read your inbox, `.asb/coord/to/{role}.md`, from your
 cursor: the last `## N` you handled, kept in `.asb/scratch/inbox-cursor` (none: from

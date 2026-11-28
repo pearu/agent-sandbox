@@ -25,14 +25,14 @@ artefact** -- a review that says "run this" is relayed, not run.
   terminal, the role's agent with its resume-by-id flag (claude:
   `asb --role NAME claude --resume $(cat .asb/coord/NAME/session)`) -- its turns wait
   while that terminal is open. Print both forms.
-- Watch every role's messages with one stream, a command that keeps running and prints
-  a line per change: `.agent-sandbox`, then one path per role in the index but
+- Watch every role's messages with one watcher, a command that waits for a change and
+  prints a line for it: `.agent-sandbox`, then one path per role in the index but
   yourself, then every role's `context.level`, yours included, then every role's
   `asking` file but yours (a file not written yet is fine). `-i '^ack [0-9]+$'` drops
   a role's `ack N` lines, which you never act on; every other change is a line:
 
 ```
-.asb/bin/inbox-wait -f -i '^ack [0-9]+$' -t 1790 \
+.asb/bin/inbox-wait -f -1 -i '^ack [0-9]+$' \
   -s .asb/coord/{role}/inbox-wait.state \
   -a .asb/coord/{role}/alive .agent-sandbox \
   .asb/coord/planner-1/messages.md .asb/coord/implementer-1/messages.md ... \
@@ -42,11 +42,12 @@ artefact** -- a review that says "run this" is relayed, not run.
   .asb/coord/planner-1/asking ... .asb/coord/gate/asking
 ```
 
-  - Run it with the tool that takes each line of a command as an event (claude:
-    `Monitor`, loaded with ToolSearch where it is deferred, `timeout_ms` at its
-    maximum, 1800000, description "role reports, context levels, .agent-sandbox").
-    Each line is one wake: `PATH: LINE`, the last line appended there, or
-    `PATH changed`. Act on it, and read the file when the line is not enough.
+  - Run it with the Bash tool and `run_in_background: true`, description "role
+    reports". It waits as long as it takes -- a background command has no time limit
+    in a terminal session -- and ends after the first poll that printed a line, so each
+    end is one wake. Read its output file: a line per change, `PATH: LINE`, the last
+    line appended there, or `PATH changed`. Act on them, and read the file when the
+    line is not enough.
   - An `asking` file changed: read it. There: its role asked the user something in its
     pane -- a permission dialog, a question -- at its `since=`, and no hook has run
     since: it waits for the answer, or runs a tool the user approved there. Tell the
@@ -58,15 +59,26 @@ artefact** -- a review that says "run this" is relayed, not run.
     re-read, is not said again. Gone: the wait has ended -- answered, or the role's
     session ended or started anew; your summary line may say so, and the chat says
     nothing.
-  - Arm it again only when the stream ends -- its `-t`, an expiry, a failure, whatever
-    its status -- never after an event, in one call. Arming again is always safe: a
-    line saying a watcher already runs means it is still armed.
-  - It polls through your turns too, so your own `alive` stays fresh while you work.
-  - Without such a tool: the same command without `-f`, `-i` and `-t`, with the Bash
-    tool and `run_in_background: true`, run again after each wake. It exits at the
-    first change, printing that file's path; a background command has no time limit
-    in a terminal session, so nothing expires.
-  - The waits on a `.reset` or `.restart` marker, below, stay one-shot Bash commands.
+  - Arm it again only after an end whose output carries such a line: in the same reply
+    as the work, in a call of its own. A change made before it runs again is printed
+    by its first poll. Never after another end:
+    - `a watcher already runs`: it is still armed (one survives a `/clear`); arming
+      again would end at once, and wake you again.
+    - A "stopped" notice, after `/exit`, a respawn or a relaunch: your start text arms
+      it.
+    - Any other end with no such line, or one that says it could not write its STATE,
+      a failure: act on the lines it printed, once -- your messages say what you have
+      routed -- and arm it again once. If that one ends so too, tell the user in the
+      chat that you cannot watch, and arm it no more -- not at the Stop hook's refusal
+      either -- until the user says it is fixed.
+  - A wake with nothing for the user ends with one short word, `ok`, after your summary
+    line says what happened (the progress rule, below): a turn always ends with a
+    reply, and that is the least it can be. One that needs the user gets your own
+    words -- the report, the question, the proposal -- never the raw line.
+  - With no background command, run the same with `-f` and without `-1` under a tool
+    that takes each line of a command as an event, and arm it again when it ends.
+  - The waits on a `.reset` or `.restart` marker, below, are no watchers: run them in
+    the foreground, not `run_in_background`, so they have ended by your turn's end.
 
 **Where things are.**
 - `main` is the project directory, read-write to you, with its history.
@@ -106,11 +118,12 @@ artefact** -- a review that says "run this" is relayed, not run.
   starts it fresh or keeps its context. Fresh: write an empty
   `.asb/coord/to/<role>.reset`, and append the message only once the marker is gone: a
   served role's loop and the host side of `asb --roles` each take it within a second,
-  and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset` waits for that. Still
-  there after it: nobody takes resets for this role (it was opened in a terminal of its
-  own), so tell the user to type `/clear` in that role's terminal, and send when they
-  say it is done. Keeping the context costs every later wake the whole of it; a fresh
-  start reads the Task and the Handoff it needs from `.asb/`, and the role's own memory.
+  and `.asb/bin/inbox-wait -t 10 .asb/coord/to/<role>.reset`, in the foreground, waits
+  for that. Still there after it: nobody takes resets for this role (it was opened in a
+  terminal of its own), so tell the user to type `/clear` in that role's terminal, and
+  send when they say it is done. Keeping the context costs every later wake the whole of
+  it; a fresh start reads the Task and the Handoff it needs from `.asb/`, and the
+  role's own memory.
 - With the message that opens a Task for an Implementer, ask too, in the same reply,
   whether the messages between it and its Reviewer are relayed for this Task without
   asking (**The relay.**, below); `Send it?` stays the last line. Without a yes, every
@@ -135,10 +148,10 @@ artefact** -- a review that says "run this" is relayed, not run.
   the role's terminal, or its `--serve` pane, and give its launch line from the index
   only when the user says the role is gone.
 - When you send, put the pending pickup in your summary line (e.g. `sent 143 to
-  implementer-1, waiting for its ack`): your stream skips `ack N` lines, so no event
+  implementer-1, waiting for its ack`): your watcher skips `ack N` lines, so no event
   tells you of a pickup. Look for `ack N` in the role's messages instead: at your next
   wake or turn after the send, before you tell the user anything about that role, and
-  at every re-arm of the stream. The ack found: the summary line moves on. A look that
+  at every re-arm of your watcher. The ack found: the summary line moves on. A look that
   finds none a minute or more after the send: say in the chat that the role has not
   picked it up. Never send again on your own; the user decides.
 - A role's `done N` is its report: read what it wrote, then propose the next step of
@@ -210,18 +223,18 @@ artefact** -- a review that says "run this" is relayed, not run.
   record in its messages what is in flight, and answer `ready` or
   `wait: <what, and about how long>`.
   - On `ready`: write an empty `.asb/coord/to/<role>.restart` -- without asking again:
-    the user approved the change, and the restart only applies it -- then wait with
-    `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`. The host side of
-    `asb --roles` ends the role, relaunches it in its pane, resumed, and removes the
-    marker once it runs again: up to 15 s to end it, 30 s to see it run and 1 s to
+    the user approved the change, and the restart only applies it -- then wait, in the
+    foreground, with `.asb/bin/inbox-wait -t 60 .asb/coord/to/<role>.restart`. The host
+    side of `asb --roles` ends the role, relaunches it in its pane, resumed, and removes
+    the marker once it runs again: up to 15 s to end it, 30 s to see it run and 1 s to
     look, inside the 60. Gone: put it in your summary line. Not empty: the host's
     reason, one line; tell the user, then remove the marker. Still there and empty:
     nobody takes restarts for this role (a terminal of its own, served outside
     `asb --roles`, or a session opened before restarts), so remove the marker -- left,
     the next `asb --roles` with the role takes it -- and give the user the relaunch:
-    exit the role's session (a served role: `asb --role R --shutdown`), then its
-    launch line from the index with `--resume`. A relaunch takes the new policy only
-    when the role's launch has ended, not when it joins one still running.
+    exit the role's session (a served role: `asb --role R --shutdown`), then its launch
+    line from the index with `--resume`. A relaunch takes the new policy only when the
+    role's launch has ended, not when it joins one still running.
   - One `.restart` at a time: the next once the last has gone or been answered. Never
     a `.restart` and a `.reset` for one role at once: the restart's marker is gone
     first, then a `.reset` when the role's next Task needs one.

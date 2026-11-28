@@ -26,6 +26,17 @@ changed_in_a_run() {
   [ "$st" -eq 0 ]
 }
 
+# mv_fails -- put an mv first in $T/bin that fails while $T/mvfail exists, as on a full
+# disk; prefix a command with PATH="$T/bin:$PATH" to use it. A run then saves its
+# baseline at start, and fails at the next save once the flag is made.
+mv_fails() {
+  local real
+  real="$(command -v mv)"
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\n[ ! -e "%s" ] || exit 1\nexec "%s" "$@"\n' "$T/mvfail" "$real" >"$T/bin/mv"
+  chmod +x "$T/bin/mv"
+}
+
 # waited PID -- its exit status in $st (`run wait` would run in a subshell, which has no
 # such child).
 waited() {
@@ -189,24 +200,27 @@ waited() {
   [ "$(find "$T" -name 'st*' | wc -l)" -eq 1 ]
 }
 
-@test "inbox-wait -s: -t running out leaves STATE as it was" {
+@test "inbox-wait -s: -t running out leaves STATE at the baseline the run started from" {
   changed_in_a_run -s "$T/st"
   local before
-  before="$(stat -c '%y %i' "$T/st") $(cksum <"$T/st")"
+  before="$(grep -F "	$T/inbox.md" "$T/st")"
   run "$IW" -t 2 -s "$T/st" "$T/inbox.md" "$T/other.md"
   [ "$status" -eq 1 ]
-  [ "$(stat -c '%y %i' "$T/st") $(cksum <"$T/st")" = "$before" ]
+  [ "$(grep -F "	$T/inbox.md" "$T/st")" = "$before" ] # its entry as it was
+  grep -qxF "	$T/other.md" "$T/st"                    # a new FILE's: its state at start (none)
+  [ "$(wc -l <"$T/st")" -eq 2 ]
 }
 
-@test "inbox-wait -s: a missing or empty STATE is today's behaviour; an entry for a FILE no longer watched is kept" {
+@test "inbox-wait -s: a missing or empty STATE starts from now, and is written at start; an entry for a FILE no longer watched is kept" {
+  printf 'x\n' >>"$T/inbox.md"
+  run "$IW" -t 1 -s "$T/st" "$T/inbox.md"
+  [ "$status" -eq 1 ]                                              # from now: x is no change
+  [ "$(cut -f1 "$T/st")" = "$(stat -c '%y %i %s' "$T/inbox.md")" ] # the baseline, written at start
+  : >"$T/st"
   printf 'x\n' >>"$T/inbox.md"
   run "$IW" -t 1 -s "$T/st" "$T/inbox.md"
   [ "$status" -eq 1 ]
-  [ ! -e "$T/st" ]
-  : >"$T/st"
-  run "$IW" -t 1 -s "$T/st" "$T/inbox.md"
-  [ "$status" -eq 1 ]
-  [ ! -s "$T/st" ]
+  [ "$(cut -f1 "$T/st")" = "$(stat -c '%y %i %s' "$T/inbox.md")" ]
   : >"$T/b.md"
   "$IW" -t 10 -s "$T/st" "$T/inbox.md" "$T/b.md" >/dev/null &
   local pid=$! line
@@ -233,17 +247,17 @@ waited() {
   grep -qxF "not a state	inbox.md" "$T/st"
 }
 
-@test "inbox-wait -s: a run killed while it waits leaves STATE as it was, so the next run reports a change made meanwhile" {
+@test "inbox-wait -s: a run killed while it waits leaves STATE at its baseline, so the next run reports a change made meanwhile" {
   changed_in_a_run -s "$T/st"
   local before t0
-  before="$(stat -c %i "$T/st") $(cat "$T/st")"
+  before="$(cat "$T/st")"
   "$IW" -s "$T/st" "$T/inbox.md" &
   local pid=$!
   sleep 1.5
   kill "$pid"
   waited "$pid"
   [ "$st" -ne 0 ]
-  [ "$(stat -c %i "$T/st") $(cat "$T/st")" = "$before" ] # not even rewritten
+  [ "$(cat "$T/st")" = "$before" ] # written again at start, the same
   printf 'done 2\n' >>"$T/inbox.md"
   t0="$(usec)"
   run "$IW" -t 3 -s "$T/st" "$T/inbox.md"
@@ -328,18 +342,38 @@ waited() {
 }
 
 @test "inbox-wait -s: STATE that cannot be written at exit 0: the path printed, exit 0, a line on stderr, no temporary left" {
-  mkdir "$T/bin"
-  printf '#!/bin/sh\nexit 1\n' >"$T/bin/mv"
-  chmod +x "$T/bin/mv"
+  mv_fails
   PATH="$T/bin:$PATH" "$IW" -t 10 -s "$T/st" "$T/inbox.md" >"$T/out" 2>"$T/err" &
   local pid=$!
-  sleep 1.5
+  sleep 1.5 # its baseline saved at start, before the flag
+  : >"$T/mvfail"
   printf 'done 1\n' >>"$T/inbox.md"
   waited "$pid"
   [ "$st" -eq 0 ]
   [ "$(cat "$T/out")" = "$T/inbox.md" ]
   [ "$(cat "$T/err")" = "inbox-wait: could not write $T/st; the next run reports this change again" ]
-  [ -z "$(find "$T" -maxdepth 1 -name 'st*')" ]
+  [ -z "$(find "$T" -maxdepth 1 -name 'st.*')" ]
+}
+
+@test "inbox-wait -s: a STATE that cannot be written refuses the run at its start (exit 2), naming no FILE; once cleared, the change is reported once" {
+  mv_fails
+  run "$IW" -t 2 -s "$T/st" "$T/inbox.md" # a baseline
+  [ "$status" -eq 1 ]
+  : >"$T/mvfail"
+  printf 'done 1\n' >>"$T/inbox.md"
+  local t0
+  t0="$(usec)"
+  PATH="$T/bin:$PATH" run "$IW" -t 10 -s "$T/st" "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  (($(usec) - t0 < 1000000))
+  [ "$output" = "inbox-wait: -s $T/st: could not write it, so nothing it reports could be saved" ]
+  [ -z "$(find "$T" -maxdepth 1 -name 'st.*')" ]
+  rm "$T/mvfail"
+  PATH="$T/bin:$PATH" run "$IW" -t 3 -s "$T/st" "$T/inbox.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/inbox.md" ]
+  run "$IW" -t 1 -s "$T/st" "$T/inbox.md"
+  [ "$status" -eq 1 ]
 }
 
 # ---- the stream (-f): the Supervisor's watch under a tool that takes each line as an
@@ -348,7 +382,10 @@ waited() {
 # stream ARGS... -- start inbox-wait -f -s "$T/st" ARGS in the background, its output in
 # $T/out and its errors in $T/err; its pid in $spid. Returns once it has taken its
 # baseline: it writes STATE anew (a rename, so a new inode) right after, or says on
-# stderr that it could not -- not after a fixed sleep, which a loaded host outlasts.
+# stderr that it could not -- not after a fixed sleep, which a loaded host outlasts --
+# or once it has ended. A -1 run that ends at its first poll writes STATE twice before
+# this looks, and ext4 gives the second rename the inode the first one freed: STATE's
+# inode is then the one it had before (seen on CI's kcov shard), so the end counts too.
 stream() {
   local before _
   before="$(stat -c %i "$T/st" 2>/dev/null)" || true
@@ -357,6 +394,7 @@ stream() {
   for _ in $(seq 100); do
     [ "$(stat -c %i "$T/st" 2>/dev/null)" = "$before" ] || break
     [ ! -s "$T/err" ] || break
+    kill -0 "$spid" 2>/dev/null || break
     sleep 0.1
   done
 }
@@ -472,16 +510,16 @@ teardown() {
 }
 
 @test "inbox-wait -f: STATE not written after a print (killed between, or mv failing): the next run prints that change again, once" {
-  mkdir "$T/bin"
-  printf '#!/bin/sh\nexit 1\n' >"$T/bin/mv"
-  chmod +x "$T/bin/mv"
+  mv_fails
   "$IW" -f -s "$T/st" -t 4 "$T/inbox.md" >/dev/null 2>&1 # STATE has a baseline
   PATH="$T/bin:$PATH" stream -t 4 "$T/inbox.md"
+  : >"$T/mvfail" # after its save at start
   printf 'done 1\n' >>"$T/inbox.md"
   waited "$spid"
   [ "$(line 1)" = "$T/inbox.md: done 1" ]
   [ "$(lines)" -eq 1 ] # its own baseline advanced: printed once in this run
   grep -qxF "inbox-wait: could not write $T/st; the next run reports these changes again" "$T/err"
+  rm "$T/mvfail"
   stream -t 3 "$T/inbox.md"
   waited "$spid"
   [ "$(line 1)" = "$T/inbox.md: done 1" ]
@@ -489,6 +527,24 @@ teardown() {
   stream -t 2 "$T/inbox.md"
   waited "$spid"
   [ "$(lines)" -eq 0 ]
+}
+
+@test "inbox-wait -f: a STATE that cannot be written refuses the stream at its start (exit 2), printing no line; once cleared, the change is printed once" {
+  mv_fails
+  "$IW" -f -s "$T/st" -t 2 "$T/inbox.md" >/dev/null 2>&1 # STATE has a baseline
+  : >"$T/mvfail"
+  printf 'done 1\n' >>"$T/inbox.md"
+  local t0
+  t0="$(usec)"
+  PATH="$T/bin:$PATH" run "$IW" -f -s "$T/st" -t 10 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  (($(usec) - t0 < 1000000))
+  [ "$output" = "inbox-wait: -s $T/st: could not write it, so nothing it reports could be saved" ]
+  rm "$T/mvfail"
+  stream -t 3 "$T/inbox.md"
+  waited "$spid"
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
 }
 
 @test "inbox-wait -f: the line is printed before STATE is written" {
@@ -581,4 +637,146 @@ teardown() {
   PATH="$T/bin:$PATH" run "$IW" -f -s "$T/st" -t 4 "$T/inbox.md"
   [ "$status" -eq 0 ]
   (($(usec) - t0 < 7000000))
+}
+
+# ---- one event (-f -1): the Supervisor's watch as a background command, whose end is
+# the wake. The stream, ending after the first poll that printed a line.
+
+@test "inbox-wait -f -1: the first event line ends it (exit 0), printed, with STATE saved" {
+  stream -1 -i '^ack [0-9]+$' -t 30 "$T/inbox.md"
+  local t0
+  t0="$(usec)"
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  (($(usec) - t0 < 10000000)) # at the event, not at -t
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+  [ "$(cut -d' ' -f5 "$T/st" | cut -f1)" = "$(stat -c %s "$T/inbox.md")" ]
+}
+
+@test "inbox-wait -f -1: two FILEs changed in one poll print both lines, then it ends" {
+  : >"$T/b.md"
+  stream -1 -t 30 "$T/inbox.md" "$T/b.md"
+  printf 'done 1\n' >>"$T/b.md"
+  printf 'done 2\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 2" ]
+  [ "$(line 2)" = "$T/b.md: done 1" ]
+  [ "$(lines)" -eq 2 ]
+  # both entries advanced: the next run has nothing to report
+  stream -1 -t 2 "$T/inbox.md" "$T/b.md"
+  waited "$spid"
+  [ "$(lines)" -eq 0 ]
+}
+
+@test "inbox-wait -f -1: an 'ack N' append does not end it and its baseline advances; a later 'done N' ends it with one line" {
+  stream -1 -i '^ack [0-9]+$' -t 30 "$T/inbox.md"
+  printf '\nack 1\n' >>"$T/inbox.md"
+  local size _
+  size="$(stat -c %s "$T/inbox.md")"
+  for _ in $(seq 50); do
+    [ "$(cut -d' ' -f5 "$T/st" | cut -f1)" != "$size" ] || break
+    sleep 0.1
+  done
+  [ "$(cut -d' ' -f5 "$T/st" | cut -f1)" = "$size" ] # the filtered poll saved its baseline
+  sleep 1.2
+  kill -0 "$spid" # still waiting
+  [ "$(lines)" -eq 0 ]
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f -1: a FILE renamed over ends it with 'PATH changed', and so does one that appears" {
+  stream -1 -i '^ack [0-9]+$' -t 30 "$T/inbox.md" "$T/asking"
+  printf 'ack 1\n' >"$T/x"
+  mv -f "$T/x" "$T/inbox.md" # as the Write tool does: the content would be dropped
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md changed" ]
+  [ "$(lines)" -eq 1 ]
+  stream -1 -t 30 "$T/inbox.md" "$T/asking"
+  printf 'since=2026-11-27T10:00:00Z\n' >"$T/asking"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/asking changed" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f -1: -t ends it with no line (exit 0); a change made before the next run is printed by its first poll" {
+  stream -1 -t 2 "$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(lines)" -eq 0 ]
+  printf 'done 1\n' >>"$T/inbox.md"
+  local t0
+  t0="$(usec)"
+  stream -1 -t 30 "$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  (($(usec) - t0 < 10000000))
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f -1: a save that fails ends the run after its lines; the next run refuses at its start while it fails, and reports the lines once it is cleared" {
+  local real t0
+  real="$(command -v mv)"
+  mkdir "$T/bin"
+  # an mv that fails while $T/mvfail exists, as on a full disk
+  printf '#!/bin/sh\n[ ! -e "%s" ] || exit 1\nexec "%s" "$@"\n' "$T/mvfail" "$real" >"$T/bin/mv"
+  chmod +x "$T/bin/mv"
+  PATH="$T/bin:$PATH" stream -1 -t 30 "$T/inbox.md"
+  : >"$T/mvfail"
+  t0="$(usec)"
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  (($(usec) - t0 < 5000000)) # it ends at the event, not at -t
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+  grep -qxF "inbox-wait: could not write $T/st; the next run reports these changes again" "$T/err"
+  # the failure persists: the next run refuses at its start, reporting nothing
+  t0="$(usec)"
+  PATH="$T/bin:$PATH" run "$IW" -f -1 -s "$T/st" -t 30 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  (($(usec) - t0 < 1000000))
+  [ "$output" = "inbox-wait: -s $T/st: could not write it, so nothing it reports could be saved" ]
+  # cleared: the next run reports the lines, once
+  rm "$T/mvfail"
+  PATH="$T/bin:$PATH" stream -1 -t 30 "$T/inbox.md"
+  waited "$spid"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+  stream -1 -t 2 "$T/inbox.md"
+  waited "$spid"
+  [ "$(lines)" -eq 0 ]
+}
+
+@test "inbox-wait -f -1: a second run on the same STATE prints that one runs, with its pid, and ends at once (exit 0); the first reports the event" {
+  stream -1 -t 30 "$T/inbox.md"
+  local first=$spid t0
+  t0="$(usec)"
+  run "$IW" -f -1 -s "$T/st" -t 30 "$T/inbox.md"
+  [ "$status" -eq 0 ]
+  [ "$output" = "inbox-wait: a watcher already runs on $T/st (pid $first)" ]
+  (($(usec) - t0 < 5000000)) # the lock's 2 s wait, not -t
+  printf 'done 1\n' >>"$T/inbox.md"
+  waited "$first"
+  [ "$st" -eq 0 ]
+  [ "$(line 1)" = "$T/inbox.md: done 1" ]
+  [ "$(lines)" -eq 1 ]
+}
+
+@test "inbox-wait -f -1: refused (exit 2) without -f, with a usage line that names it" {
+  run "$IW" -1 -s "$T/st" -t 2 "$T/inbox.md"
+  [ "$status" -eq 2 ]
+  [ "${lines[0]}" = "usage: inbox-wait [-t SECS] [-a ALIVE] [-s STATE] FILE..." ]
+  [ "${lines[1]}" = "       inbox-wait -f [-1] -s STATE [-i PATTERN]... [-t SECS] [-a ALIVE] FILE..." ]
+  [ ! -e "$T/st" ]
 }
